@@ -17,7 +17,7 @@ Updated 2026-10-11. A check marks implementation, not complete hardware coverage
 | Rules | Sustained thresholds, individual edit/delete/enable controls, cooldown, missing-data/sleep reset; connectivity/power/charging/Low Power Mode/thermal/volume/DST/time-zone changes | Notification delivery permission validation; native alias/rule UI and missing-key/reconnection validation; richer rule conditions |
 | Menu/configuration | Independent or ordered 1–6-module combined items; text/graph/compact/native two-line styles, per-item RGB colors, explicit layout-aware global shortcuts, ordering/visibility, theme, units, spacing, refresh, import/export | Real menu/style/color/composition/shortcut QA and accessibility, reset/migration and selection state |
 | History | Fixed-capacity detailed/minute/hourly series, timestamp-based gap-aware charts, native zoom/pan, click-to-inspect, observed aggregate counts, visible-range CSV export and opt-in bounded restart checkpoints | Real persistence/export/chart/zoom UI QA; final-configuration matched sustained acceptance |
-| Delivery | Local ad-hoc app packaging, public CI | Notarization is outside the current authorized scope; Intel and minimum-OS CI coverage |
+| Delivery | Local ad-hoc app packaging; synthetic build/test/lint CI on macOS 14/15 Apple Silicon and macOS 15 Intel | Final matrix results, physical Intel/hardware and real minimum-OS UI validation; notarization is outside the current authorized scope |
 
 ## Required acceptance
 
