@@ -537,12 +537,16 @@ final class DashboardController: NSViewController {
       }
       rows.append(.heading("Process traffic"))
       rows.append(.note(s.processNetworkStatus))
-      rows += s.networkProcesses.sorted {
-        (($0.download ?? 0) + ($0.upload ?? 0)) > (($1.download ?? 0) + ($1.upload ?? 0))
-      }.prefix(settings.processCount).map {
-        .metric(
-          "\($0.name) · \($0.pid)",
-          "↓ \(rate($0.download, domain: .network))  ↑ \(rate($0.upload, domain: .network))")
+      let sortedProcesses = s.networkProcesses.sorted { left, right in
+        let leftRate = (left.download ?? 0) + (left.upload ?? 0)
+        let rightRate = (right.download ?? 0) + (right.upload ?? 0)
+        return leftRate > rightRate
+      }
+      for process in sortedProcesses.prefix(settings.processCount) {
+        let title = "\(process.name) · \(process.pid)"
+        let incoming = rate(process.download, domain: .network)
+        let outgoing = rate(process.upload, domain: .network)
+        rows.append(.metric(title, "↓ \(incoming)  ↑ \(outgoing)"))
       }
       rows.append(
         .note(
