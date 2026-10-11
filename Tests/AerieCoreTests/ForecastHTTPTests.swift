@@ -93,3 +93,35 @@ final class ForecastHTTPTests: XCTestCase {
       ForecastService.nws.allows(URL(string: "https://api.weather.gov/alerts?active=true")!))
   }
 }
+
+extension ForecastHTTPTests {
+  func testAddressPurposeEnforcesItsSmallStreamingBudgetAndExactRedirects() async throws {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [SyntheticForecastProtocol.self]
+    let client = BoundedHTTPClient(purpose: .publicAddress, configuration: configuration)
+    defer { client.close() }
+    SyntheticForecastProtocol.chunks = [
+      Data(repeating: 0, count: 400), Data(repeating: 0, count: 113),
+    ]
+    do {
+      _ = try await client.data(PublicAddressProvider.url);
+      XCTFail("Small budget must apply during receipt")
+    } catch WeatherError.payloadTooLarge {} catch { XCTFail("Unexpected error: \(error)") }
+    SyntheticForecastProtocol.chunks = [Data(repeating: 0, count: 512)]
+    let data = try await client.data(PublicAddressProvider.url); XCTAssertEqual(data.count, 512)
+    SyntheticForecastProtocol.headers = ["Content-Length": "513"]
+    do {
+      _ = try await client.data(PublicAddressProvider.url); XCTFail("Oversized header")
+    } catch WeatherError.payloadTooLarge {} catch { XCTFail("Unexpected error: \(error)") }
+    let session = URLSession(configuration: .ephemeral); defer { session.invalidateAndCancel() }
+    let task = session.dataTask(with: PublicAddressProvider.url)
+    let response = HTTPURLResponse(
+      url: PublicAddressProvider.url, statusCode: 302, httpVersion: nil, headerFields: nil)!
+    client.urlSession(
+      session, task: task, willPerformHTTPRedirection: response,
+      newRequest: URLRequest(url: URL(string: "https://geo.ipify.org/?format=json")!)
+    ) {
+      XCTAssertNil($0)
+    }
+  }
+}

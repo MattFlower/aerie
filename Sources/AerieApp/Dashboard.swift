@@ -314,6 +314,13 @@ final class DashboardController: NSViewController {
   var weather: WeatherReport?
   var weatherStatus = "Weather is off"
   var shortcutStatus: String?
+  var publicAddress: PublicAddressReading?
+  var publicAddressStatus = "Public IP lookup is off"
+  func updatePublicAddress(_ reading: PublicAddressReading?, status: String) {
+    let released = publicAddress != nil && reading == nil
+    publicAddress = reading; publicAddressStatus = status
+    if released && module == .network { canvas.releaseInteractiveRows(); refresh() }
+  }
   var calendarRows: [DashboardRow] = []
   override func loadView() {
     view = NSView(frame: NSRect(x: 0, y: 0, width: 416, height: 620))
@@ -723,6 +730,21 @@ final class DashboardController: NSViewController {
         DashboardRow.note(
           s.networkSelection.description + ". Collection still includes every reported interface."),
       ]
+      rows.append(.heading("External address"))
+      if let publicAddress {
+        rows.append(.metric(publicAddress.family, publicAddress.address))
+        rows.append(
+          .note(
+            "Provider reply from "
+              + publicAddress.fetched.formatted(date: .omitted, time: .shortened)))
+      }
+      rows.append(.note(publicAddressStatus))
+      if settings.effectivePublicAddress {
+        rows.append(
+          .note(
+            "ipify observes the HTTP route. VPNs, proxies or NAT may affect its reply independently of the aggregate interface selection."
+          ))
+      }
       if !s.networkAvailable {
         rows.append(.note("Interface counters are unavailable; no rates or totals are inferred."))
       } else if s.interfaces.isEmpty {
@@ -786,7 +808,7 @@ final class DashboardController: NSViewController {
         ))
       rows.append(
         DashboardRow.note(
-          "Virtual tunnels may count the same traffic again. Choose aggregate interfaces in Network Settings; all interfaces remain sampled and displayed. Observed sessions rebase after unavailable/reset/disappearing counters. Public IP lookup is off."
+          "Virtual tunnels may count the same traffic again. Choose aggregate interfaces in Network Settings; all interfaces remain sampled and displayed. Observed sessions rebase after unavailable/reset/disappearing counters."
         ))
       return rows
     case .sensors:

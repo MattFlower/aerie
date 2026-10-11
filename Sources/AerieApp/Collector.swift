@@ -69,6 +69,7 @@ final class Collector {
   private var cache = Snapshot()
   private var pathMonitor = NWPathMonitor()
   private var connection = "Checking"
+  private var pathVersion: UInt64 = 0
   private var settings = Settings()
   private var detailed = false
   private var sensorPanelVisible = false
@@ -116,8 +117,9 @@ final class Collector {
       }
     }
     pathMonitor.pathUpdateHandler = { [weak self] path in
+      guard let self else { return }; self.pathVersion &+= 1
       aerie_interfaces_invalidate()
-      self?.connection =
+      self.connection =
         path.status == .satisfied
         ? "Connected" : path.status == .requiresConnection ? "Connection required" : "Offline"
     }
@@ -344,6 +346,7 @@ final class Collector {
       snapshot.power.peripherals = cache.power.peripherals
     }
     snapshot.connectivity = connection
+    snapshot.networkPathVersion = pathVersion
     let state = ProcessInfo.processInfo.thermalState
     snapshot.thermal = ["Nominal", "Fair", "Serious", "Critical"][min(3, state.rawValue)]
     snapshot.thermalLevel = Double(state.rawValue)

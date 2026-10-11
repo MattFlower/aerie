@@ -120,6 +120,7 @@ struct Snapshot {
   var mountedVolumePaths: [String]?
   var interfaces = [InterfaceData]()
   var networkAvailable = false
+  var networkPathVersion: UInt64 = 0
   var networkSelection = NetworkSelection()
   var sensors = [SensorData]()
   var power = PowerData()

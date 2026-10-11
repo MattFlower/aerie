@@ -20,6 +20,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var preferences: PreferencesController?
   private var keyboardShortcuts: KeyboardShortcuts?
   private var shortcutStatus: String?
+  private var publicAddressReader: PublicAddressReader?
   private let calendarAccess = CalendarAccess()
   private lazy var calendarReader = CalendarEventReader(access: calendarAccess)
   private var calendarAuthorized = false
@@ -151,6 +152,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     rebuildItems()
     applyAppearance()
     configureShortcuts()
+    configurePublicAddress()
     let collector = Collector()
     self.collector = collector
     collector.onSample = { [weak self] in self?.receive($0) }
@@ -186,6 +188,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) {
         [weak self] _ in
         self?.sleeping = true
+        self?.configurePublicAddress()
         self?.dashboard.suspended = true
         self?.collector?.setSuspended(true)
         self?.releaseViewMetadata(module: nil)
@@ -198,6 +201,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         [weak self] _ in
         guard let self else { return }
         self.sleeping = false
+        self.configurePublicAddress()
         self.dashboard.suspended = self.paused
         self.collector?.setSuspended(self.paused)
         self.weatherFetchTime = .distantPast
@@ -226,6 +230,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     weatherMaps?.releaseResources(); weatherMaps = nil
     weatherDetails?.close(); weatherDetails = nil
     collector = nil
+    publicAddressReader?.stop(); publicAddressReader = nil
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
   private func receive(_ reading: Snapshot) {
@@ -235,6 +240,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     snapshot.releaseActiveViewState(
       module: popover.isShown ? dashboard.module : nil, suspended: paused || sleeping)
     self.snapshot = snapshot
+    publicAddressReader?.tick(
+      time: ProcessInfo.processInfo.systemUptime,
+      route: snapshot.networkAvailable && snapshot.connectivity == "Connected"
+        ? String(snapshot.networkPathVersion) : nil)
     let metrics = snapshot.metrics
     history.append(HistoryPoint(date: snapshot.date, values: metrics))
     historyPersistence?.save(
@@ -267,6 +276,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       dashboard.weather = weatherReport
       dashboard.weatherStatus = weatherStatus
       dashboard.shortcutStatus = shortcutStatus
+      updatePublicAddressView()
       dashboard.refresh()
     }
     updateWeather()
@@ -336,6 +346,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
           "volumes": snapshot.volumes.count, "gpu": snapshot.gpu.count,
           "sensors": snapshot.sensors.count, "sensorStatus": snapshot.sensorStatus,
           "sensorSampling": settings.effectiveSensorSampling.rawValue,
+          "publicAddressLookup": settings.effectivePublicAddress,
+          "publicAddressReaderAllocated": publicAddressReader != nil,
           "liveSensors": snapshot.sensors.filter { $0.state == .live }.count,
           "deferredSensors": snapshot.sensors.filter { $0.state == .deferred }.count,
           "temperatureInventory": snapshot.sensors.filter { $0.unit == "°C" }.count,
@@ -470,6 +482,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     if popover.isShown { popover.performClose(nil) }
     dashboard.snapshot = snapshot
     dashboard.settings = settings
+    updatePublicAddressView()
     dashboard.history = history
     dashboard.historyStatus = historyPersistence?.status ?? "History archive is off"
     dashboard.weather = weatherReport
@@ -693,6 +706,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     rebuildItems()
     applyAppearance()
     configureShortcuts()
+    configurePublicAddress()
     lastCalendarRefresh = .distantPast
     if popover.isShown { updateCalendar() }
     rules.reset()
@@ -736,6 +750,25 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     let failures = keyboardShortcuts?.configure(configured) ?? []
     shortcutStatus = failures.isEmpty ? nil : failures.joined(separator: " · ")
   }
+  private func configurePublicAddress() {
+    guard settings.effectivePublicAddress else {
+      publicAddressReader?.stop(); publicAddressReader = nil; updatePublicAddressView(); return
+    }
+    if publicAddressReader == nil {
+      publicAddressReader = PublicAddressReader()
+      publicAddressReader?.onUpdate = { [weak self] in
+        guard let self else { return }; self.updatePublicAddressView()
+        if self.popover.isShown && self.dashboard.module == .network { self.dashboard.refresh() }
+      }
+    }
+    publicAddressReader?.configure(enabled: true, suspended: paused || sleeping)
+    updatePublicAddressView()
+  }
+  private func updatePublicAddressView() {
+    dashboard.updatePublicAddress(
+      publicAddressReader?.reading,
+      status: publicAddressReader?.status ?? "Public IP lookup is off")
+  }
   private func showMaps() {
     popover.performClose(nil)
     guard settings.weather.mapsValid else { showSettings(); return }
@@ -765,6 +798,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   @objc private func togglePaused() {
     paused.toggle()
+    configurePublicAddress()
     dashboard.suspended = paused || sleeping
     collector?.setSuspended(paused)
     if paused {

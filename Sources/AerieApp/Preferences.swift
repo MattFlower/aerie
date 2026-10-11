@@ -136,7 +136,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     importButton.frame = NSRect(x: 195, y: 468, width: 170, height: 28)
     general.addSubview(importButton)
     label(
-      "Exports remove location and disable forecasts/maps. Imports keep both off until you opt in again.",
+      "Exports remove locations/calendar choices and clear forecast/map/public-IP consent. Imports keep external services off until you opt in again.",
       y: 511, in: general, height: 45)
 
     let dashboard = NSButton(
@@ -265,6 +265,16 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Changing aggregate selection clears only the download/upload history series and resets rule sustain state, so old scope cannot be presented as the new scope. Other histories remain. Per-interface session totals start at first observation and rebase on counter resets, source changes, interface disappearance or a failed read.",
       y: 310, in: network, height: 100)
+    toggle(
+      "publicAddress", title: "Allow public IP lookup through ipify",
+      value: settings.effectivePublicAddress, y: 436, in: network)
+    label(
+      "When enabled, ipify sees your network address and returns the HTTP route's IPv4 or IPv6. VPN/proxy/NAT can affect that address. Refresh is five minutes; disabling, pause and sleep cancel requests. No location lookup, credentials or address history is used.",
+      y: 478, in: network, height: 100)
+    let addressTerms = NSButton(
+      title: "Read ipify Service Details…", target: self, action: #selector(openAddressTerms))
+    addressTerms.frame = NSRect(x: 18, y: 597, width: 245, height: 28);
+    network.addSubview(addressTerms)
 
     let weather = tab("Weather", in: tabs)
     weather.frame.size.height = 840
@@ -448,6 +458,9 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
           ? "https://www.weather.gov/disclaimer" : "https://open-meteo.com/en/terms")!)
   }
   @objc private func openDashboard() { onDashboard?() }
+  @objc private func openAddressTerms() {
+    NSWorkspace.shared.open(URL(string: "https://www.ipify.org/")!)
+  }
   @objc private func notifications() { onNotifications?() }
   @objc private func calendar() { onCalendar?() }
   @objc private func login() { onLogin?() }
@@ -465,6 +478,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.normalizedProcessCPU = toggles["normalizedCPU"]!.state == .on
     s.binaryBytes = toggles["binary"]!.state == .on
     s.networkBits = toggles["bits"]!.state == .on
+    s.publicAddress = toggles["publicAddress"]!.state == .on
     s.networkInterfaces =
       toggles["networkAll"]!.state == .on
       ? nil
@@ -636,6 +650,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       s.weather = WeatherConfiguration()
       s.eventCalendars = nil
       s.daylight = nil
+      s.publicAddress = nil
       let panel = NSSavePanel()
       panel.nameFieldStringValue = "Aerie-settings.json"
       if panel.runModal() == .OK, let url = panel.url {
@@ -675,6 +690,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       var s = try JSONDecoder().decode(Settings.self, from: data)
       s.weather.enabled = false
       s.weather.mapsEnabled = false
+      s.publicAddress = nil
       s = try s.validated()
       calendarPicker?.close(); calendarPicker = nil
       settings = s

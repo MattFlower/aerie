@@ -38,11 +38,17 @@ final class SensorPreferencesTests: XCTestCase {
           $0.accessibilityLabel() == "Local sensor names by firmware key"
         })
       names.string = "F0Ac | Exhaust fan"
+      let addressConsent = try XCTUnwrap(
+        controls.compactMap { $0 as? NSButton }.first {
+          $0.title == "Allow public IP lookup through ipify"
+        })
+      XCTAssertEqual(addressConsent.state, .off); addressConsent.state = .on
       var applied: Settings?
       controller.onApply = { applied = $0 }
       let apply = try XCTUnwrap(
         content.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Apply" })
       apply.performClick(nil)
+      XCTAssertEqual(applied?.publicAddress, true)
       let first = try XCTUnwrap(applied?.rules.first)
       XCTAssertEqual(first.metric, "sensor:F0Ac"); XCTAssertEqual(first.sensorUnit, "rpm")
       XCTAssertEqual(applied?.sensorNames, ["F0Ac": "Exhaust fan"])

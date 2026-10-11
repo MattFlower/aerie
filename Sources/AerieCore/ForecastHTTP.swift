@@ -16,6 +16,28 @@ public enum ForecastService: String {
       || url.path == "/alerts"
   }
 }
+public enum HTTPService {
+  case forecast(ForecastService), publicAddress
+  public var maximumBytes: Int {
+    switch self {
+    case .forecast: return 2_000_000;
+    case .publicAddress: return 512
+    }
+  }
+  public func allows(_ url: URL) -> Bool {
+    switch self {
+    case .forecast(let service): return service.allows(url)
+    case .publicAddress:
+      guard url.scheme?.lowercased() == "https", url.host?.lowercased() == "api64.ipify.org",
+        url.user == nil, url.password == nil, url.fragment == nil,
+        url.port == nil || url.port == 443, url.path.isEmpty || url.path == "/",
+        url.absoluteString.utf8.count <= 128,
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+      else { return false }
+      return components.queryItems == [URLQueryItem(name: "format", value: "json")]
+    }
+  }
+}
 public protocol ForecastTransport: AnyObject {
   func data(_ url: URL) async throws -> Data
   func close()
@@ -31,21 +53,28 @@ private final class ForecastCancellation {
   func cancel() { lock.lock(); cancelled = true; let task = task; lock.unlock(); task?.cancel() }
 }
 /// Ephemeral provider-specific transport; byte limits apply before chunk accumulation.
-public final class ForecastHTTPClient: NSObject, ForecastTransport, URLSessionDataDelegate {
+public typealias ForecastHTTPClient = BoundedHTTPClient
+public final class BoundedHTTPClient: NSObject, ForecastTransport, URLSessionDataDelegate {
   public static let maximumBytes = 2_000_000
   private final class Pending {
     var data = Data()
     let continuation: CheckedContinuation<Data, Error>
     init(_ value: CheckedContinuation<Data, Error>) { continuation = value }
   }
-  private let service: ForecastService
+  private let service: HTTPService
   private let lock = NSLock()
   private var pending: [ObjectIdentifier: Pending] = [:]
   private var session: URLSession?
   private var closed = false
-  public init(service: ForecastService, configuration: URLSessionConfiguration = .ephemeral) {
+  public convenience init(
+    service: ForecastService, configuration: URLSessionConfiguration = .ephemeral
+  ) {
+    self.init(purpose: .forecast(service), configuration: configuration)
+  }
+  public init(purpose service: HTTPService, configuration: URLSessionConfiguration = .ephemeral) {
     self.service = service; super.init()
     configuration.urlCache = nil; configuration.httpCookieStorage = nil
+    configuration.urlCredentialStorage = nil; configuration.httpShouldSetCookies = false
     configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
     configuration.timeoutIntervalForRequest = 20; configuration.timeoutIntervalForResource = 30
     configuration.httpMaximumConnectionsPerHost = 2
@@ -89,7 +118,7 @@ public final class ForecastHTTPClient: NSObject, ForecastTransport, URLSessionDa
       finish(dataTask, .failure(WeatherError.http(http.statusCode))); completionHandler(.cancel);
       return
     }
-    guard response.expectedContentLength <= Int64(Self.maximumBytes) else {
+    guard response.expectedContentLength <= Int64(service.maximumBytes) else {
       finish(dataTask, .failure(WeatherError.payloadTooLarge)); completionHandler(.cancel); return
     }
     completionHandler(.allow)
@@ -97,7 +126,7 @@ public final class ForecastHTTPClient: NSObject, ForecastTransport, URLSessionDa
   public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data)
   {
     lock.lock(); let entry = pending[ObjectIdentifier(dataTask)]
-    let oversized = entry.map { data.count > Self.maximumBytes - $0.data.count } ?? false
+    let oversized = entry.map { data.count > service.maximumBytes - $0.data.count } ?? false
     if !oversized { entry?.data.append(data) }; lock.unlock()
     if oversized { finish(dataTask, .failure(WeatherError.payloadTooLarge)); dataTask.cancel() }
   }

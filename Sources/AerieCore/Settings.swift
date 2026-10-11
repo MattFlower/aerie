@@ -98,6 +98,8 @@ public struct Settings: Codable, Equatable {
   public var temperature = TemperatureUnit.celsius
   public var binaryBytes = true
   public var networkBits = false
+  public var publicAddress: Bool?
+  public var effectivePublicAddress: Bool { publicAddress ?? false }
   public var networkInterfaces: [String]?
   public var networkSelection: NetworkSelection { NetworkSelection(names: networkInterfaces) }
   public var compactSpacing = false
