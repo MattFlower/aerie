@@ -5,7 +5,7 @@ import ServiceManagement
 import UserNotifications
 import UniformTypeIdentifiers
 
-final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private let defaults = UserDefaults.standard
   private var settings = Settings()
   private var items: [(MenuConfiguration, NSStatusItem)] = []
@@ -16,7 +16,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var rules = RuleEngine()
   private var changeRules = ChangeRuleEngine()
   private var dashboard = DashboardController()
-  private var popover = NSPopover()
+  private var menuPanel = MenuPanel()
   private var preferences: PreferencesController?
   private var keyboardShortcuts: KeyboardShortcuts?
   private var shortcutStatus: String?
@@ -66,10 +66,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     }
     history.configure(interval: settings.interval)
     configureHistoryPersistence(load: true)
-    popover.behavior = .transient
-    popover.contentSize = NSSize(width: 416, height: 620)
-    popover.contentViewController = dashboard
-    popover.delegate = self
+    menuPanel.contentSize = NSSize(width: 416, height: 620)
+    menuPanel.contentViewController = dashboard
+    menuPanel.onClose = { [weak self] in self?.dashboardDidClose() }
     dashboard.canvas.onSelectDate = { [weak self] date in
       self?.calendarSelection.select(date); self?.updateCalendar()
     }
@@ -210,7 +209,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         self.dashboard.suspended = self.paused
         self.collector?.setSuspended(self.paused)
         self.weatherFetchTime = .distantPast
-        if self.popover.isShown { self.updateCalendar() }
+        if self.menuPanel.isShown { self.updateCalendar() }
       })
     if !LaunchPresentation.silent(
       arguments: CommandLine.arguments, event: NSAppleEventManager.shared().currentAppleEvent)
@@ -220,12 +219,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
   {
-    if !flag { showSettings() }
+    if !flag && !menuPanel.isShown { showSettings() }
     return true
   }
   func applicationDidHide(_ notification: Notification) {
     cancelWiFiPermission()
-    popover.performClose(nil); collector?.setVisibleModule(nil)
+    menuPanel.performClose(nil); collector?.setVisibleModule(nil)
   }
   func applicationWillTerminate(_ notification: Notification) {
     if let calendarObserver { NotificationCenter.default.removeObserver(calendarObserver) }
@@ -252,7 +251,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     preferences?.validateCalendarAccess()
     var snapshot = reading; snapshot.networkSelection = settings.networkSelection
     snapshot.releaseActiveViewState(
-      module: popover.isShown ? dashboard.module : nil, suspended: paused || sleeping)
+      module: menuPanel.isShown ? dashboard.module : nil, suspended: paused || sleeping)
     if snapshot.wifi != nil {
       snapshot.wifi?.recheckAuthorization(WiFiAccess.nativeAuthorization())
     }
@@ -288,7 +287,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     samplingProfiler?.mark(.appMenu)
     updateItems()
     samplingProfiler?.mark(.appVisible)
-    if popover.isShown {
+    if menuPanel.isShown {
       if dashboard.module == .time { updateCalendar(force: false) }
       dashboard.snapshot = snapshot
       dashboard.history = history
@@ -446,7 +445,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       points: points,
       resolutionSeconds: window == 0 ? settings.interval : window == 1 ? 60 : 3600,
       aggregateScope: settings.networkSelection.description)
-    popover.performClose(nil)
+    menuPanel.performClose(nil)
     let panel = NSSavePanel(); panel.allowedContentTypes = [.commaSeparatedText]
     panel.nameFieldStringValue = "Aerie-history.csv"
     panel.message =
@@ -502,15 +501,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
       return
     }
-    if popover.isShown {
-      popover.performClose(nil)
+    if menuPanel.isShown {
+      menuPanel.performClose(nil)
       return
     }
     let module = items.first { $0.1.button === sender }?.0.module ?? .overview
     showModule(module, anchoredTo: sender)
   }
   private func showModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
-    if popover.isShown { popover.performClose(nil) }
+    if menuPanel.isShown { menuPanel.performClose(nil) }
     dashboard.snapshot = snapshot
     dashboard.settings = settings
     updatePublicAddressView()
@@ -523,10 +522,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     dashboard.show(module)
     updateCalendar(opening: true)
     collector?.setVisibleModule(module)
-    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-    popover.contentViewController?.view.window?.makeKey()
+    menuPanel.show(anchoredTo: button)
+    menuPanel.contentViewController?.view.window?.makeKey()
   }
-  func popoverDidClose(_ notification: Notification) {
+  private func dashboardDidClose() {
     collector?.setVisibleModule(nil); releaseViewMetadata(module: nil)
     dashboard.history = HistoryStore(interval: settings.interval);
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
@@ -707,7 +706,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     return image
   }
   @objc private func showSettings() {
-    popover.performClose(nil)
+    menuPanel.performClose(nil)
     if let preferences {
       preferences.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
     }
@@ -745,7 +744,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     configureShortcuts()
     configurePublicAddress()
     lastCalendarRefresh = .distantPast
-    if popover.isShown { updateCalendar() }
+    if menuPanel.isShown { updateCalendar() }
     rules.reset()
     changeRules.reset()
     if weatherChanged {
@@ -770,8 +769,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       keyboardShortcuts?.onPress = { [weak self] binding in
         guard let self else { return }
         guard let module = binding.module else { self.showSettings(); return }
-        if self.popover.isShown, self.dashboard.module == module {
-          self.popover.performClose(nil); return
+        if self.menuPanel.isShown, self.dashboard.module == module {
+          self.menuPanel.performClose(nil); return
         }
         guard
           let button = self.items.first(where: { $0.0.module == module })?.1.button
@@ -795,7 +794,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       publicAddressReader = PublicAddressReader()
       publicAddressReader?.onUpdate = { [weak self] in
         guard let self else { return }; self.updatePublicAddressView()
-        if self.popover.isShown && self.dashboard.module == .network { self.dashboard.refresh() }
+        if self.menuPanel.isShown && self.dashboard.module == .network { self.dashboard.refresh() }
       }
     }
     publicAddressReader?.configure(enabled: true, suspended: paused || sleeping)
@@ -807,7 +806,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       status: publicAddressReader?.status ?? "Public IP lookup is off")
   }
   private func showMaps() {
-    popover.performClose(nil)
+    menuPanel.performClose(nil)
     guard settings.weather.mapsValid else { showSettings(); return }
     if let weatherMaps {
       weatherMaps.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
@@ -841,7 +840,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     if paused {
       cancelWiFiPermission()
       releaseViewMetadata(module: nil); clearCalendar()
-    } else if popover.isShown {
+    } else if menuPanel.isShown {
       updateCalendar()
     }
     rules.reset()
@@ -945,7 +944,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     lastCalendarRefresh = .distantPast
   }
   private func updateCalendar(force: Bool = true, opening: Bool = false) {
-    guard !paused, !sleeping, dashboard.module == .time, popover.isShown || opening else {
+    guard !paused, !sleeping, dashboard.module == .time, menuPanel.isShown || opening else {
       clearCalendar(); return
     }
     let now = Date(), calendar = menuCalendar
@@ -983,7 +982,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       let ranges = [month.dayInterval, DateInterval(start: now, end: upcomingEnd)]
       calendarReader.load(ranges: ranges, calendars: settings.eventCalendars) {
         [weak self] result in
-        guard let self, !self.paused, self.dashboard.module == .time, self.popover.isShown else {
+        guard let self, !self.paused, self.dashboard.module == .time, self.menuPanel.isShown else {
           return
         }
         self.calendarDetails.removeAll()

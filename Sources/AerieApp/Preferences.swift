@@ -177,12 +177,14 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
         frame: NSRect(x: 190, y: y, width: 180, height: 28), pullsDown: false)
       style.addItems(withTitles: ["Text", "Graph", "Compact", "Stacked"])
       style.selectItem(at: DisplayStyle.allCases.firstIndex(of: menu.style) ?? 0)
+      style.setAccessibilityLabel(menu.module.title + " display style")
       menus.addSubview(style)
       menuStyles[menu.module] = style
       let order = NSPopUpButton(
         frame: NSRect(x: 395, y: y, width: 135, height: 28), pullsDown: false)
       order.addItems(withTitles: (1...settings.menus.count).map(String.init))
       order.selectItem(at: index)
+      order.setAccessibilityLabel(menu.module.title + " menu order")
       menus.addSubview(order)
       menuOrders[menu.module] = order
       let color = NSTextField(string: menu.colorHex ?? "")

@@ -126,6 +126,7 @@ final class DashboardView: NSView {
       if let e = e as? HistoryChartAccessibilityElement { e.owner = self }
       e.setAccessibilityParent(self)
       e.setAccessibilityRole(chart ? .button : .staticText)
+      e.setAccessibilityEnabled(true)
       e.setAccessibilityLabel(label)
       if let window {
         e.setAccessibilityFrame(

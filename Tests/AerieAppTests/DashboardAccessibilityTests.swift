@@ -23,6 +23,7 @@ final class DashboardAccessibilityTests: XCTestCase {
     XCTAssertEqual(view.selectedPoint?.date, points[1].date)
     XCTAssertTrue(next[1].accessibilityLabel()?.contains("20.00") == true)
     XCTAssertEqual(next[1].accessibilityRole(), .button)
+    XCTAssertTrue(next[1].isAccessibilityEnabled())
     view.releaseInteractiveRows()
     XCTAssertTrue(view.points.isEmpty); XCTAssertNil(view.selectedPoint)
     XCTAssertNil(next[1].accessibilityParent())
