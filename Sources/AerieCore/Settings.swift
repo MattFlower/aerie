@@ -17,17 +17,21 @@ public enum Module: String, CaseIterable, Codable {
     }
   }
 }
-public enum DisplayStyle: String, CaseIterable, Codable { case text, graph, compact }
+public enum DisplayStyle: String, CaseIterable, Codable { case text, graph, compact, stacked }
 public enum Theme: String, CaseIterable, Codable { case system, light, dark }
 public enum TemperatureUnit: String, Codable { case celsius, fahrenheit }
 public struct MenuConfiguration: Codable, Equatable {
   public var module: Module
   public var visible: Bool
   public var style: DisplayStyle
-  public init(module: Module, visible: Bool = true, style: DisplayStyle = .text) {
+  public var colorHex: String?
+  public init(
+    module: Module, visible: Bool = true, style: DisplayStyle = .text, colorHex: String? = nil
+  ) {
     self.module = module
     self.visible = visible
     self.style = style
+    self.colorHex = colorHex
   }
 }
 public struct WorldClock: Codable, Equatable {
@@ -82,7 +86,13 @@ public struct Settings: Codable, Equatable {
     MenuConfiguration(module: .time, visible: false),
     MenuConfiguration(module: .gpu, visible: false),
   ]
+  public var persistentHistory: Bool?
+  public var effectivePersistentHistory: Bool { persistentHistory ?? false }
   public var combined = false
+  public var combinedModules: [Module]?
+  public var effectiveCombinedModules: [Module] { combinedModules ?? [.cpu, .memory] }
+  public var combinedStyle: DisplayStyle?
+  public var combinedColorHex: String?
   public var theme = Theme.system
   public var temperature = TemperatureUnit.celsius
   public var binaryBytes = true
@@ -107,8 +117,16 @@ public struct Settings: Codable, Equatable {
       networkSelection.valid,
       menus.count <= Module.allCases.count,
       Set(menus.map(\.module)).count == menus.count,
-      menus.contains(where: \.visible), clockFormat.count <= 80,
-      clocks.count <= 20, clocks.allSatisfy({ TimeZone(identifier: $0.zone) != nil }),
+      combined || menus.contains(where: \.visible), clockFormat.count <= 80,
+      menus.allSatisfy({ MenuColor.valid($0.colorHex) }),
+      (1...6).contains(effectiveCombinedModules.count),
+      !effectiveCombinedModules.contains(.overview),
+      Set(effectiveCombinedModules).count == effectiveCombinedModules.count,
+      combinedStyle != .graph, MenuColor.valid(combinedColorHex),
+      clocks.count <= 20,
+      clocks.allSatisfy({
+        !$0.name.isEmpty && $0.name.count <= 64 && TimeZone(identifier: $0.zone) != nil
+      }),
       rules.count <= 50, rules.allSatisfy(\.valid), Set(rules.map(\.id)).count == rules.count,
       (changeRules ?? []).count <= ChangeKind.allCases.count,
       (changeRules ?? []).allSatisfy(\.valid),

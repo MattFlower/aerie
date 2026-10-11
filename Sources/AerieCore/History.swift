@@ -144,3 +144,67 @@ public struct HistoryStore {
     window == 0 ? recent.values : window == 1 ? minutes.values : hours.values
   }
 }
+
+extension HistoryStore {
+  /// Preserve pending sums/counts, so restarting neither loses nor double-counts a partial bucket.
+  public func checkpoint(interval: Double, networkSelection: NetworkSelection, now: Date) throws
+    -> HistoryCheckpoint
+  {
+    func points(_ values: [HistoryPoint], age: Double) -> [HistoryPoint] {
+      values.filter { now.timeIntervalSince($0.date) <= age }.map {
+        let values = $0.values.filter { HistoryCheckpoint.keys.contains($0.key) }
+        return HistoryPoint(
+          date: $0.date, values: values,
+          sampleCounts: $0.sampleCounts?.filter { values[$0.key] != nil })
+      }
+    }
+    func accumulator(_ bucket: Int?, sums: [String: Double], counts: [String: Int], age: Double)
+      -> HistoryAccumulator
+    {
+      guard let lastDate, now.timeIntervalSince(lastDate) <= age else {
+        return HistoryAccumulator(bucket: nil, sums: [:], counts: [:])
+      }
+      let sums = sums.filter { HistoryCheckpoint.keys.contains($0.key) && $0.value.isFinite }
+      return HistoryAccumulator(
+        bucket: bucket, sums: sums, counts: counts.filter { sums[$0.key] != nil })
+    }
+    let value = HistoryCheckpoint(
+      schema: 1, interval: interval, savedAt: now, lastDate: lastDate,
+      networkInterfaces: networkSelection.names, recent: points(recent.values, age: 600),
+      minutes: points(minutes.values, age: 86_400), hours: points(hours.values, age: 604_800),
+      minute: accumulator(minuteBucket, sums: minuteSums, counts: minuteCounts, age: 86_400),
+      hour: accumulator(hourBucket, sums: hourSums, counts: hourCounts, age: 604_800))
+    try value.validate(now: now); return value
+  }
+  public static func restore(
+    _ checkpoint: HistoryCheckpoint, interval: Double, networkSelection: NetworkSelection, now: Date
+  ) throws -> HistoryStore {
+    try checkpoint.validate(now: now)
+    guard [0.5, 1, 2, 3, 5].contains(interval), networkSelection.valid else {
+      throw HistoryArchiveError.invalid
+    }
+    var result = HistoryStore(interval: interval)
+    for point in checkpoint.recent.filter({ now.timeIntervalSince($0.date) <= 600 }).suffix(
+      result.recent.capacity)
+    { result.recent.append(point) }
+    for point in checkpoint.minutes where now.timeIntervalSince(point.date) <= 86_400 {
+      result.minutes.append(point)
+    }
+    for point in checkpoint.hours where now.timeIntervalSince(point.date) <= 604_800 {
+      result.hours.append(point)
+    }
+    result.lastDate = checkpoint.lastDate
+    if let last = checkpoint.lastDate, now.timeIntervalSince(last) <= 86_400 {
+      result.minuteBucket = checkpoint.minute.bucket; result.minuteSums = checkpoint.minute.sums;
+      result.minuteCounts = checkpoint.minute.counts
+    }
+    if let last = checkpoint.lastDate, now.timeIntervalSince(last) <= 604_800 {
+      result.hourBucket = checkpoint.hour.bucket; result.hourSums = checkpoint.hour.sums;
+      result.hourCounts = checkpoint.hour.counts
+    }
+    if NetworkSelection(names: checkpoint.networkInterfaces) != networkSelection {
+      result.removeMetrics(["download", "upload"])
+    }
+    return result
+  }
+}

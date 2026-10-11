@@ -12,6 +12,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var collector: Collector?
   private var snapshot = Snapshot()
   private var history = HistoryStore()
+  private var historyPersistence: HistoryPersistence?
   private var rules = RuleEngine()
   private var changeRules = ChangeRuleEngine()
   private var dashboard = DashboardController()
@@ -38,6 +39,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private lazy var ridgeMark = ridgeImage()
   private let clockFormatter = DateFormatter()
   private var graphValues: [Module: [Double?]] = [:]
+  private var stackedValues: [Module: [String]] = [:]
   private var accessibilityValues: [Module: String] = [:]
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -51,7 +53,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     if CommandLine.arguments.contains("--sensor-sampling-demand") {
       settings.sensorSampling = .whenNeeded
     }
+    if CommandLine.arguments.contains("--history-archive-path") {
+      settings.persistentHistory = true
+    }
     history.configure(interval: settings.interval)
+    configureHistoryPersistence(load: true)
     popover.behavior = .transient
     popover.contentSize = NSSize(width: 416, height: 620)
     popover.contentViewController = dashboard
@@ -179,6 +185,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   func applicationWillTerminate(_ notification: Notification) {
     if let calendarObserver { NotificationCenter.default.removeObserver(calendarObserver) }
+    historyPersistence?.save(
+      history, interval: settings.interval, selection: settings.networkSelection, force: true)
+    historyPersistence?.finish()
     clearCalendar()
     calendarAccess.cancel()
     weatherTask?.cancel()
@@ -194,6 +203,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     self.snapshot = snapshot
     let metrics = snapshot.metrics
     history.append(HistoryPoint(date: snapshot.date, values: metrics))
+    historyPersistence?.save(
+      history, interval: settings.interval, selection: settings.networkSelection)
     for rule in rules.evaluate(
       rules: settings.rules, values: metrics, time: ProcessInfo.processInfo.systemUptime)
     {
@@ -212,6 +223,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       if dashboard.module == .time { updateCalendar(force: false) }
       dashboard.snapshot = snapshot
       dashboard.history = history
+      dashboard.historyStatus = historyPersistence?.status ?? "History archive is off"
       dashboard.settings = settings
       dashboard.weather = weatherReport
       dashboard.weatherStatus = weatherStatus
@@ -291,6 +303,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
             .count,
           "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,
           "refreshInterval": settings.interval, "weatherOptIn": settings.weather.enabled,
+          "persistentHistory": settings.effectivePersistentHistory,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]),
           let text = String(data: data, encoding: .utf8)
@@ -298,6 +311,38 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
           print(text)
         }
         NSApp.terminate(nil)
+      }
+    }
+  }
+  private func configureHistoryPersistence(load: Bool = false, erase: Bool = false) {
+    if historyPersistence == nil, settings.effectivePersistentHistory {
+      let arguments = CommandLine.arguments
+      let url: URL?
+      if let index = arguments.firstIndex(of: "--history-archive-path"),
+        index + 1 < arguments.count, arguments[index + 1].hasPrefix("/")
+      {
+        url = URL(fileURLWithPath: arguments[index + 1])
+      } else {
+        url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+          .first?.appendingPathComponent("Aerie/history-v1.json")
+      }
+      if let url { historyPersistence = HistoryPersistence(file: LocalHistoryFile(url: url)) }
+    }
+    historyPersistence?.configure(enabled: settings.effectivePersistentHistory, erase: erase)
+    if load {
+      let loadingSelection = settings.networkSelection
+      historyPersistence?.load(interval: settings.interval, selection: settings.networkSelection) {
+        [weak self] restored in
+        guard let self, var restored, self.settings.effectivePersistentHistory,
+          self.history.recent.count < self.history.recent.capacity
+        else { return }
+        // Only merge when every sample since launch is still retained; no partial replay.
+        for point in self.history.recent.values { restored.append(point) }
+        if self.settings.networkSelection != loadingSelection {
+          restored.removeMetrics(["download", "upload"])
+        }
+        restored.configure(interval: self.settings.interval)
+        self.history = restored
       }
     }
   }
@@ -323,12 +368,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private func rebuildItems() {
     for (_, item) in items { NSStatusBar.system.removeStatusItem(item) }
     items.removeAll()
-    graphValues.removeAll()
+    graphValues.removeAll(); stackedValues.removeAll()
     accessibilityValues.removeAll()
     clockFormatter.dateFormat = settings.clockFormat
     let menus =
       settings.combined
-      ? [MenuConfiguration(module: .overview, style: settings.menus.first?.style ?? .text)]
+      ? [
+        MenuConfiguration(
+          module: .overview, style: settings.combinedStyle ?? .text,
+          colorHex: settings.combinedColorHex)
+      ]
       : settings.menus.filter(\.visible)
     for menu in menus {
       let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -366,6 +415,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     dashboard.snapshot = snapshot
     dashboard.settings = settings
     dashboard.history = history
+    dashboard.historyStatus = historyPersistence?.status ?? "History archive is off"
     dashboard.weather = weatherReport
     dashboard.weatherStatus = weatherStatus
     _ = dashboard.view
@@ -390,35 +440,25 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     for (configuration, item) in items {
       guard let button = item.button else { continue }
       let module = configuration.module
-      let value: String
-      switch module {
-      case .overview: value = "Aerie"
-      case .cpu: value = "CPU \(Format.percent(snapshot.cpu.total))"
-      case .gpu: value = "GPU \(Format.percent(snapshot.gpu.first?.utilization))"
-      case .memory: value = "MEM \(Format.percent(snapshot.memory.usedFraction))"
-      case .storage:
-        value = snapshot.volumes.first.map { "SSD \(Format.percent($0.usedFraction))" } ?? "SSD —"
-      case .network: value = "↓\(shortRate(snapshot.download)) ↑\(shortRate(snapshot.upload))"
-      case .sensors:
-        value =
-          snapshot.sensors.first(where: { $0.unit == "°C" && $0.state == .live }).flatMap(\.value)
-          .map {
-            Format.temperature($0, unit: settings.temperature)
-          } ?? "TEMP —"
-      case .power:
-        value = snapshot.power.present ? "BAT \(Format.percent(snapshot.power.percent))" : "PWR AC"
-      case .time:
-        value = clockFormatter.string(from: Date())
-      case .weather:
-        value =
-          weatherReport?.temperature.map { Format.temperature($0, unit: settings.temperature) }
-          ?? "WX —"
+      let components = (settings.combined ? settings.effectiveCombinedModules : [module]).map {
+        menuValue($0)
       }
-      if configuration.style == .graph, let key = graphKey(module) {
+      let value = MenuPresentation.combined(components, compact: false)
+      let color = MenuRenderer.color(configuration.colorHex)
+      button.contentTintColor = color
+      if configuration.style == .stacked {
+        let lines = MenuPresentation.stacked(components)
+        let first = (paused ? "⏸ " : "") + lines.0
+        let identity = [first, lines.1, configuration.colorHex ?? "system"]
+        if stackedValues[module] != identity {
+          button.title = ""; button.image = MenuRenderer.stacked(first, lines.1, color: color)
+          stackedValues[module] = identity
+        }
+      } else if configuration.style == .graph, let key = graphKey(module) {
         let points = history.recent.suffix(48).map { $0.values[key] }
         if graphValues[module] != points {
           if !button.title.isEmpty { button.title = "" }
-          button.image = graphImage(points, key: key)
+          button.image = graphImage(points, key: key, color: color)
           graphValues[module] = points
         }
       } else {
@@ -427,22 +467,91 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         } else if button.image != nil {
           button.image = nil
         }
-        let title =
-          configuration.style == .compact
-          ? value.replacingOccurrences(
-            of: "\(module == .memory ? "MEM" : module.title.uppercased()) ", with: "") : value
+        let title = MenuPresentation.combined(components, compact: configuration.style == .compact)
         let displayed = paused ? "⏸ " + title : title
         if button.attributedTitle.string != displayed {
           let font = NSFont.monospacedDigitSystemFont(
             ofSize: settings.compactSpacing ? 10 : 11, weight: .medium)
-          button.attributedTitle = NSAttributedString(string: displayed, attributes: [.font: font])
+          button.attributedTitle = NSAttributedString(
+            string: displayed,
+            attributes: [.font: font, .foregroundColor: color ?? NSColor.labelColor])
         }
       }
-      let tooltip = "Aerie \(module.title): \(value)\(paused ? " · sampling paused" : "")"
-      if button.toolTip != tooltip { button.toolTip = tooltip }
-      if accessibilityValues[module] != value {
-        button.setAccessibilityValue(value); accessibilityValues[module] = value
+      let accessible: String
+      if configuration.style == .stacked {
+        let lines = MenuPresentation.stacked(components)
+        accessible = lines.0 + " · " + lines.1 + (paused ? " · sampling paused" : "")
+      } else {
+        accessible = value + (paused ? " · sampling paused" : "")
       }
+      let tooltip = "Aerie \(module.title): \(accessible)\(paused ? " · sampling paused" : "")"
+      if button.toolTip != tooltip { button.toolTip = tooltip }
+      if accessibilityValues[module] != accessible {
+        button.setAccessibilityValue(accessible); accessibilityValues[module] = accessible
+      }
+    }
+  }
+  private func menuValue(_ module: Module) -> MenuValue {
+    switch module {
+    case .overview:
+      return MenuValue(full: "Aerie", secondary: "CPU " + Format.percent(snapshot.cpu.total))
+    case .cpu:
+      return MenuValue(
+        full: "CPU " + Format.percent(snapshot.cpu.total),
+        compact: Format.percent(snapshot.cpu.total),
+        secondary: "U " + Format.percent(snapshot.cpu.user) + " S "
+          + Format.percent(snapshot.cpu.system))
+    case .gpu:
+      return MenuValue(
+        full: "GPU " + Format.percent(snapshot.gpu.first?.utilization),
+        compact: Format.percent(snapshot.gpu.first?.utilization),
+        secondary: snapshot.gpu.first?.memory.map {
+          "MEM " + Format.bytes($0, binary: settings.binaryBytes)
+        } ?? "MEM —")
+    case .memory:
+      return MenuValue(
+        full: "MEM " + Format.percent(snapshot.memory.usedFraction),
+        compact: Format.percent(snapshot.memory.usedFraction),
+        secondary: snapshot.memory.usedFraction.map {
+          Format.bytes($0 * snapshot.memory.total, binary: settings.binaryBytes)
+        } ?? "Unavailable")
+    case .storage:
+      return MenuValue(
+        full: "SSD " + (snapshot.volumes.first.map { Format.percent($0.usedFraction) } ?? "—"),
+        compact: snapshot.volumes.first.map { Format.percent($0.usedFraction) } ?? "—",
+        secondary: "R " + shortRate(snapshot.diskRead) + " W " + shortRate(snapshot.diskWrite))
+    case .network:
+      return MenuValue(
+        full: "↓" + shortRate(snapshot.download) + " ↑" + shortRate(snapshot.upload),
+        secondary: "↑" + shortRate(snapshot.upload),
+        stackedPrimary: "↓" + shortRate(snapshot.download))
+    case .sensors:
+      let temperatures = snapshot.sensors.filter { $0.unit == "°C" && $0.state == .live }
+        .compactMap(\.value)
+      let current =
+        temperatures.first.map { Format.temperature($0, unit: settings.temperature) } ?? "TEMP —"
+      return MenuValue(
+        full: current,
+        secondary: temperatures.max().map {
+          "MAX " + Format.temperature($0, unit: settings.temperature)
+        } ?? "Unavailable")
+    case .power:
+      return MenuValue(
+        full: snapshot.power.present ? "BAT " + Format.percent(snapshot.power.percent) : "PWR AC",
+        compact: snapshot.power.present ? Format.percent(snapshot.power.percent) : "AC",
+        secondary: snapshot.power.minutes.map { Format.duration(Double($0) * 60) } ?? snapshot.power
+          .source ?? "Time unavailable")
+    case .time:
+      return MenuValue(
+        full: clockFormatter.string(from: Date()),
+        secondary: TimeZone.current.abbreviation() ?? "Local")
+    case .weather:
+      return MenuValue(
+        full: weatherReport?.temperature.map { Format.temperature($0, unit: settings.temperature) }
+          ?? "WX —",
+        secondary: weatherReport?.condition ?? weatherReport.map {
+          WeatherCondition.describe($0.code)
+        } ?? "Weather unavailable")
     }
   }
   private func shortRate(_ value: Double?) -> String {
@@ -464,15 +573,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     default: return nil
     }
   }
-  private func graphImage(_ points: [Double?], key: String) -> NSImage {
+  private func graphImage(_ points: [Double?], key: String, color: NSColor?) -> NSImage {
     let image = NSImage(size: NSSize(width: 48, height: 18), flipped: true) { rect in
       let maxValue =
         ["cpu", "gpu", "memory", "battery"].contains(key)
         ? 100 : max(1, points.compactMap { $0 }.max() ?? 1)
-      drawSparkline(points, in: rect.insetBy(dx: 2, dy: 2), color: .labelColor, maximum: maxValue)
+      drawSparkline(
+        points, in: rect.insetBy(dx: 2, dy: 2), color: color ?? .labelColor, maximum: maxValue)
       return true
     }
-    image.isTemplate = true
+    image.isTemplate = color == nil
     return image
   }
   private func ridgeImage() -> NSImage {
@@ -514,10 +624,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     guard let valid = try? settings.validated() else { return }
     let weatherChanged = self.settings.weather != valid.weather
     let networkChanged = self.settings.networkSelection != valid.networkSelection
+    let persistenceChanged =
+      self.settings.effectivePersistentHistory != valid.effectivePersistentHistory
     self.settings = valid
     snapshot.networkSelection = valid.networkSelection
     if networkChanged { history.removeMetrics(["download", "upload"]) }
     history.configure(interval: valid.interval)
+    if persistenceChanged { configureHistoryPersistence(erase: !valid.effectivePersistentHistory) }
     if let data = try? JSONEncoder().encode(valid) { defaults.set(data, forKey: "settings") }
     collector?.configure(valid)
     rebuildItems()

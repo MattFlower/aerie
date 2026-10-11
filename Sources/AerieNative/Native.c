@@ -194,6 +194,7 @@ AerieProcess aerie_process(int pid) {
     struct rusage_info_v4 usage = {0};
     if (proc_pid_rusage(pid, RUSAGE_INFO_V4, (rusage_info_t *)&usage) != 0) { out.error = errno; return out; }
     out.footprint = usage.ri_phys_footprint; out.resident = usage.ri_resident_size;
+    out.lifetime_peak_footprint = usage.ri_lifetime_max_phys_footprint;
     // rusage CPU time uses Mach absolute units, which differ from nanoseconds on arm64.
     mach_timebase_info_data_t timebase; mach_timebase_info(&timebase);
     uint64_t absolute = usage.ri_user_time + usage.ri_system_time;

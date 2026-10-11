@@ -15,6 +15,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var menuToggles: [Module: NSButton] = [:]
   private var menuStyles: [Module: NSPopUpButton] = [:]
   private var menuOrders: [Module: NSPopUpButton] = [:]
+  private var menuColors: [Module: NSTextField] = [:]
   private var clocksField = NSTextView()
   private let rulesPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   private let ruleMetrics = [
@@ -139,14 +140,21 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Full sampling is the default. On demand still samples every temperature at the chosen interval for history and rules; fans, power, voltage and current are read at that same interval while Sensors is open. Inventory is always retained; deferred readings are never treated as zero or stale live values.",
       y: 661, in: general, height: 92)
-    general.setFrameSize(NSSize(width: 600, height: 775))
+    toggle(
+      "persistentHistory", title: "Keep numeric history between launches",
+      value: settings.effectivePersistentHistory, y: 765, in: general)
+    label(
+      "Local archive: 2 MB maximum, saved once per minute and on normal exit. Turning this off deletes the archive. No process, calendar, weather or sensor names are saved.",
+      y: 805, in: general, height: 62)
+    general.setFrameSize(NSSize(width: 600, height: 885))
     let menus = tab("Menus", in: tabs)
     toggle(
       "combined", title: "Use one combined menu-bar item", value: settings.combined, y: 14,
       in: menus)
     label("Visible items", y: 60, in: menus)
-    let columnLabels = NSTextField(labelWithString: "Style                               Order")
-    columnLabels.frame = NSRect(x: 194, y: 60, width: 350, height: 22);
+    let columnLabels = NSTextField(
+      labelWithString: "Style                               Order              Color")
+    columnLabels.frame = NSRect(x: 194, y: 60, width: 400, height: 22);
     menus.addSubview(columnLabels)
     for (index, menu) in settings.menus.enumerated() {
       let y = CGFloat(96 + index * 38)
@@ -157,7 +165,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       menuToggles[menu.module] = toggle
       let style = NSPopUpButton(
         frame: NSRect(x: 190, y: y, width: 180, height: 28), pullsDown: false)
-      style.addItems(withTitles: ["Text", "Graph", "Compact"])
+      style.addItems(withTitles: ["Text", "Graph", "Compact", "Stacked"])
       style.selectItem(at: DisplayStyle.allCases.firstIndex(of: menu.style) ?? 0)
       menus.addSubview(style)
       menuStyles[menu.module] = style
@@ -167,10 +175,30 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       order.selectItem(at: index)
       menus.addSubview(order)
       menuOrders[menu.module] = order
+      let color = NSTextField(string: menu.colorHex ?? "")
+      color.placeholderString = "Auto"; color.frame = NSRect(x: 538, y: y, width: 60, height: 26)
+      color.setAccessibilityLabel(
+        menu.module.title + " color, hexadecimal RGB or empty for automatic")
+      menus.addSubview(color); menuColors[menu.module] = color
     }
     label(
       "Assign each item a different order. You can also Command-drag visible items in the macOS menu bar. Hiding an item does not remove its data from the combined dashboard.",
       y: 492, in: menus, height: 60)
+    field(
+      "combinedModules", title: "Combined items (names, ordered)",
+      value: settings.effectiveCombinedModules.map(\.title).joined(separator: ","), y: 565,
+      in: menus)
+    choice(
+      "combinedStyle", title: "Combined display", values: ["Text", "Compact", "Stacked"],
+      selected: [DisplayStyle.text, .compact, .stacked].firstIndex(
+        of: settings.combinedStyle ?? .text) ?? 0, y: 607, in: menus)
+    field(
+      "combinedColor", title: "Combined color (#RRGGBB or empty)",
+      value: settings.combinedColorHex ?? "", y: 649, in: menus)
+    label(
+      "Choose 1–6 unique names: CPU, GPU, Memory, Storage, Network, Sensors, Power, Time, Weather. Empty colors follow macOS appearance; custom colors need sufficient contrast. Stacked items show two lines. Hidden items are still sampled.",
+      y: 690, in: menus, height: 82)
+    menus.setFrameSize(NSSize(width: 600, height: 792))
 
     let network = tab("Network", in: tabs)
     label(
@@ -355,8 +383,16 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       : fields["networkNames"]!.stringValue.split(separator: ",", omittingEmptySubsequences: false)
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     s.compactSpacing = toggles["spacing"]!.state == .on
+    s.persistentHistory = toggles["persistentHistory"]!.state == .on
     s.sensorSampling = choices["sensors"]!.indexOfSelectedItem == 0 ? .all : .whenNeeded
     s.combined = toggles["combined"]!.state == .on
+    s.combinedModules = try MenuPresentation.modules(
+      fromTitles: fields["combinedModules"]!.stringValue)
+    s.combinedStyle =
+      [DisplayStyle.text, .compact, .stacked][choices["combinedStyle"]!.indexOfSelectedItem]
+    let combinedColor = fields["combinedColor"]!.stringValue.trimmingCharacters(
+      in: .whitespacesAndNewlines)
+    s.combinedColorHex = combinedColor.isEmpty ? nil : combinedColor
     s.clockFormat = fields["clockFormat"]!.stringValue
     s.weekStartsMonday = toggles["monday"]!.state == .on
     s.showWeekNumbers = toggles["weeks"]!.state == .on
@@ -389,7 +425,8 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.menus = order.sorted { $0.1 < $1.1 }.map {
       MenuConfiguration(
         module: $0.0, visible: menuToggles[$0.0]!.state == .on,
-        style: DisplayStyle.allCases[menuStyles[$0.0]!.indexOfSelectedItem])
+        style: DisplayStyle.allCases[menuStyles[$0.0]!.indexOfSelectedItem],
+        colorHex: menuColors[$0.0]!.stringValue.isEmpty ? nil : menuColors[$0.0]!.stringValue)
     }
     return try s.validated()
   }
@@ -401,7 +438,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       errorLabel.stringValue = "Settings applied"
     } catch {
       errorLabel.stringValue =
-        "Check numeric values, valid time zones, unique menu order, and at least one visible item."
+        "Check values, time zones, unique menu order/modules, #RRGGBB colors, and a visible or combined item."
     }
   }
   private func ruleFromForm() -> ThresholdRule? {

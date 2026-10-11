@@ -27,7 +27,8 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
 - Local/world clocks, selectable monthly calendar with navigation and week numbers, optional selected-day/upcoming local event details, and approximate lunar phase.
 - Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.
-- Ten-minute detailed history, one day of minute averages, and one week of hourly averages.
+- Ten-minute detailed history, one day of minute averages, and one week of hourly averages; optional bounded local checkpoints preserve partial aggregate counts across restarts.
+- Native text, graph, compact or two-line menu items, per-item colors, and ordered combined-module values.
 - Opt-in Open-Meteo current/hourly/daily model forecasts or US NWS station observations, hourly/named-period forecasts and current point-alert details, with explicit provider/location consent.
 - Separately opted-in native NOAA weather maps: observed radar, satellite bands, tropical tracks, official alert overlays, wind barbs/speed, temperature, precipitation and snow forecasts, plus current point-alert messages with distinct sent/effective/onset/expiry/end times.
 

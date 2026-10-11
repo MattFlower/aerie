@@ -21,7 +21,7 @@ typedef struct {
 typedef struct {
     int pid, ppid, valid, error;
     char name[128];
-    uint64_t footprint, resident, cpu_ns, wakeups, disk_read, disk_write, start_time;
+    uint64_t footprint, resident, cpu_ns, wakeups, disk_read, disk_write, start_time, lifetime_peak_footprint;
 } AerieProcess;
 typedef struct { char key[5], type[5]; double value; } AerieSensor;
 typedef struct { uint32_t key, type, size; } AerieSensorSource;

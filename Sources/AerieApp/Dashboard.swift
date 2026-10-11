@@ -303,6 +303,7 @@ final class DashboardController: NSViewController {
   var snapshot = Snapshot()
   var settings = Settings()
   var history = HistoryStore()
+  var historyStatus = "History archive is off"
   var weather: WeatherReport?
   var weatherStatus = "Weather is off"
   var calendarRows: [DashboardRow] = []
@@ -377,7 +378,11 @@ final class DashboardController: NSViewController {
     canvas.expectedInterval =
       windowPicker.indexOfSelectedItem == 0
       ? settings.interval : windowPicker.indexOfSelectedItem == 1 ? 60 : 3600
-    canvas.update(rows: rows, points: history.points(window: windowPicker.indexOfSelectedItem))
+    canvas.update(
+      rows: rows
+        + (settings.effectivePersistentHistory || historyStatus != "History archive is off"
+          ? [.note(historyStatus)] : []),
+      points: history.points(window: windowPicker.indexOfSelectedItem))
   }
   private func bytes(_ value: Double) -> String {
     Format.bytes(value, binary: settings.binaryBytes)

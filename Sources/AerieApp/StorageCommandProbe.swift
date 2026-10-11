@@ -6,12 +6,14 @@ struct StorageProcessResources: Encodable {
   let pid: Int32
   let birth, resourceIdentity: UInt64
   let footprint, resident, cpuNanoseconds, interruptWakeups: UInt64?
+  let lifetimePeakFootprint: UInt64?
   let error: Int?
   init(pid: Int32, expectedBirth: UInt64 = 0, reaped: Bool = false) {
     self.pid = pid
     if reaped {
       birth = 0; resourceIdentity = 0; footprint = 0; resident = 0
       cpuNanoseconds = nil; interruptWakeups = nil; error = nil
+      lifetimePeakFootprint = nil
     } else {
       let before = aerie_process_birth(pid)
       let value = aerie_process(pid)
@@ -22,6 +24,8 @@ struct StorageProcessResources: Encodable {
       resident = valid ? value.resident : nil
       cpuNanoseconds = valid ? value.cpu_ns : nil
       interruptWakeups = valid ? value.wakeups : nil
+      lifetimePeakFootprint =
+        valid && value.lifetime_peak_footprint > 0 ? value.lifetime_peak_footprint : nil
       error = valid ? nil : matching ? Int(value.error) : Int(ESRCH)
     }
   }
