@@ -71,14 +71,14 @@ final class LocationLookupTests: XCTestCase {
       XCTAssertTrue(controller.window?.styleMask.contains(.resizable) ?? false)
     }
   }
-  func testSessionDeliversOnceAndSettingsCloseCancelsPendingLookup() async throws {
-    let provider = Provider(); var delivered = 0
-    let session = LocationLookupSession { provider }
-    session.search("Synthetic city") { _ in delivered += 1 }
-    let callback = provider.callback
-    callback?(.failure(.permissionDenied)); callback?(.failure(.unavailable))
-    XCTAssertEqual(delivered, 1)
-    try await MainActor.run {
+  func testSessionDeliversOnceAndSettingsCloseCancelsPendingLookup() async {
+    await MainActor.run {
+      let provider = Provider(); var delivered = 0
+      let session = LocationLookupSession { provider }
+      session.search("Synthetic city") { _ in delivered += 1 }
+      let callback = provider.callback
+      callback?(.failure(.permissionDenied)); callback?(.failure(.unavailable))
+      XCTAssertEqual(delivered, 1)
       _ = NSApplication.shared
       let controller = PreferencesController(settings: Settings())
       controller.locationSession = LocationLookupSession { provider }
