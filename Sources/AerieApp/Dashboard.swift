@@ -150,6 +150,9 @@ final class DashboardView: NSView {
     actionButtons.values.forEach { $0.removeFromSuperview() }; actionButtons.removeAll()
     textElements.values.forEach { $0.setAccessibilityParent(nil) }; textElements.removeAll()
     rows.removeAll(); points.removeAll(); selectedPoint = nil; setAccessibilityChildren([])
+    // A large inventory must not leave a tall, empty native document backing after close.
+    frame.size.height = 16
+    needsDisplay = true
   }
   @objc private func performRowAction(_ sender: NSButton) {
     guard rows.indices.contains(sender.tag), case .action(_, _, let identifier) = rows[sender.tag]
@@ -158,7 +161,7 @@ final class DashboardView: NSView {
   }
   override func draw(_ dirtyRect: NSRect) {
     NSColor.windowBackgroundColor.setFill()
-    bounds.fill()
+    dirtyRect.intersection(bounds).fill()
     chartFormatter.dateStyle = .short; chartFormatter.timeStyle = .medium
     var y: CGFloat = 8
     for row in rows {

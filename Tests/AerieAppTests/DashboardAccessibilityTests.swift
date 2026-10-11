@@ -4,6 +4,23 @@ import XCTest
 @testable import AerieApp
 
 final class DashboardAccessibilityTests: XCTestCase {
+  func testFullInventoryRemainsAccessibleAndCloseReleasesItsDocumentExtent() throws {
+    let view = DashboardView(frame: NSRect(x: 0, y: 0, width: 416, height: 600))
+    let rows = (0..<600).map { DashboardRow.metric("Synthetic sensor \($0)", "42 °C") }
+    view.update(rows: rows, points: [])
+    let elements = try XCTUnwrap(view.accessibilityChildren() as? [NSAccessibilityElement])
+    XCTAssertEqual(elements.count, 600)
+    XCTAssertEqual(elements.first?.accessibilityLabel(), "Synthetic sensor 0: 42 °C")
+    XCTAssertEqual(elements.last?.accessibilityLabel(), "Synthetic sensor 599: 42 °C")
+    XCTAssertGreaterThan(view.frame.height, 10_000)
+    view.releaseInteractiveRows()
+    XCTAssertLessThan(view.frame.height, 100)
+    XCTAssertTrue(view.accessibilityChildren()?.isEmpty == true)
+    XCTAssertTrue(elements.allSatisfy { $0.accessibilityParent() == nil })
+    view.update(rows: [.metric("CPU", "10%")], points: [])
+    XCTAssertEqual(view.accessibilityChildren()?.count, 1)
+    XCTAssertLessThan(view.frame.height, 100)
+  }
   func testLiveMetricAndChartElementsKeepIdentityAndUpdateTheirValues() throws {
     let view = DashboardView(frame: NSRect(x: 0, y: 0, width: 416, height: 600))
     let points = [

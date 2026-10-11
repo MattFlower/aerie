@@ -54,10 +54,15 @@ final class MenuPanel: NSObject, NSWindowDelegate {
   func performClose(_ sender: Any?) { panel?.close() }
   func windowWillClose(_ notification: Notification) {
     guard let window = notification.object as? NSWindow, window === panel else { return }
-    panel = nil; window.delegate = nil; window.contentViewController = nil
+    panel = nil; window.delegate = nil; Self.releaseContent(of: window)
     if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
     deactivationObserver = nil
     onClose?()
+  }
+  static func releaseContent(of window: NSWindow) {
+    // Clearing the controller alone can leave its view attached to an ordered-out native window.
+    window.contentViewController = nil
+    window.contentView = nil
   }
   static func origin(anchor: NSRect, visibleFrame: NSRect, size: NSSize) -> NSPoint {
     let margin: CGFloat = 8
