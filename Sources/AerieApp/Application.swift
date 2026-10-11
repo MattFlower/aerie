@@ -237,7 +237,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
   {
     windowLifecycle?.capture(.reopened)
-    if !flag && !menuPanel.isShown { showSettings() }
+    if LaunchPresentation.presentsOnReopen(
+      arguments: CommandLine.arguments, visibleWindows: flag, menuShown: menuPanel.isShown)
+    {
+      showSettings()
+    }
     return true
   }
   func applicationDidHide(_ notification: Notification) {

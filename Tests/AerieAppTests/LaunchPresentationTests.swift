@@ -4,6 +4,27 @@ import XCTest
 @testable import AerieApp
 
 final class LaunchPresentationTests: XCTestCase {
+  func testManualReopenPresentsOnlyWhenNoExistingPresentation() {
+    XCTAssertTrue(
+      LaunchPresentation.presentsOnReopen(
+        arguments: ["Aerie"], visibleWindows: false, menuShown: false))
+    for (windows, menu) in [(true, false), (false, true), (true, true)] {
+      XCTAssertFalse(
+        LaunchPresentation.presentsOnReopen(
+          arguments: ["Aerie"], visibleWindows: windows, menuShown: menu))
+    }
+  }
+  func testExplicitBackgroundAndSelfCheckReopensStayQuiet() {
+    for argument in ["--background", "--self-check"] {
+      XCTAssertFalse(
+        LaunchPresentation.presentsOnReopen(
+          arguments: ["Aerie", argument], visibleWindows: false, menuShown: false))
+    }
+    // System launch markers affect startup, not a later explicit manual reopen.
+    XCTAssertTrue(
+      LaunchPresentation.presentsOnReopen(
+        arguments: ["Aerie", "unrelated-option"], visibleWindows: false, menuShown: false))
+  }
   func testManualLaunchAndSilentArgumentsOrSystemMarkersRemainDistinct() {
     XCTAssertFalse(LaunchPresentation.silent(arguments: ["Aerie"], event: nil))
     for argument in ["--background", "--self-check"] {
