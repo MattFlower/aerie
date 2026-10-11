@@ -173,8 +173,15 @@ public enum Format {
       unit == .celsius ? "C" : "F")
   }
   public static func duration(_ seconds: Double) -> String {
-    guard seconds.isFinite, seconds >= 0 else { return "Unavailable" }
+    guard seconds.isFinite, seconds >= 0, seconds < Double(Int.max) else { return "Unavailable" }
     let n = Int(seconds)
     return n >= 86400 ? "\(n / 86400)d \(n % 86400 / 3600)h" : "\(n / 3600)h \(n % 3600 / 60)m"
+  }
+  public static func powerTime(_ minutes: Int?, charging: Bool?, input: PowerInputState) -> String {
+    if charging == false, input == .ac { return "Not discharging" }
+    guard charging == true || (charging == false && input == .battery), let minutes,
+      minutes >= 0, minutes <= Int.max / 60
+    else { return "Unavailable or calculating" }
+    return duration(Double(minutes) * 60)
   }
 }

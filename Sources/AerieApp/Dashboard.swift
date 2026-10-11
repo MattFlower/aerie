@@ -685,7 +685,7 @@ final class DashboardController: NSViewController {
         .metric("Charge", Format.percent(source.percent)),
         .metric(
           source.charging == true ? "Time to full" : "Time remaining",
-          source.minutes.map { Format.duration(Double($0) * 60) } ?? "Unavailable or calculating"),
+          Format.powerTime(source.minutes, charging: source.charging, input: source.input)),
       ]
       if let transport = source.transport { rows.append(.metric("Transport", transport)) }
       if let value = source.voltage {
@@ -1036,7 +1036,9 @@ final class DashboardController: NSViewController {
           DashboardRow.metric("Charging", p.charging.map { $0 ? "Yes" : "No" } ?? "Unavailable"),
           DashboardRow.metric(
             p.charging == true ? "Time to full" : "Time remaining",
-            p.minutes.map { Format.duration(Double($0 * 60)) } ?? "Calculating"),
+            Format.powerTime(
+              p.minutes, charging: p.charging,
+              input: p.external.map { $0 ? .ac : .battery } ?? .unknown)),
           DashboardRow.chart("battery", "Battery %", AeriePalette.power, 100),
           DashboardRow.metric("Health", Format.percent(p.health)),
           DashboardRow.metric("Cycles", p.cycles.map { String($0) } ?? "Unavailable"),

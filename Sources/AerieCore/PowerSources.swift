@@ -39,7 +39,7 @@ public struct PowerSourceReading: Equatable, Sendable {
       percent = nil
     }
     self.minutes =
-      present == true && charging != nil
+      present == true && (charging == true || (charging == false && input == .battery))
       ? minutes.flatMap { (0...(Int.max / 60)).contains($0) ? $0 : nil } : nil
     self.voltage = present == true ? Self.finite(voltage).flatMap { $0 >= 0 ? $0 : nil } : nil
     self.amperage = present == true ? Self.finite(amperage) : nil

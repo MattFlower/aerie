@@ -41,6 +41,36 @@ final class PowerSourcesTests: XCTestCase {
       PowerSourceInventory(sources: [battery, battery], available: true, reportedCount: 2)
         .primaryBattery)
   }
+  func testTimeContextAndFormattingKeepMissingStatesAndZeroEstimatesDistinct() {
+    for input in [PowerInputState.ac, .offline, .unknown] {
+      let reading = PowerSourceReading(
+        name: nil, kind: .ups, transport: nil, present: true,
+        input: input, charging: false, current: 50, maximum: 100, minutes: 0,
+        voltage: nil, amperage: nil, temperature: nil)
+      XCTAssertNil(reading.minutes)
+    }
+    XCTAssertEqual(Format.powerTime(0, charging: false, input: .ac), "Not discharging")
+    XCTAssertEqual(Format.powerTime(nil, charging: false, input: .ac), "Not discharging")
+    XCTAssertEqual(Format.powerTime(0, charging: false, input: .battery), "0h 0m")
+    XCTAssertEqual(Format.powerTime(0, charging: true, input: .ac), "0h 0m")
+    XCTAssertEqual(Format.powerTime(30, charging: false, input: .battery), "0h 30m")
+    XCTAssertEqual(Format.powerTime(30, charging: true, input: .ac), "0h 30m")
+    for (input, charging) in [(PowerInputState.unknown, false), (.offline, false), (.battery, nil)]
+      as [(PowerInputState, Bool?)]
+    {
+      XCTAssertEqual(
+        Format.powerTime(0, charging: charging, input: input), "Unavailable or calculating")
+    }
+    XCTAssertEqual(Format.powerTime(-1, charging: true, input: .ac), "Unavailable or calculating")
+    XCTAssertEqual(Format.powerTime(.max, charging: true, input: .ac), "Unavailable or calculating")
+  }
+  func testDurationFormattingRejectsValuesThatCannotConvertSafelyToIntegerSeconds() {
+    for value in [Double.infinity, .nan, .greatestFiniteMagnitude, Double(Int.max), -1] {
+      XCTAssertEqual(Format.duration(value), "Unavailable")
+    }
+    XCTAssertEqual(Format.duration(0), "0h 0m")
+    XCTAssertNotEqual(Format.duration(Double(Int.max).nextDown), "Unavailable")
+  }
   func testIncompleteUnknownAndTruncatedInventoryCannotInventUniqueBatterySummary() {
     let battery = reading()
     for inventory in [

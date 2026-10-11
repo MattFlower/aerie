@@ -39,8 +39,14 @@ enum PowerSourceDecoder {
     default: input = .unknown
     }
     let charging = boolean(details[kIOPSIsChargingKey])
-    let time = charging.flatMap {
-      integer(details[$0 ? kIOPSTimeToFullChargeKey : kIOPSTimeToEmptyKey])
+    let time: Int?
+    if charging == true {
+      time = integer(details[kIOPSTimeToFullChargeKey])
+    } else if charging == false, input == .battery {
+      time = integer(details[kIOPSTimeToEmptyKey])
+    } else {
+      // IOPS time-to-empty is valid only on battery power while not charging.
+      time = nil
     }
     return PowerSourceReading(
       name: details[kIOPSNameKey] as? String, kind: kind,

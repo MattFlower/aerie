@@ -20,10 +20,46 @@ final class PowerSourceDecoderTests: XCTestCase {
     XCTAssertEqual(reading.voltage, 12); XCTAssertEqual(reading.amperage, -2)
     XCTAssertEqual(reading.watts, -24); XCTAssertEqual(reading.temperature, 22)
     details[kIOPSIsChargingKey] = false
+    XCTAssertNil(PowerSourceDecoder.decode(details).minutes)
+    details[kIOPSPowerSourceStateKey] = kIOPSBatteryPowerValue
     reading = PowerSourceDecoder.decode(details)
     XCTAssertEqual(reading.minutes, 200); XCTAssertEqual(reading.charging, false)
     details[kIOPSIsChargingKey] = nil
     XCTAssertNil(PowerSourceDecoder.decode(details).minutes)
+  }
+  func testTimeToEmptyRequiresBatteryInputAndAConfirmedNotChargingState() {
+    for state in [kIOPSACPowerValue, kIOPSOffLineValue, "Unknown"] {
+      for minutes in [0, 200] {
+        var details = fixture()
+        details[kIOPSIsChargingKey] = false; details[kIOPSPowerSourceStateKey] = state
+        details[kIOPSTimeToEmptyKey] = minutes
+        XCTAssertNil(PowerSourceDecoder.decode(details).minutes)
+      }
+    }
+    var details = fixture(); details[kIOPSIsChargingKey] = false
+    details[kIOPSPowerSourceStateKey] = kIOPSBatteryPowerValue
+    details[kIOPSTimeToEmptyKey] = 0
+    XCTAssertEqual(PowerSourceDecoder.decode(details).minutes, 0)
+    details[kIOPSIsChargingKey] = true; details[kIOPSPowerSourceStateKey] = kIOPSACPowerValue
+    details[kIOPSTimeToFullChargeKey] = 0
+    XCTAssertEqual(PowerSourceDecoder.decode(details).minutes, 0)
+  }
+  func testACNotChargingRowsDoNotInventZeroRemainingBatteryRuntime() async {
+    await MainActor.run {
+      var details = self.fixture(); details[kIOPSIsChargingKey] = false
+      details[kIOPSTimeToEmptyKey] = 0
+      let power = PowerSourceDecoder.data(
+        descriptions: [details], reportedCount: 1, suppliedSource: "AC Power")
+      XCTAssertNil(power.minutes)
+      let dashboard = DashboardController(); dashboard.snapshot.power = power
+      _ = dashboard.view
+      dashboard.show(.power)
+      let values = dashboard.canvas.rows.compactMap { row -> String? in
+        if case .metric("Time remaining", let value) = row { return value }; return nil
+      }
+      XCTAssertEqual(values, ["Not discharging", "Not discharging"])
+      dashboard.canvas.releaseInteractiveRows()
+    }
   }
   func testBooleanNumbersSentinelsAndOverflowCannotBecomeValidCapacityOrTime() {
     for invalid: Any in [true, Double.nan, Double.infinity, -1, 0.5, UInt64.max] {
