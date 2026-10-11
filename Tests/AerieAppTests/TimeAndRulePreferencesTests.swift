@@ -71,7 +71,11 @@ final class TimeAndRulePreferencesTests: XCTestCase {
     try await MainActor.run {
       let reading = try XCTUnwrap(
         ClockPresentation.readings(
-          [WorldClock(name: "Synthetic clock", zone: "Asia/Kathmandu")],
+          [
+            WorldClock(
+              name: "Synthetic clock " + String(repeating: "Long ", count: 9),
+              zone: "Asia/Kathmandu")
+          ],
           at: Date(timeIntervalSince1970: 1_700_000_000)
         ).first)
       let view = DashboardView(frame: NSRect(x: 0, y: 0, width: 416, height: 320))

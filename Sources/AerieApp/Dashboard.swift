@@ -269,7 +269,9 @@ final class DashboardView: NSView {
     }
     let width = rect.maxX - x
     drawText(
-      reading.name, rect: NSRect(x: x, y: rect.minY + 6, width: width, height: 19),
+      reading.name,
+      rect: NSRect(
+        x: x, y: rect.minY + 6, width: style == .compact ? min(120, width) : width, height: 19),
       font: .systemFont(ofSize: 12, weight: .semibold), color: .labelColor)
     if style == .compact {
       drawText(
