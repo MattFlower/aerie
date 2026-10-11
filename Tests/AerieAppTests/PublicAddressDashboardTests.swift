@@ -12,7 +12,7 @@ final class PublicAddressDashboardTests: XCTestCase {
       let reading = try PublicAddressReading.parse(
         Data("{\"ip\":\"203.0.113.7\"}".utf8), date: Date(timeIntervalSince1970: 1_700_000_000))
       dashboard.updatePublicAddress(reading, status: "Synthetic updated"); dashboard.refresh()
-      func containsAddress() -> Bool {
+      @MainActor func containsAddress() -> Bool {
         dashboard.canvas.rows.contains { row in
           if case .metric(_, let value) = row { return value == reading.address }
           return false
