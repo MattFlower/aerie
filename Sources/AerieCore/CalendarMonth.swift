@@ -80,3 +80,18 @@ public struct CalendarMonth: Equatable {
     return calendar.date(byAdding: .day, value: day - 1, to: destination)
   }
 }
+
+/// Today follows local day rollover until a deliberate date/month choice pins the selection.
+public struct CalendarSelection {
+  private var pinned: Date?
+  public init() {}
+  public func date(now: Date) -> Date { pinned ?? now }
+  public mutating func select(_ date: Date) { pinned = date }
+  public mutating func today() { pinned = nil }
+  public mutating func move(months: Int, now: Date, calendar: Calendar) {
+    if let value = CalendarMonth.movedSelection(date(now: now), months: months, calendar: calendar)
+    {
+      pinned = value
+    }
+  }
+}

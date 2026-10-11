@@ -293,10 +293,13 @@ final class DashboardController: NSViewController {
   let canvas = DashboardView(frame: NSRect(x: 0, y: 0, width: 416, height: 600))
   let modules = NSPopUpButton(frame: .zero, pullsDown: false)
   let windowPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+  let zoomPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+  let historyPosition = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
+  private let zoomReset = NSButton(title: "Reset", target: nil, action: nil)
   let stateLabel = NSTextField(labelWithString: "Sampling")
   var onSettings: (() -> Void)?
   var onMaps: (() -> Void)?
-  var onExportHistory: ((Int) -> Void)?
+  var onExportHistory: ((Int, [HistoryPoint]) -> Void)?
   private let mapsButton = NSButton(title: "Maps…", target: nil, action: nil)
   var onModule: ((Module) -> Void)?
   var module = Module.overview
@@ -306,6 +309,7 @@ final class DashboardController: NSViewController {
   var historyStatus = "History archive is off"
   var weather: WeatherReport?
   var weatherStatus = "Weather is off"
+  var shortcutStatus: String?
   var calendarRows: [DashboardRow] = []
   override func loadView() {
     view = NSView(frame: NSRect(x: 0, y: 0, width: 416, height: 620))
@@ -318,12 +322,25 @@ final class DashboardController: NSViewController {
     modules.action = #selector(selectModule)
     modules.frame = NSRect(x: 245, y: 580, width: 155, height: 28)
     view.addSubview(modules)
-    let scroll = NSScrollView(frame: NSRect(x: 0, y: 45, width: 416, height: 525))
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 45, width: 416, height: 490))
     scroll.hasVerticalScroller = true
     scroll.autohidesScrollers = true
     scroll.documentView = canvas
     scroll.drawsBackground = false
     view.addSubview(scroll)
+    zoomPicker.addItems(withTitles: ["Full range", "Zoom 2×", "Zoom 4×", "Zoom 8×"])
+    zoomPicker.frame = NSRect(x: 16, y: 543, width: 114, height: 26)
+    zoomPicker.target = self; zoomPicker.action = #selector(changeZoom)
+    zoomPicker.setAccessibilityLabel("History zoom")
+    historyPosition.frame = NSRect(x: 140, y: 546, width: 174, height: 22)
+    historyPosition.target = self; historyPosition.action = #selector(changeZoom)
+    historyPosition.isContinuous = true
+    historyPosition.setAccessibilityLabel("History position, oldest to latest")
+    historyPosition.toolTip =
+      "Pan from the oldest retained time to the latest; right edge follows new readings."
+    zoomReset.frame = NSRect(x: 325, y: 543, width: 72, height: 26)
+    zoomReset.target = self; zoomReset.action = #selector(resetZoom)
+    [zoomPicker, historyPosition, zoomReset].forEach { view.addSubview($0) }
     let settingsButton = NSButton(title: "Settings…", target: self, action: #selector(openSettings))
     settingsButton.frame = NSRect(x: 12, y: 9, width: 95, height: 28)
     view.addSubview(settingsButton)
@@ -340,7 +357,7 @@ final class DashboardController: NSViewController {
     stateLabel.alignment = .right
     let export = NSButton(title: "Export…", target: self, action: #selector(exportHistory))
     export.frame = NSRect(x: 236, y: 9, width: 75, height: 28)
-    export.toolTip = "Export retained system series for this time range as CSV"
+    export.toolTip = "Export the visible system series and time range as CSV"
     view.addSubview(export)
     stateLabel.frame = NSRect(x: 313, y: 16, width: 87, height: 16)
     view.addSubview(stateLabel)
@@ -356,10 +373,21 @@ final class DashboardController: NSViewController {
   }
   @objc private func openSettings() { onSettings?() }
   @objc private func openMaps() { onMaps?() }
-  @objc private func exportHistory() { onExportHistory?(windowPicker.indexOfSelectedItem) }
+  var displayedHistory: [HistoryPoint] {
+    HistoryWindow.visible(
+      history.points(window: windowPicker.indexOfSelectedItem),
+      zoom: [1, 2, 4, 8][max(0, zoomPicker.indexOfSelectedItem)],
+      position: historyPosition.doubleValue)
+  }
+  @objc private func exportHistory() {
+    onExportHistory?(windowPicker.indexOfSelectedItem, displayedHistory)
+  }
+  @objc private func changeZoom() { canvas.selectedPoint = nil; refresh() }
+  @objc private func resetZoom() {
+    zoomPicker.selectItem(at: 0); historyPosition.doubleValue = 1; changeZoom()
+  }
   @objc private func changeWindow() {
-    canvas.selectedPoint = nil
-    refresh()
+    resetZoom()
   }
   func show(_ module: Module) {
     self.module = module
@@ -369,6 +397,9 @@ final class DashboardController: NSViewController {
   func refresh() {
     guard isViewLoaded else { return }
     mapsButton.isHidden = module != .weather; windowPicker.isHidden = module == .weather
+    zoomPicker.isHidden = module == .weather
+    historyPosition.isHidden = module == .weather; zoomReset.isHidden = module == .weather
+    historyPosition.isEnabled = zoomPicker.indexOfSelectedItem > 0
     mapsButton.title = settings.weather.mapsValid ? "Maps…" : "Enable Maps…"
     let age = max(0, Date().timeIntervalSince(snapshot.date))
     stateLabel.stringValue =
@@ -379,10 +410,10 @@ final class DashboardController: NSViewController {
       windowPicker.indexOfSelectedItem == 0
       ? settings.interval : windowPicker.indexOfSelectedItem == 1 ? 60 : 3600
     canvas.update(
-      rows: rows
+      rows: rows + (shortcutStatus.map { [.note("Global shortcuts: " + $0)] } ?? [])
         + (settings.effectivePersistentHistory || historyStatus != "History archive is off"
           ? [.note(historyStatus)] : []),
-      points: history.points(window: windowPicker.indexOfSelectedItem))
+      points: displayedHistory)
   }
   private func bytes(_ value: Double) -> String {
     Format.bytes(value, binary: settings.binaryBytes)

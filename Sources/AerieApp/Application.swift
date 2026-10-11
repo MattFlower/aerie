@@ -18,13 +18,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var dashboard = DashboardController()
   private var popover = NSPopover()
   private var preferences: PreferencesController?
+  private var keyboardShortcuts: KeyboardShortcuts?
+  private var shortcutStatus: String?
   private let calendarAccess = CalendarAccess()
   private lazy var calendarReader = CalendarEventReader(access: calendarAccess)
   private var calendarAuthorized = false
-  private var selectedCalendarDate = Date()
+  private var calendarSelection = CalendarSelection()
   private var lastCalendarRefresh = Date.distantPast
   private var calendarDetails: [String: (title: String, text: String)] = [:]
   private var calendarObserver: NSObjectProtocol?
+  private var clockObservers: [NSObjectProtocol] = []
   private var weatherTask: Task<Void, Never>?
   private var weatherGeneration = 0
   private var weatherReport: WeatherReport?
@@ -63,17 +66,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.contentViewController = dashboard
     popover.delegate = self
     dashboard.canvas.onSelectDate = { [weak self] date in
-      self?.selectedCalendarDate = date; self?.updateCalendar()
+      self?.calendarSelection.select(date); self?.updateCalendar()
     }
     dashboard.canvas.onMoveMonth = { [weak self] offset in
-      guard let self,
-        let date = CalendarMonth.movedSelection(
-          self.selectedCalendarDate, months: offset, calendar: self.menuCalendar)
-      else { return }
-      self.selectedCalendarDate = date; self.updateCalendar()
+      guard let self else { return }
+      self.calendarSelection.move(months: offset, now: Date(), calendar: self.menuCalendar)
+      self.updateCalendar()
     }
     dashboard.canvas.onToday = { [weak self] in
-      self?.selectedCalendarDate = Date(); self?.updateCalendar()
+      self?.calendarSelection.today(); self?.updateCalendar()
     }
     dashboard.canvas.onAction = { [weak self] identifier in
       if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-alert:"),
@@ -114,9 +115,18 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       self?.calendarDetails.removeAll()
       self?.updateCalendar()
     }
+    for name in [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange] {
+      clockObservers.append(
+        NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+          [weak self] _ in
+          self?.clockFormatter.timeZone = .current
+          self?.updateItems()
+          self?.updateCalendar()
+        })
+    }
     dashboard.onSettings = { [weak self] in self?.showSettings() }
     dashboard.onMaps = { [weak self] in self?.showMaps() }
-    dashboard.onExportHistory = { [weak self] in self?.exportHistory(window: $0) }
+    dashboard.onExportHistory = { [weak self] in self?.exportHistory(window: $0, points: $1) }
     dashboard.onModule = { [weak self] module in
       self?.collector?.setVisibleModule(module)
       self?.releaseViewMetadata(module: module)
@@ -124,6 +134,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     }
     rebuildItems()
     applyAppearance()
+    configureShortcuts()
     let collector = Collector()
     self.collector = collector
     collector.onSample = { [weak self] in self?.receive($0) }
@@ -185,11 +196,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   func applicationWillTerminate(_ notification: Notification) {
     if let calendarObserver { NotificationCenter.default.removeObserver(calendarObserver) }
+    for observer in clockObservers { NotificationCenter.default.removeObserver(observer) }
+    clockObservers.removeAll()
     historyPersistence?.save(
       history, interval: settings.interval, selection: settings.networkSelection, force: true)
     historyPersistence?.finish()
     clearCalendar()
     calendarAccess.cancel()
+    keyboardShortcuts?.stop(); keyboardShortcuts = nil
     weatherTask?.cancel()
     weatherMaps?.releaseResources(); weatherMaps = nil
     weatherDetails?.close(); weatherDetails = nil
@@ -227,6 +241,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       dashboard.settings = settings
       dashboard.weather = weatherReport
       dashboard.weatherStatus = weatherStatus
+      dashboard.shortcutStatus = shortcutStatus
       dashboard.refresh()
     }
     updateWeather()
@@ -304,6 +319,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
           "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,
           "refreshInterval": settings.interval, "weatherOptIn": settings.weather.enabled,
           "persistentHistory": settings.effectivePersistentHistory,
+          "configuredShortcuts": (settings.shortcuts ?? []).count,
+          "registeredShortcuts": keyboardShortcuts?.registeredCount ?? 0,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]),
           let text = String(data: data, encoding: .utf8)
@@ -346,9 +363,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       }
     }
   }
-  private func exportHistory(window: Int) {
+  private func exportHistory(window: Int, points: [HistoryPoint]) {
     let data = HistoryCSV.data(
-      points: history.points(window: window),
+      points: points,
       resolutionSeconds: window == 0 ? settings.interval : window == 1 ? 60 : 3600,
       aggregateScope: settings.networkSelection.description)
     popover.performClose(nil)
@@ -412,17 +429,22 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       return
     }
     let module = items.first { $0.1.button === sender }?.0.module ?? .overview
+    showModule(module, anchoredTo: sender)
+  }
+  private func showModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
+    if popover.isShown { popover.performClose(nil) }
     dashboard.snapshot = snapshot
     dashboard.settings = settings
     dashboard.history = history
     dashboard.historyStatus = historyPersistence?.status ?? "History archive is off"
     dashboard.weather = weatherReport
     dashboard.weatherStatus = weatherStatus
+    dashboard.shortcutStatus = shortcutStatus
     _ = dashboard.view
     dashboard.show(module)
     updateCalendar(opening: true)
     collector?.setVisibleModule(module)
-    popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     popover.contentViewController?.view.window?.makeKey()
   }
   func popoverDidClose(_ notification: Notification) {
@@ -430,7 +452,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     dashboard.history = HistoryStore(interval: settings.interval);
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
     clearCalendar(); dashboard.canvas.releaseInteractiveRows()
-    selectedCalendarDate = Date()
+    calendarSelection.today()
   }
   private func releaseViewMetadata(module: Module?) {
     snapshot.releaseActiveViewState(module: module, suspended: paused || sleeping)
@@ -635,6 +657,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     collector?.configure(valid)
     rebuildItems()
     applyAppearance()
+    configureShortcuts()
     lastCalendarRefresh = .distantPast
     if popover.isShown { updateCalendar() }
     rules.reset()
@@ -650,6 +673,33 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       weatherStatus = valid.weather.valid ? "Fetching forecast" : "Weather is off"
       updateWeather()
     }
+  }
+  private func configureShortcuts() {
+    let configured = settings.shortcuts ?? []
+    guard !configured.isEmpty else {
+      keyboardShortcuts?.stop(); keyboardShortcuts = nil; shortcutStatus = nil; return
+    }
+    if keyboardShortcuts == nil {
+      keyboardShortcuts = KeyboardShortcuts()
+      keyboardShortcuts?.onPress = { [weak self] binding in
+        guard let self else { return }
+        guard let module = binding.module else { self.showSettings(); return }
+        if self.popover.isShown, self.dashboard.module == module {
+          self.popover.performClose(nil); return
+        }
+        guard
+          let button = self.items.first(where: { $0.0.module == module })?.1.button
+            ?? self.items.first?.1.button
+        else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        self.showModule(module, anchoredTo: button)
+      }
+      keyboardShortcuts?.onReconfigured = { [weak self] failures in
+        self?.shortcutStatus = failures.isEmpty ? nil : failures.joined(separator: " · ")
+      }
+    }
+    let failures = keyboardShortcuts?.configure(configured) ?? []
+    shortcutStatus = failures.isEmpty ? nil : failures.joined(separator: " · ")
   }
   private func showMaps() {
     popover.performClose(nil)
@@ -768,9 +818,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       clearCalendar(); return
     }
     let now = Date(), calendar = menuCalendar
+    let selectedCalendarDate = calendarSelection.date(now: now)
     let authorized = calendarAccess.hasAccess
     guard
       force || authorized != calendarAuthorized || now.timeIntervalSince(lastCalendarRefresh) >= 60
+        || !calendar.isDate(now, inSameDayAs: lastCalendarRefresh)
     else { return }
     calendarAuthorized = authorized
     calendarReader.cancel()

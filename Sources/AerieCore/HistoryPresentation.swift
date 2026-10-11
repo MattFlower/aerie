@@ -74,3 +74,21 @@ public enum HistoryCSV {
     return Data((lines.joined(separator: "\n") + "\n").utf8)
   }
 }
+
+/// Select a time window using actual timestamps; gaps and missing readings stay unchanged.
+public enum HistoryWindow {
+  public static func visible(_ points: [HistoryPoint], zoom: Double, position: Double)
+    -> [HistoryPoint]
+  {
+    guard zoom.isFinite, (1...64).contains(zoom), position.isFinite, (0...1).contains(position),
+      let first = points.first, let last = points.last
+    else { return [] }
+    let span = last.date.timeIntervalSince(first.date)
+    guard span.isFinite, span >= 0 else { return [] }
+    if zoom == 1 || span == 0 { return points }
+    let width = span / zoom
+    let start = first.date.addingTimeInterval((span - width) * position)
+    let end = start.addingTimeInterval(width)
+    return points.filter { $0.date >= start && $0.date <= end }
+  }
+}

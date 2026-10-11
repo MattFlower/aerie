@@ -15,7 +15,7 @@ let package = Package(
       linkerSettings: [
         .linkedFramework("AppKit"), .linkedFramework("CoreWLAN"),
         .linkedFramework("EventKit"), .linkedFramework("ServiceManagement"),
-        .linkedFramework("DiskArbitration"),
+        .linkedFramework("DiskArbitration"), .linkedFramework("Carbon"),
       ]),
     .executableTarget(name: "AerieMeasure", dependencies: ["AerieCore", "AerieNative"]),
     .testTarget(name: "AerieCoreTests", dependencies: ["AerieCore"]),

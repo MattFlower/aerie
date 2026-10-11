@@ -17,6 +17,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var menuOrders: [Module: NSPopUpButton] = [:]
   private var menuColors: [Module: NSTextField] = [:]
   private var clocksField = NSTextView()
+  private var shortcutsField = NSTextView()
   private let rulesPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   private let ruleMetrics = [
     "cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload", "thermal",
@@ -199,6 +200,27 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       "Choose 1–6 unique names: CPU, GPU, Memory, Storage, Network, Sensors, Power, Time, Weather. Empty colors follow macOS appearance; custom colors need sufficient contrast. Stacked items show two lines. Hidden items are still sampled.",
       y: 690, in: menus, height: 82)
     menus.setFrameSize(NSSize(width: 600, height: 792))
+
+    let shortcuts = tab("Shortcuts", in: tabs)
+    label(
+      "Global shortcuts are off until you add a combination and Apply. Enter one item per line, using its menu name or Settings, followed by | and the combination.",
+      y: 16, in: shortcuts, height: 62)
+    label(
+      "Example: CPU | Command+Option+C\nSettings | Command+Control+A", y: 88, in: shortcuts,
+      height: 48)
+    shortcutsField.string = (settings.shortcuts ?? []).map {
+      $0.targetTitle + " | " + $0.combination
+    }.joined(separator: "\n")
+    shortcutsField.isRichText = false;
+    shortcutsField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+    shortcutsField.setAccessibilityLabel("Global shortcut combinations")
+    let shortcutScroll = NSScrollView(frame: NSRect(x: 18, y: 151, width: 550, height: 275))
+    shortcutScroll.hasVerticalScroller = true; shortcutScroll.documentView = shortcutsField
+    shortcutsField.frame = NSRect(x: 0, y: 0, width: 550, height: 275);
+    shortcuts.addSubview(shortcutScroll)
+    label(
+      "Choose unique combinations containing Command or Control, with optional Option/Shift and a letter, digit, Space or F1–F20. Character keys resolve through the current keyboard layout. OS-reserved keys, conflicts, secure input or an unavailable layout can prevent registration; Aerie reports those failures. Clear all lines to release every shortcut.",
+      y: 445, in: shortcuts, height: 116)
 
     let network = tab("Network", in: tabs)
     label(
@@ -384,6 +406,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     s.compactSpacing = toggles["spacing"]!.state == .on
     s.persistentHistory = toggles["persistentHistory"]!.state == .on
+    s.shortcuts = try KeyboardShortcut.parse(shortcutsField.string)
     s.sensorSampling = choices["sensors"]!.indexOfSelectedItem == 0 ? .all : .whenNeeded
     s.combined = toggles["combined"]!.state == .on
     s.combinedModules = try MenuPresentation.modules(

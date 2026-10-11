@@ -88,6 +88,7 @@ public struct Settings: Codable, Equatable {
   ]
   public var persistentHistory: Bool?
   public var effectivePersistentHistory: Bool { persistentHistory ?? false }
+  public var shortcuts: [KeyboardShortcut]?
   public var combined = false
   public var combinedModules: [Module]?
   public var effectiveCombinedModules: [Module] { combinedModules ?? [.cpu, .memory] }
@@ -114,7 +115,7 @@ public struct Settings: Codable, Equatable {
   public init() {}
   public func validated() throws -> Settings {
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
-      networkSelection.valid,
+      networkSelection.valid, KeyboardShortcut.valid(shortcuts ?? []),
       menus.count <= Module.allCases.count,
       Set(menus.map(\.module)).count == menus.count,
       combined || menus.contains(where: \.visible), clockFormat.count <= 80,
