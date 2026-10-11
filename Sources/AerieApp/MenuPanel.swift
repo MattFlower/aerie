@@ -15,10 +15,13 @@ final class MenuPanel: NSObject, NSWindowDelegate {
   var isShown: Bool { panel?.isVisible == true }
 
   func show(anchoredTo button: NSStatusBarButton) {
-    guard let anchorWindow = button.window else { return }
-    let screen = anchorWindow.screen ?? NSScreen.main
+    let anchorWindow = button.window
+    let screen = anchorWindow?.screen ?? NSApp.mainWindow?.screen ?? NSScreen.main
     guard let screen else { return }
-    let anchor = anchorWindow.convertToScreen(button.convert(button.bounds, to: nil))
+    let attachedAnchor = anchorWindow.map {
+      $0.convertToScreen(button.convert(button.bounds, to: nil))
+    }
+    let anchor = Self.anchor(attached: attachedAnchor, visibleFrame: screen.visibleFrame)
     let window = MenuDashboardWindow(
       contentRect: NSRect(origin: .zero, size: contentSize),
       styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel], backing: .buffered,
@@ -36,6 +39,10 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     panel = window
     NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
+  }
+  static func anchor(attached: NSRect?, visibleFrame: NSRect) -> NSRect {
+    // Hidden or overflowed status items have no window. Settings must still open the dashboard.
+    attached ?? NSRect(x: visibleFrame.midX, y: visibleFrame.maxY, width: 0, height: 0)
   }
   func performClose(_ sender: Any?) { panel?.close() }
   func windowWillClose(_ notification: Notification) {

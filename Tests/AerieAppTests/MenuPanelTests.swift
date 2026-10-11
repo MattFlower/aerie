@@ -3,6 +3,14 @@ import XCTest
 @testable import AerieApp
 
 final class MenuPanelTests: XCTestCase {
+  func testMissingStatusWindowUsesTheSelectedScreenWithoutDroppingTheDashboard() {
+    let screen = NSRect(x: -2000, y: 300, width: 1800, height: 1000)
+    let anchor = MenuPanel.anchor(attached: nil, visibleFrame: screen)
+    XCTAssertEqual(anchor.midX, screen.midX)
+    XCTAssertEqual(anchor.minY, screen.maxY)
+    let attached = NSRect(x: -1700, y: 1310, width: 40, height: 24)
+    XCTAssertEqual(MenuPanel.anchor(attached: attached, visibleFrame: screen), attached)
+  }
   func testAnchoringStaysInTheSelectedScreenIncludingNegativeMonitorCoordinates() {
     let screen = NSRect(x: -2000, y: 300, width: 1800, height: 1000)
     let size = NSSize(width: 416, height: 642)
