@@ -62,6 +62,34 @@ final class SamplingTests: XCTestCase {
     XCTAssertFalse(sample.footprintComplete); XCTAssertFalse(sample.cpuComplete)
     XCTAssertNil(sample.totalFootprintBytes); XCTAssertNil(sample.totalCPUPercent)
   }
+  func testConfirmedExitRetainsIdentityAndFootprintButDoesNotInventTransitionCPU() {
+    var sampler = ProcessSampler(pids: [10])
+    _ = take(&sampler, [observation(10), observation(11, parent: 10)], 0)
+    let identity = ProcessIdentity(pid: 11, startTime: 1)
+    let exited = sampler.sample(
+      observations: [observation(10)], monotonicTime: 1,
+      date: Date(timeIntervalSince1970: 1), scenario: "synthetic", confirmedExits: [identity])
+    XCTAssertEqual(exited.readings.count, 2)
+    let child = exited.readings.first { $0.pid == 11 }!
+    XCTAssertEqual(child.status, "exited-confirmed"); XCTAssertEqual(child.footprintBytes, 0)
+    XCTAssertNil(child.cpuPercent); XCTAssertFalse(exited.cpuComplete)
+    let settled = take(&sampler, [observation(10)], 2)
+    XCTAssertEqual(settled.readings.first { $0.pid == 11 }?.cpuPercent, 0)
+    XCTAssertTrue(settled.footprintComplete); XCTAssertTrue(settled.cpuComplete)
+    XCTAssertEqual(sampler.trackedIdentities.count, 2)
+  }
+  func testExitProofCannotZeroLiveOrUnidentifiedProtectedProcess() {
+    var sampler = ProcessSampler(pids: [10, 20])
+    let protected = ProcessObservation(pid: 20, startTime: 0, error: 1)
+    _ = take(&sampler, [observation(10), protected], 0)
+    let sample = sampler.sample(
+      observations: [observation(10), protected], monotonicTime: 1,
+      date: Date(timeIntervalSince1970: 1), scenario: "synthetic",
+      confirmedExits: [.init(pid: 10, startTime: 1), .init(pid: 20, startTime: 0)])
+    XCTAssertEqual(sample.readings.first { $0.pid == 10 }?.status, "live")
+    XCTAssertEqual(sample.readings.first { $0.pid == 20 }?.status, "unreadable")
+    XCTAssertFalse(sample.footprintComplete); XCTAssertNil(sample.totalFootprintBytes)
+  }
   func testBitPreferenceOnlyChangesNetworkRates() {
     XCTAssertEqual(Format.rate(1024, domain: .storage, networkBits: true), "1.0 KiB/s")
     XCTAssertEqual(Format.rate(1024, domain: .storage, networkBits: false), "1.0 KiB/s")

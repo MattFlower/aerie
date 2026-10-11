@@ -74,10 +74,12 @@ public struct ProcessSampler {
   private var resolvedSeeds: Set<Int> = []
   private var previous: [ProcessIdentity: ProcessObservation] = [:]
   private var previousTime: Double?
+  private var confirmedExited: Set<ProcessIdentity> = []
+  public var trackedIdentities: Set<ProcessIdentity> { Set(tracked.keys) }
   public init(pids: [Int]) { selected = Set(pids) }
   public mutating func sample(
     observations: [ProcessObservation], monotonicTime: Double,
-    date: Date, scenario: String
+    date: Date, scenario: String, confirmedExits: Set<ProcessIdentity> = []
   ) -> ProcessSample {
     let current = Dictionary(
       observations.map { ($0.identity, $0) }, uniquingKeysWith: { _, last in last })
@@ -104,6 +106,11 @@ public struct ProcessSampler {
         }
       }
     }
+    let previouslyExited = confirmedExited
+    for identity in confirmedExits
+    where identity.startTime > 0 && tracked[identity] != nil && current[identity] == nil {
+      confirmedExited.insert(identity)
+    }
     let dt = previousTime.map { monotonicTime - $0 } ?? 0
     var readings: [ProcessReading] = []
     for identity in tracked.keys.sorted(by: {
@@ -117,17 +124,22 @@ public struct ProcessSampler {
         return Double(value - prior) / dt
       }
       let present = live != nil
+      let exited = !present && confirmedExited.contains(identity)
+      let exitedInterval = exited && previouslyExited.contains(identity) && dt > 0
       readings.append(
         ProcessReading(
           timestamp: date, pid: identity.pid, startTime: identity.startTime,
           parent: observation.parent, name: observation.name,
-          footprintBytes: present ? observation.footprint : nil,
-          residentBytes: present ? observation.resident : nil,
-          cpuPercent: rate(observation.cpuNanoseconds, old?.cpuNanoseconds).map { $0 / 1e7 },
-          interruptWakeupsPerSecond: rate(observation.wakeups, old?.wakeups),
+          footprintBytes: present ? observation.footprint : exited ? 0 : nil,
+          residentBytes: present ? observation.resident : exited ? 0 : nil,
+          cpuPercent: exitedInterval
+            ? 0 : rate(observation.cpuNanoseconds, old?.cpuNanoseconds).map { $0 / 1e7 },
+          interruptWakeupsPerSecond: exitedInterval ? 0 : rate(observation.wakeups, old?.wakeups),
           error: present ? observation.error : 3,
-          status: !present
-            ? "exited-or-unavailable" : observation.error != nil ? "unreadable" : "live"))
+          status: exited
+            ? "exited-confirmed"
+            : !present
+              ? "exited-or-unavailable" : observation.error != nil ? "unreadable" : "live"))
       if let live { tracked[identity] = live }
     }
     previous = current; previousTime = monotonicTime

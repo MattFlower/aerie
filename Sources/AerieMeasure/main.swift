@@ -41,10 +41,20 @@ repeat {
       cpuNanoseconds: p.valid != 0 ? p.cpu_ns : nil, wakeups: p.valid != 0 ? p.wakeups : nil,
       error: p.valid != 0 ? nil : Int(p.error))
   }
+  let knownLive = Dictionary(
+    all.filter { $0.valid != 0 && $0.start_time > 0 }.map { (Int($0.pid), $0.start_time) },
+    uniquingKeysWith: { _, last in last })
+  let confirmed = Set(
+    sampler.trackedIdentities.filter { identity in
+      guard identity.startTime > 0 else { return false }
+      if let current = knownLive[identity.pid] { return current != identity.startTime }
+      return Darwin.kill(Int32(identity.pid), 0) == -1 && errno == ESRCH
+    })
   let record = sampler.sample(
-    observations: observations, monotonicTime: now, date: Date(), scenario: scenario)
+    observations: observations, monotonicTime: now, date: Date(), scenario: scenario,
+    confirmedExits: confirmed)
   if let data = try? encoder.encode(record), let line = String(data: data, encoding: .utf8) {
-    print(line)
+    print(line); fflush(stdout)
   }
   if now - start >= duration { break }
   Thread.sleep(forTimeInterval: min(interval, max(0, duration - (now - start))))
