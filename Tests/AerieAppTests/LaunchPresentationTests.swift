@@ -4,6 +4,15 @@ import XCTest
 @testable import AerieApp
 
 final class LaunchPresentationTests: XCTestCase {
+  func testExplicitInitialSettingsDoesNotEnableBackgroundReopenOrSelfCheckUI() {
+    let arguments = ["Aerie", "--background", "--open-settings"]
+    XCTAssertFalse(LaunchPresentation.silent(arguments: arguments, event: nil))
+    XCTAssertFalse(
+      LaunchPresentation.presentsOnReopen(
+        arguments: arguments, visibleWindows: false, menuShown: false))
+    XCTAssertTrue(
+      LaunchPresentation.silent(arguments: arguments + ["--self-check"], event: nil))
+  }
   func testManualReopenPresentsOnlyWhenNoExistingPresentation() {
     XCTAssertTrue(
       LaunchPresentation.presentsOnReopen(

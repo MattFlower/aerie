@@ -8,7 +8,8 @@ enum LaunchPresentation {
       && !arguments.contains("--background") && !arguments.contains("--self-check")
   }
   static func silent(arguments: [String], event: NSAppleEventDescriptor?) -> Bool {
-    if arguments.contains("--background") || arguments.contains("--self-check") { return true }
+    if arguments.contains("--self-check") { return true }
+    if arguments.contains("--background") { return !arguments.contains("--open-settings") }
     guard let event, event.eventID == AEEventID(kAEOpenApplication) else { return false }
     let markers = [AEKeyword(keyAELaunchedAsLogInItem), AEKeyword(keyAELaunchedAsServiceItem)]
     if markers.contains(where: { event.paramDescriptor(forKeyword: $0) != nil }) { return true }
