@@ -10,12 +10,13 @@ typedef struct {
 typedef struct {
     char name[32], addresses[512];
     uint64_t received, sent, packets_in, packets_out, errors_in, errors_out;
-    int active;
+    int active, counter_bits;
 } AerieInterface;
 typedef struct {
     unsigned index;
+    char name[32];
     uint64_t received, sent, packets_in, packets_out, errors_in, errors_out;
-    int active;
+    int active, counter_bits;
 } AerieInterfaceCounter;
 typedef struct {
     int pid, ppid, valid, error;
@@ -29,6 +30,7 @@ AerieMemory aerie_memory(void);
 int aerie_interfaces(AerieInterface *interfaces, int capacity);
 // Decode a bounded native route snapshot; -1 denotes malformed input.
 int aerie_interface_counters(const void *data, size_t size, AerieInterfaceCounter *out, int capacity);
+int aerie_mib_interface_counters(const void *data, size_t size, AerieInterfaceCounter *out, int capacity);
 void aerie_interfaces_invalidate(void);
 int aerie_processes(AerieProcess *processes, int capacity);
 AerieProcess aerie_process(int pid);

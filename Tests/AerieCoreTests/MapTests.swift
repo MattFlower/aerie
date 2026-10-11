@@ -67,13 +67,15 @@ final class MapTests: XCTestCase {
   func testDecodedCostAndCountBoundEvictionAndClearReleaseValues() {
     final class Frame {}
     var cache = CostCache<String, Frame>(maximumCost: 30, maximumCount: 2)
-    var frame: Frame? = Frame(); weak var retained = frame
-    XCTAssertTrue(cache.insert(frame!, for: "a", cost: 10)); frame = nil; XCTAssertNotNil(retained)
+    final class WeakFrame { weak var value: Frame?; init(_ value: Frame?) { self.value = value } }
+    var frame: Frame? = Frame(); let retained = WeakFrame(frame)
+    XCTAssertTrue(cache.insert(frame!, for: "a", cost: 10)); frame = nil;
+    XCTAssertNotNil(retained.value)
     _ = cache.insert(Frame(), for: "b", cost: 10); _ = cache.value(for: "a")
     _ = cache.insert(Frame(), for: "c", cost: 10)
     XCTAssertNil(cache.value(for: "b")); XCTAssertEqual(cache.count, 2)
     XCTAssertFalse(cache.insert(Frame(), for: "too-big", cost: 31)); XCTAssertEqual(cache.cost, 20)
-    cache.clear(); XCTAssertNil(retained); XCTAssertEqual(cache.cost, 0);
+    cache.clear(); XCTAssertNil(retained.value); XCTAssertEqual(cache.cost, 0);
     XCTAssertEqual(cache.count, 0)
   }
 }

@@ -7,6 +7,7 @@
 #include <libproc.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <net/if_mib.h>
 #include <net/route.h>
 #include <net/if_dl.h>
 #include <netdb.h>
@@ -110,7 +111,7 @@ int aerie_interface_counters(const void *data, size_t size, AerieInterfaceCounte
             if (!(m.ifm_flags & IFF_LOOPBACK)) {
                 if (count >= capacity) return -1;
                 AerieInterfaceCounter *item = &out[count++]; memset(item, 0, sizeof(*item));
-                item->index = m.ifm_index;
+                item->index = m.ifm_index; item->counter_bits = 32;
                 item->received = m.ifm_data.ifi_ibytes; item->sent = m.ifm_data.ifi_obytes;
                 item->packets_in = m.ifm_data.ifi_ipackets; item->packets_out = m.ifm_data.ifi_opackets;
                 item->errors_in = m.ifm_data.ifi_ierrors; item->errors_out = m.ifm_data.ifi_oerrors;
@@ -121,30 +122,60 @@ int aerie_interface_counters(const void *data, size_t size, AerieInterfaceCounte
     }
     return count;
 }
+int aerie_mib_interface_counters(const void *data, size_t size, AerieInterfaceCounter *out, int capacity) {
+    if (!data || !out || capacity <= 0 || size > 16 * 1024 * 1024 || size % sizeof(struct ifmibdata)) return -1;
+    const unsigned char *bytes = data; int count = 0;
+    for (size_t offset = 0; offset < size; offset += sizeof(struct ifmibdata)) {
+        struct ifmibdata m; memcpy(&m, bytes + offset, sizeof(m));
+        if (!memchr(m.ifmd_name, 0, sizeof(m.ifmd_name))) return -1;
+        if (!m.ifmd_name[0] || (m.ifmd_flags & IFF_LOOPBACK)) continue;
+        if (count >= capacity) return -1;
+        AerieInterfaceCounter *item = &out[count++]; memset(item, 0, sizeof(*item));
+        strlcpy(item->name, m.ifmd_name, sizeof(item->name)); item->counter_bits = 64;
+        item->received = m.ifmd_data.ifi_ibytes; item->sent = m.ifmd_data.ifi_obytes;
+        item->packets_in = m.ifmd_data.ifi_ipackets; item->packets_out = m.ifmd_data.ifi_opackets;
+        item->errors_in = m.ifmd_data.ifi_ierrors; item->errors_out = m.ifmd_data.ifi_oerrors;
+        item->active = (m.ifmd_flags & IFF_UP) && (m.ifmd_flags & IFF_RUNNING);
+    }
+    return count;
+}
+static int read_interface_counters(AerieInterfaceCounter *records, int capacity) {
+    // The public interface MIB preserves cumulative 64-bit counters. Route
+    // snapshots can be OS-rounded/truncated for ordinary applications.
+    int mib[] = {CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFALLDATA, 0, IFDATA_GENERAL};
+    size_t size = 0; int decoded = -1;
+    if (sysctl(mib, 6, NULL, &size, NULL, 0) == 0 && size && size <= 16 * 1024 * 1024) {
+        void *data = malloc(size);
+        if (data && sysctl(mib, 6, data, &size, NULL, 0) == 0) decoded = aerie_mib_interface_counters(data, size, records, capacity);
+        free(data);
+    }
+    if (decoded >= 0) return decoded;
+    int route[] = {CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0}; size = 0;
+    if (sysctl(route, 6, NULL, &size, NULL, 0) != 0 || !size || size > 16 * 1024 * 1024) return -1;
+    void *data = malloc(size); if (!data) return -1;
+    if (sysctl(route, 6, data, &size, NULL, 0) == 0) decoded = aerie_interface_counters(data, size, records, capacity);
+    free(data); return decoded;
+}
 int aerie_interfaces(AerieInterface *out, int capacity) {
     if (!out || capacity <= 0) return -1;
     if (!interface_inventory_at || monotonic_ns() - interface_inventory_at >= 30000000000ULL) refresh_interface_inventory();
-    int mib[] = {CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0}; size_t size = 0;
-    if (sysctl(mib, 6, NULL, &size, NULL, 0) != 0 || !size || size > 16 * 1024 * 1024) return -1;
-    char *data = malloc(size); if (!data) return -1;
-    if (sysctl(mib, 6, data, &size, NULL, 0) != 0) { free(data); return -1; }
-    AerieInterfaceCounter records[256];
-    int decoded = aerie_interface_counters(data, size, records, 256); free(data);
+    AerieInterfaceCounter records[256]; int decoded = read_interface_counters(records, 256);
     if (decoded < 0 || decoded > capacity) return -1;
     int count = 0;
     for (int r = 0; r < decoded; r++) {
         AerieInterfaceCounter *record = &records[r]; int match = -1;
-        for (int i = 0; i < interface_inventory_count; i++) if (interface_inventory[i].index == record->index) { match = i; break; }
-        if (match < 0) {
-            refresh_interface_inventory();
-            for (int i = 0; i < interface_inventory_count; i++) if (interface_inventory[i].index == record->index) { match = i; break; }
+        for (int attempt = 0; attempt < 2 && match < 0; attempt++) {
+            for (int i = 0; i < interface_inventory_count; i++) {
+                if (record->name[0] ? strcmp(interface_inventory[i].value.name, record->name) == 0 : interface_inventory[i].index == record->index) { match = i; break; }
+            }
+            if (match < 0) refresh_interface_inventory();
         }
         if (match < 0) return -1;
         AerieInterface *item = &out[count++]; *item = interface_inventory[match].value;
         item->received = record->received; item->sent = record->sent;
         item->packets_in = record->packets_in; item->packets_out = record->packets_out;
         item->errors_in = record->errors_in; item->errors_out = record->errors_out;
-        item->active = record->active;
+        item->active = record->active; item->counter_bits = record->counter_bits;
     }
     return count;
 }

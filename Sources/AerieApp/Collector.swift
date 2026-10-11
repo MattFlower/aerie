@@ -214,10 +214,16 @@ final class Collector {
     snapshot.networkAvailable = networkCount >= 0
     snapshot.interfaces = interfaces.prefix(max(0, networkCount)).map {
       let name = text($0.name)
+      if let previous = cache.interfaces.first(where: { $0.name == name }),
+        previous.counterBits != Int($0.counter_bits)
+      {
+        counters.removeValue(forKey: "\(name).in"); counters.removeValue(forKey: "\(name).out")
+      }
       return InterfaceData(
         name: name, active: $0.active != 0, addresses: text($0.addresses),
         received: $0.received, sent: $0.sent, download: rate("\(name).in", $0.received, now),
-        upload: rate("\(name).out", $0.sent, now), errors: $0.errors_in + $0.errors_out)
+        upload: rate("\(name).out", $0.sent, now), errors: $0.errors_in + $0.errors_out,
+        counterBits: Int($0.counter_bits))
     }
     if networkCount < 0 {
       for key in counters.keys where key.hasSuffix(".in") || key.hasSuffix(".out") {

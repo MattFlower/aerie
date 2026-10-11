@@ -2,7 +2,7 @@
 
 `AerieCore` owns platform-neutral settings, counter-rate rules, fixed-capacity history, notifications' threshold state, weather data/decoding, formatting, and approximate lunar calculations. Its tests use synthetic input.
 
-`AerieNative` is a small C boundary for Mach CPU/VM counters, 64-bit route-interface counters, libproc accounting, and read-only SMC transport. It releases Mach ports, kernel arrays, registry objects, and heap buffers. CPU accounting converts Mach absolute time to nanoseconds using the host timebase.
+`AerieNative` is a small C boundary for Mach CPU/VM counters, 64-bit public interface MIB counters with an explicitly limited route fallback, libproc accounting, and read-only SMC transport. It releases Mach ports, kernel arrays, registry objects, and heap buffers. CPU accounting converts Mach absolute time to nanoseconds using the host timebase.
 
 `AerieApp` owns AppKit status items and a reused popover, manually drawn charts and statistics, preferences, IOKit collectors, calendar integration, notifications, and weather scheduling. One utility queue serializes sampling. No periodic shell process is spawned. Core data remains independent of AppKit for a later Linux collector/UI adapter; Linux support is not implemented.
 
@@ -21,3 +21,7 @@ Driver registry statistics and SMC firmware keys vary across OS/hardware release
 ## Notifications
 
 Threshold rules support individual editing, deletion and enabled state. Changing a definition starts a new sustain period. Change rules establish a baseline for connection, power source, charging, Low Power Mode, thermal state, mounted volumes, daylight saving time and time zone. The first reading, missing-data recovery, pauses and sleep gaps cannot fire a change. Cooldowns consume suppressed transitions rather than delivering an old transition later. Volume identities refresh with inventory every 30 seconds; other states use the selected system interval. No notification permission is requested automatically.
+
+## Network accounting
+
+The primary collector reads the public `net.link.generic` interface MIB in one batch, retaining full cumulative 64-bit byte counters. The route fallback parses each record by its common four-byte header, skips short address messages, and validates all bounds. Route byte counters can be rounded to 1 KiB and narrowed to 32 bits by macOS for ordinary applications. This fallback is labeled in the dashboard and is never described as totals since boot. A counter reset or source-width change discards the rate baseline. No shell process, private entitlement, or elevated helper is used for interface sampling. See Apple's public [route source](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/rtsock.c) and [interface MIB source](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/if_mib.c).

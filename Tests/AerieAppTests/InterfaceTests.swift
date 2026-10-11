@@ -4,6 +4,41 @@ import Foundation
 import XCTest
 
 final class InterfaceTests: XCTestCase {
+  private func mibInterface(loopback: Bool = false) -> ifmibdata {
+    var message = ifmibdata()
+    withUnsafeMutableBytes(of: &message.ifmd_name) {
+      $0.copyBytes(from: Array("enSynthetic".utf8) + [0])
+    }
+    message.ifmd_flags = UInt32(IFF_UP | IFF_RUNNING | (loopback ? IFF_LOOPBACK : 0))
+    message.ifmd_data.ifi_ibytes = 430_000_000_000
+    message.ifmd_data.ifi_obytes = 490_000_000_000
+    return message
+  }
+  private func parseMIB(_ data: Data, capacity: Int = 4) -> (Int, [AerieInterfaceCounter]) {
+    var values = [AerieInterfaceCounter](repeating: AerieInterfaceCounter(), count: capacity)
+    let count = data.withUnsafeBytes { buffer in
+      aerie_mib_interface_counters(buffer.baseAddress, buffer.count, &values, Int32(capacity))
+    }
+    return (Int(count), Array(values.prefix(max(0, Int(count)))))
+  }
+  func testPublicMIBPreservesLargeCumulativeCountersAndExcludesLoopback() {
+    let (count, values) = parseMIB(bytes(mibInterface(loopback: true)) + bytes(mibInterface()))
+    XCTAssertEqual(count, 1)
+    XCTAssertEqual(values.first?.received, 430_000_000_000)
+    XCTAssertEqual(values.first?.sent, 490_000_000_000)
+    XCTAssertEqual(values.first?.counter_bits, 64)
+    XCTAssertEqual(values.first?.active, 1)
+  }
+  func testMalformedMIBAndUnterminatedNamesAreRejected() {
+    let valid = bytes(mibInterface())
+    XCTAssertEqual(parseMIB(Data(valid.dropLast())).0, -1)
+    XCTAssertEqual(parseMIB(valid + valid, capacity: 1).0, -1)
+    var bad = mibInterface()
+    _ = withUnsafeMutableBytes(of: &bad.ifmd_name) {
+      $0.initializeMemory(as: UInt8.self, repeating: 65)
+    }
+    XCTAssertEqual(parseMIB(bytes(bad)).0, -1)
+  }
   private func bytes<T>(_ value: T) -> Data { withUnsafeBytes(of: value) { Data($0) } }
   private func interface(_ index: UInt16, loopback: Bool = false) -> if_msghdr2 {
     var message = if_msghdr2()
@@ -33,6 +68,7 @@ final class InterfaceTests: XCTestCase {
     XCTAssertEqual(values.first?.received, 6_000_000_000)
     XCTAssertEqual(values.first?.sent, 9_000_000_000)
     XCTAssertEqual(values.first?.errors_in, 4); XCTAssertEqual(values.first?.active, 1)
+    XCTAssertEqual(values.first?.counter_bits, 32)
   }
   func testMalformedTruncatedAndCapacityExceededSnapshotsAreRejected() {
     let valid = bytes(interface(7))

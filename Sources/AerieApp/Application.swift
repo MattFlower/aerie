@@ -117,6 +117,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
           "cpu": snapshot.cpu.total != nil, "cores": snapshot.cpu.cores.count,
           "memory": snapshot.memory.total > 0, "interfaces": snapshot.interfaces.count,
           "networkCountersAvailable": snapshot.networkAvailable,
+          "networkFullWidthCounters": !snapshot.interfaces.isEmpty
+            && snapshot.interfaces.allSatisfy { $0.counterBits == 64 },
           "volumes": snapshot.volumes.count, "gpu": snapshot.gpu.count,
           "sensors": snapshot.sensors.count, "sensorStatus": snapshot.sensorStatus,
           "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,

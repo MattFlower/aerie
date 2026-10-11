@@ -448,11 +448,21 @@ final class DashboardController: NSViewController {
           DashboardRow.metric(
             "Download / upload",
             "\(rate(i.download, domain: .network)) / \(rate(i.upload, domain: .network))"),
-          DashboardRow.metric("Received since boot", bytes(Double(i.received))),
-          DashboardRow.metric("Sent since boot", bytes(Double(i.sent))),
+          DashboardRow.metric(
+            i.counterBits == 64 ? "Received since boot" : "Received · limited counter",
+            bytes(Double(i.received))),
+          DashboardRow.metric(
+            i.counterBits == 64 ? "Sent since boot" : "Sent · limited counter",
+            bytes(Double(i.sent))),
           DashboardRow.metric("Errors", "\(i.errors)"),
           DashboardRow.note(i.addresses.isEmpty ? "No assigned IP address" : i.addresses),
         ]
+        if i.counterBits != 64 {
+          rows.append(
+            .note(
+              "The OS route fallback rounds bytes to 1 KiB and limits counters to 32 bits. These values are not totals since boot; a wrap or source change resets the rate baseline."
+            ))
+        }
       }
       if !s.wifi.isEmpty {
         rows +=

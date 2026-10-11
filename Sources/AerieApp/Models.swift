@@ -63,6 +63,7 @@ struct InterfaceData {
   var download: Double?
   var upload: Double?
   var errors: UInt64
+  var counterBits = 64
 }
 struct ProcessData {
   var pid: Int
