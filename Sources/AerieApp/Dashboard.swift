@@ -468,6 +468,49 @@ final class DashboardController: NSViewController {
           ),
         ]
       }
+      rows.append(.heading("Per-device I/O sources"))
+      for device in s.storageDevices {
+        rows += [
+          .metric(
+            device.device ?? "Unassociated I/O source",
+            "R \(rate(device.read))  W \(rate(device.write))")
+        ]
+      }
+      rows += [.heading("OS drive health"), .note(s.storageMetadata.status)]
+      if let date = s.storageMetadata.queriedAt {
+        rows.append(.metric("Metadata read", date.formatted(date: .omitted, time: .standard)))
+      }
+      for identifier in s.storageMetadata.topology?.physicalDisks ?? [] {
+        guard let drive = s.storageMetadata.drives[identifier] else {
+          rows.append(.metric(identifier, "Health query unavailable")); continue
+        }
+        let status: String
+        switch drive.smart {
+        case .verified: status = "SMART threshold status: Verified"
+        case .failing: status = "SMART threshold status: Failing"
+        case .unsupported: status = "SMART status not supported"
+        case .unknown: status = "SMART status not reported"
+        }
+        rows += [
+          .heading(identifier), .metric("Reported status", status),
+          .metric("Bus", drive.bus ?? "Unavailable"),
+          .metric(
+            "Media", drive.solidState.map { $0 ? "Solid state" : "Rotating" } ?? "Unavailable"),
+        ]
+      }
+      for volume in s.volumes {
+        if let device = volume.device {
+          let backing = s.storageMetadata.topology?.underlyingDisks(for: device) ?? []
+          rows.append(
+            .metric(
+              volume.name + " · " + device,
+              backing.isEmpty ? "Backing device unavailable" : backing.joined(separator: ", ")))
+        }
+      }
+      rows.append(
+        .note(
+          "SMART is the OS-reported drive threshold state, not a diagnostic scan or remaining-life estimate. Read-only metadata refreshes once per minute only while visible. Temperature and endurance remain unavailable when no supported telemetry source exists. Virtual/image APFS stores are identified as backing devices without claiming physical drive health."
+        ))
       rows.append(.heading("Top process I/O"))
       let ioRows = top(
         { left, right in
@@ -478,7 +521,7 @@ final class DashboardController: NSViewController {
       rows.append(contentsOf: ioRows)
       rows.append(
         .note(
-          "Disk rates are physical-device totals; process I/O uses OS accounting. Volume health and temperature depend on an accessible drive telemetry interface and are not yet collected."
+          "Disk rates are physical-device totals; process I/O uses OS accounting. Per-device association uses native whole-media registry records and read-only OS/APFS metadata; unassociated sources remain explicit. No drive scan, repair, device write or elevated helper is performed."
         ))
       return rows
     case .network:

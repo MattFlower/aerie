@@ -64,6 +64,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     if CommandLine.arguments.contains("--process-network-self-check") {
       collector.setVisibleModule(.network)
     }
+    if CommandLine.arguments.contains("--storage-self-check") {
+      collector.setVisibleModule(.storage)
+    }
     if CommandLine.arguments.contains("--network-demand-cycles") {
       for start in [3.0, 68.0, 133.0] {
         DispatchQueue.main.asyncAfter(deadline: .now() + start) { [weak collector] in
@@ -132,6 +135,38 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       dashboard.refresh()
     }
     updateWeather()
+    if CommandLine.arguments.contains("--storage-self-check") {
+      selfCheckSamples += 1
+      if (selfCheckSamples >= 12 && snapshot.storageMetadata.queriedAt != nil)
+        || selfCheckSamples == 30
+      {
+        collector?.setVisibleModule(nil)
+        let topology = snapshot.storageMetadata.topology
+        let output: [String: Any] = [
+          "scenario": "headless read-only Storage demand; no actual open panel",
+          "ioSources": snapshot.storageDevices.count,
+          "associatedIOSources": snapshot.storageDevices.filter { $0.device != nil }.count,
+          "volumesWithBSDName": snapshot.volumes.filter { $0.device != nil }.count,
+          "volumesWithBacking": snapshot.volumes.filter { volume in
+            volume.device.map { !(topology?.underlyingDisks(for: $0) ?? []).isEmpty } ?? false
+          }.count,
+          "physicalDrives": topology?.physicalDisks.count ?? 0,
+          "healthReports": snapshot.storageMetadata.drives.count,
+          "smartVerified": snapshot.storageMetadata.drives.values.filter { $0.smart == .verified }
+            .count,
+          "status": snapshot.storageMetadata.status,
+        ]
+        selfCheckSamples = -1000
+        DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+          if let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+          {
+            print(text)
+          }
+          NSApp.terminate(nil)
+        }
+      }
+    }
     if CommandLine.arguments.contains("--process-network-self-check") {
       selfCheckSamples += 1
       if selfCheckSamples == 12 {

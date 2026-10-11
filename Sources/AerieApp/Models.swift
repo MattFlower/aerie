@@ -52,7 +52,14 @@ struct VolumeData {
   var removable: Bool
   var local: Bool
   var readOnly: Bool
+  var device: String?
   var usedFraction: Double { total > 0 ? max(0, min(1, 1 - free / total)) : 0 }
+}
+struct StorageDeviceData {
+  var registryID: UInt64
+  var device: String?
+  var read, write: Double?
+  var received, sent: UInt64?
 }
 struct InterfaceData {
   var name: String
@@ -113,6 +120,8 @@ struct Snapshot {
   var processes = [ProcessData]()
   var networkProcesses = [ProcessNetworkReading]()
   var processNetworkStatus = "Process traffic begins when this panel opens."
+  var storageDevices = [StorageDeviceData]()
+  var storageMetadata = StorageMetadataReading()
   var diskRead: Double?
   var diskWrite: Double?
   var wifi: [String: String] = [:]

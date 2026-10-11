@@ -2,6 +2,7 @@ import AerieCore
 import AerieNative
 import CoreWLAN
 import Darwin
+import DiskArbitration
 import Foundation
 import IOKit
 import IOKit.ps
@@ -51,6 +52,10 @@ final class Collector {
   private var networkSession = NetworkSessionTracker()
   private lazy var processNetwork = ProcessNetworkReader(queue: queue)
   private var networkPanelVisible = false
+  private var storagePanelVisible = false
+  private let storageMetadata = StorageMetadataReader()
+  private let diskSession = DASessionCreate(kCFAllocatorDefault)
+  private var diskNames: [UInt64: String] = [:]
   private var previousProcesses: [Int32: AerieProcess] = [:]
   private var processTime: Double?
   private var sensorSources:
@@ -118,6 +123,7 @@ final class Collector {
   }
   deinit {
     processNetwork.stop()
+    storageMetadata.configure(visible: false)
     pathMonitor.cancel()
     aerie_smc_close()
     for accelerator in accelerators { IOObjectRelease(accelerator) }
@@ -136,6 +142,8 @@ final class Collector {
       let value = module.map { ProcessDemand.required(module: $0, visible: true) } ?? false
       self.detailed = value;
       self.sensorPanelVisible = module == .sensors
+      self.storagePanelVisible = module == .storage
+      self.storageMetadata.configure(visible: self.storagePanelVisible && !self.suspended)
       self.networkPanelVisible = module == .network
       self.processNetwork.configure(
         visible: self.networkPanelVisible && !self.suspended, interval: self.settings.interval)
@@ -148,6 +156,7 @@ final class Collector {
   func setSuspended(_ value: Bool) {
     queue.async {
       self.suspended = value
+      self.storageMetadata.configure(visible: self.storagePanelVisible && !value)
       self.processNetwork.configure(
         visible: self.networkPanelVisible && !value, interval: self.settings.interval)
       if !value {
@@ -172,6 +181,8 @@ final class Collector {
     let now = ProcessInfo.processInfo.systemUptime
     var snapshot = cache
     snapshot.date = Date()
+    storageMetadata.configure(visible: storagePanelVisible && !suspended, time: now)
+    snapshot.storageMetadata = storageMetadata.reading()
     let processTraffic = processNetwork.current(time: now)
     snapshot.networkProcesses = processTraffic.rows;
     snapshot.processNetworkStatus = processTraffic.status
@@ -182,8 +193,16 @@ final class Collector {
         disks.map { service -> UInt64 in
           var id: UInt64 = 0; IORegistryEntryGetRegistryEntryID(service, &id); return id
         })
+      diskNames.removeAll()
+      for service in disks {
+        var id: UInt64 = 0; IORegistryEntryGetRegistryEntryID(service, &id)
+        if let name = Self.wholeMediaName(service) { diskNames[id] = name }
+      }
       if latest != storageIDs {
         counters.removeValue(forKey: "diskRead"); counters.removeValue(forKey: "diskWrite");
+        for key in counters.keys where key.hasPrefix("device.") {
+          counters.removeValue(forKey: key)
+        }
         storageIDs = latest
       }
     }
@@ -261,14 +280,21 @@ final class Collector {
     var reads: UInt64 = 0
     var writes: UInt64 = 0
     var diskValid = false
+    snapshot.storageDevices.removeAll(keepingCapacity: true)
     for disk in disks {
+      var id: UInt64 = 0; IORegistryEntryGetRegistryEntryID(disk, &id)
+      var device = StorageDeviceData(registryID: id, device: diskNames[id])
       if let statistics = property(disk, "Statistics") as? [String: NSNumber],
         let read = statistics["Bytes (Read)"], let write = statistics["Bytes (Write)"]
       {
         reads += read.uint64Value
         writes += write.uint64Value
         diskValid = true
+        device.received = read.uint64Value; device.sent = write.uint64Value
+        device.read = rate("device.\(id).read", read.uint64Value, now)
+        device.write = rate("device.\(id).write", write.uint64Value, now)
       }
+      snapshot.storageDevices.append(device)
     }
     snapshot.diskRead = diskValid ? rate("diskRead", reads, now) : nil
     snapshot.diskWrite = diskValid ? rate("diskWrite", writes, now) : nil
@@ -392,6 +418,25 @@ final class Collector {
     processTime = now
     return result
   }
+  private static func wholeMediaName(_ service: io_registry_entry_t) -> String? {
+    var iterator: io_iterator_t = 0
+    guard
+      IORegistryEntryCreateIterator(
+        service, kIOServicePlane, IOOptionBits(kIORegistryIterateRecursively), &iterator)
+        == KERN_SUCCESS
+    else { return nil }
+    defer { IOObjectRelease(iterator) }
+    var count = 0
+    while case let entry = IOIteratorNext(iterator), entry != 0 {
+      defer { IOObjectRelease(entry) }; count += 1; if count > 4096 { return nil }
+      if IOObjectConformsTo(entry, "IOMedia") != 0, property(entry, "Whole") as? Bool == true,
+        let name = property(entry, "BSD Name") as? String, DiskDevice.valid(name)
+      {
+        return name
+      }
+    }
+    return nil
+  }
   private func volumes() -> (rows: [VolumeData], paths: [String])? {
     let keys: Set<URLResourceKey> = [
       .volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
@@ -411,7 +456,12 @@ final class Collector {
         total: Double(total), free: Double(free),
         important: v.volumeAvailableCapacityForImportantUsage.map(Double.init),
         removable: v.volumeIsRemovable ?? false, local: v.volumeIsLocal ?? true,
-        readOnly: v.volumeIsReadOnly ?? false)
+        readOnly: v.volumeIsReadOnly ?? false,
+        device: diskSession.flatMap { session in
+          DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL).flatMap { disk in
+            DADiskGetBSDName(disk).map { String(cString: $0) }
+          }
+        })
     }.sorted { $0.path == "/" || ($1.path != "/" && $0.name < $1.name) }
     return (rows, urls.map(\.path))
   }
