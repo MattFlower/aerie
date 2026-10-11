@@ -1,6 +1,6 @@
 # Aerie
 
-Aerie is an original native macOS menu-bar system monitor built with Swift, AppKit, Mach, libproc, and IOKit. It runs in one process, samples through a shared scheduler, and retains bounded history.
+Aerie is an original native macOS menu-bar system monitor built with Swift, AppKit, Mach, libproc, and IOKit. The application samples through a shared scheduler and retains bounded history. Visible Network and Storage panels can own temporary built-in OS command processes; these are included in its performance accounting.
 
 **Development preview:** the application is runnable, but the full feature and performance acceptance checklist is still open. See [capabilities and remaining work](docs/CAPABILITIES.md).
 
@@ -21,11 +21,11 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - CPU utilization, user/system split, logical-core bars, topology, load, uptime, and top processes.
 - Driver-exposed GPU utilization, rendering/tiling activity, and shared-memory use.
 - Memory categories, OS pressure state, compression, swap, paging, and top process footprints.
-- Local/removable/network volume capacity, physical disk activity, and process disk I/O.
+- Local/removable/network volume capacity, per-source disk activity, mounted-volume/APFS backing associations, read-only OS-reported SMART status, and process disk I/O.
 - Complete interface throughput, cumulative and observed-session totals, aggregate interface selection, local addresses, errors, passive connectivity, and available Wi-Fi details.
 - Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default with an explicit on-demand option for non-temperature families.
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
-- Local/world clocks, monthly calendar, optional local calendar events, and approximate lunar phase.
+- Local/world clocks, selectable monthly calendar with navigation and week numbers, optional selected-day/upcoming local event details, and approximate lunar phase.
 - Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.
 - Ten-minute detailed history, one day of minute averages, and one week of hourly averages.
 - Opt-in Open-Meteo current/hourly/daily model forecasts, with attribution and explicit provider/location consent.
