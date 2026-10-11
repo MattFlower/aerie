@@ -1,8 +1,56 @@
+import AerieCore
 import AppKit
 import XCTest
 @testable import AerieApp
 
 final class MenuPanelTests: XCTestCase {
+  func testDashboardReleasesItsNativeHierarchyAndRebuildsWithoutLosingSelections() async {
+    await MainActor.run {
+      _ = NSApplication.shared
+      let controller = DashboardController()
+      weak var root: NSView?
+      weak var scroll: NSScrollView?
+      autoreleasepool {
+        root = controller.view
+        scroll = controller.canvas.enclosingScrollView
+        controller.windowPicker.selectItem(at: 2)
+        controller.zoomPicker.selectItem(at: 2)
+        controller.historyPosition.doubleValue = 0.3
+        controller.releasePresentation()
+      }
+      XCTAssertFalse(controller.isPresentationLoaded); XCTAssertNil(root); XCTAssertNil(scroll)
+      XCTAssertNil(controller.canvas.superview)
+      for _ in 0..<3 {
+        controller.show(.sensors)
+        XCTAssertEqual(controller.modules.numberOfItems, Module.allCases.count)
+        XCTAssertEqual(controller.windowPicker.numberOfItems, 3)
+        XCTAssertEqual(controller.windowPicker.indexOfSelectedItem, 2)
+        XCTAssertEqual(controller.zoomPicker.numberOfItems, 4)
+        XCTAssertEqual(controller.zoomPicker.indexOfSelectedItem, 2)
+        XCTAssertEqual(controller.historyPosition.doubleValue, 0.3)
+        XCTAssertNotNil(controller.canvas.enclosingScrollView)
+        controller.releasePresentation()
+      }
+    }
+  }
+  func testMapTeardownDetachesContentEvenWhenAnOutstandingOwnerRetainsTheController() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      var configuration = WeatherConfiguration()
+      configuration.mapsEnabled = true; configuration.name = "Synthetic fixture"
+      configuration.latitude = 40; configuration.longitude = -100
+      var controller: WeatherMapWindowController!
+      weak var content: NSView?
+      try autoreleasepool {
+        controller = try WeatherMapWindowController(configuration: configuration)
+        content = controller.window?.contentView
+        XCTAssertNotNil(content)
+        controller.releaseResources()
+      }
+      XCTAssertNil(controller.window?.contentView); XCTAssertNil(content)
+      controller.releaseResources()
+    }
+  }
   func testClosedSettingsAndDetailWindowsDetachTheirNativeContent() async {
     await MainActor.run {
       _ = NSApplication.shared

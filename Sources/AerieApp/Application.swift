@@ -17,6 +17,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private var changeRules = ChangeRuleEngine()
   private var dashboard = DashboardController()
   private var menuPanel = MenuPanel()
+  private let idleMemory = IdleMemoryReclaimer()
   private var preferences: PreferencesController?
   private var keyboardShortcuts: KeyboardShortcuts?
   private var shortcutStatus: String?
@@ -56,6 +57,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     NSApp.setActivationPolicy(.accessory)
     configureApplicationMenu()
     windowLifecycle?.start()
+    idleMemory.onComplete = { [weak self] bytes, duration in
+      self?.windowLifecycle?.capture(
+        .memoryReclaimed, reclamation: .init(bytes: bytes, durationSeconds: duration))
+    }
     if let data = defaults.data(forKey: "settings"),
       let decoded = try? JSONDecoder().decode(Settings.self, from: data),
       let valid = try? decoded.validated()
@@ -538,6 +543,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   }
   private func showModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
     if menuPanel.isShown { menuPanel.performClose(nil) }
+    idleMemory.presentationOpened()
     dashboard.snapshot = snapshot
     dashboard.settings = settings
     updatePublicAddressView()
@@ -559,6 +565,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
     clearCalendar(); dashboard.canvas.releaseInteractiveRows()
     calendarSelection.today()
+    dashboard.releasePresentation()
+    idleMemory.presentationClosed()
   }
   private func releaseViewMetadata(module: Module?) {
     snapshot.releaseActiveViewState(module: module, suspended: paused || sleeping)
@@ -735,6 +743,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   }
   @objc private func showSettings() {
     menuPanel.performClose(nil)
+    idleMemory.presentationOpened()
     if let preferences {
       preferences.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
     }
@@ -746,6 +755,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     preferences?.onApply = { [weak self] in self?.apply($0) }
     preferences?.onClose = { [weak self] in
       self?.cancelWiFiPermission(); self?.preferences = nil
+      self?.idleMemory.presentationClosed()
     }
     preferences?.onDashboard = { [weak self] in
       guard let self, let button = self.items.first?.1.button else { return };
@@ -840,6 +850,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   }
   private func showMaps() {
     menuPanel.performClose(nil)
+    idleMemory.presentationOpened()
     guard settings.weather.mapsValid else { showSettings(); return }
     if let weatherMaps {
       weatherMaps.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
@@ -848,16 +859,21 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       let controller = try WeatherMapWindowController(configuration: settings.weather)
       weatherMaps = controller
       windowLifecycle?.register(controller.window, role: .maps)
-      controller.onClose = { [weak self] in self?.weatherMaps = nil }
+      controller.onClose = { [weak self] in
+        self?.weatherMaps = nil; self?.idleMemory.presentationClosed()
+      }
       controller.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
       windowLifecycle?.capture(.shown, window: controller.window)
     } catch { notice("Enable NOAA maps and choose a manual location in Weather Settings.") }
   }
   private func showWeatherDetail(title: String, message: String) {
     weatherDetails?.close()
+    idleMemory.presentationOpened()
     let controller = WeatherDetailWindow(title: title, message: message)
     windowLifecycle?.register(controller.window, role: .detail)
-    controller.onClose = { [weak self] in self?.weatherDetails = nil }
+    controller.onClose = { [weak self] in
+      self?.weatherDetails = nil; self?.idleMemory.presentationClosed()
+    }
     weatherDetails = controller; controller.showWindow(nil)
     windowLifecycle?.capture(.shown, window: controller.window)
     NSApp.activate(ignoringOtherApps: true)
@@ -893,6 +909,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     weatherDetails?.close(); weatherDetails = nil
     weatherMaps?.close(); weatherMaps = nil
     cancelWiFiPermission(); clearCalendar()
+    idleMemory.presentationClosed()
     windowLifecycle?.capture(.closeAll)
   }
   private func applyAppearance() {

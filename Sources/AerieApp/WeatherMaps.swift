@@ -645,6 +645,7 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     canvas.clear(); clearLegend(); boundaryLayer = nil; alertTimestamp.stringValue = ""
     alertDetailsText?.string = ""; alertDetailsText = nil
     alertDetailsWindow?.delegate = nil; alertDetailsWindow?.close(); alertDetailsWindow = nil
+    if let window { MenuPanel.releaseContent(of: window) }
   }
   deinit {
     task?.cancel(); animation?.invalidate(); refreshTimer?.invalidate(); client.close()

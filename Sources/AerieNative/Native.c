@@ -16,6 +16,7 @@
 #include <IOKit/IOKitLib.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <malloc/malloc.h>
 #include <stdio.h>
 #include <string.h>
 #include <mach/mach_time.h>
@@ -357,4 +358,8 @@ int aerie_network_spawn(const char *executable, const char *argument, int second
         int error = errno; close(*master); kill(child, SIGKILL); waitpid(child, NULL, 0); *master = -1; return error;
     }
     *pid = child; return 0;
+}
+
+uint64_t aerie_release_unused_memory(uint64_t goal) {
+    return (uint64_t)malloc_zone_pressure_relief(NULL, (size_t)goal);
 }

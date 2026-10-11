@@ -505,12 +505,24 @@ final class DashboardController: NSViewController {
     if released && module == .network { canvas.releaseInteractiveRows(); refresh() }
   }
   var calendarRows: [DashboardRow] = []
+  private var presentationReleased = false
+  var isPresentationLoaded: Bool { isViewLoaded && !presentationReleased }
+  /// Release the native scroll hierarchy between presentations while retaining selection state.
+  func releasePresentation() {
+    guard isPresentationLoaded else { return }
+    canvas.releaseInteractiveRows()
+    canvas.enclosingScrollView?.documentView = nil
+    view = NSView(frame: .zero)
+    presentationReleased = true
+  }
   override func loadView() {
+    presentationReleased = false
     view = NSView(frame: NSRect(x: 0, y: 0, width: 416, height: 620))
     let title = NSTextField(labelWithString: "Aerie")
     title.font = .systemFont(ofSize: 18, weight: .semibold)
     title.frame = NSRect(x: 16, y: 580, width: 90, height: 26)
     view.addSubview(title)
+    modules.removeAllItems()
     modules.addItems(withTitles: Module.allCases.map(\.title))
     modules.target = self
     modules.action = #selector(selectModule)
@@ -522,7 +534,10 @@ final class DashboardController: NSViewController {
     scroll.documentView = canvas
     scroll.drawsBackground = false
     view.addSubview(scroll)
+    let selectedZoom = max(0, zoomPicker.indexOfSelectedItem)
+    zoomPicker.removeAllItems()
     zoomPicker.addItems(withTitles: ["Full range", "Zoom 2×", "Zoom 4×", "Zoom 8×"])
+    zoomPicker.selectItem(at: selectedZoom)
     zoomPicker.frame = NSRect(x: 16, y: 543, width: 114, height: 26)
     zoomPicker.target = self; zoomPicker.action = #selector(changeZoom)
     zoomPicker.setAccessibilityLabel("History zoom")
@@ -538,7 +553,10 @@ final class DashboardController: NSViewController {
     let settingsButton = NSButton(title: "Settings…", target: self, action: #selector(openSettings))
     settingsButton.frame = NSRect(x: 12, y: 9, width: 95, height: 28)
     view.addSubview(settingsButton)
+    let selectedWindow = max(0, windowPicker.indexOfSelectedItem)
+    windowPicker.removeAllItems()
     windowPicker.addItems(withTitles: ["10 minutes", "24 hours", "7 days"])
+    windowPicker.selectItem(at: selectedWindow)
     windowPicker.frame = NSRect(x: 110, y: 9, width: 122, height: 28)
     windowPicker.target = self
     windowPicker.action = #selector(changeWindow)
@@ -584,13 +602,14 @@ final class DashboardController: NSViewController {
     resetZoom()
   }
   func show(_ module: Module) {
+    if presentationReleased { loadView() } else { _ = view }
     if module != .time { releaseDaylight() }
     self.module = module
     modules.selectItem(at: Module.allCases.firstIndex(of: module) ?? 0)
     refresh()
   }
   func refresh() {
-    guard isViewLoaded else { return }
+    guard isPresentationLoaded else { return }
     mapsButton.isHidden = module != .weather; windowPicker.isHidden = module == .weather
     zoomPicker.isHidden = module == .weather
     historyPosition.isHidden = module == .weather; zoomReset.isHidden = module == .weather

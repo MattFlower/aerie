@@ -10,16 +10,20 @@ final class WindowLifecycle {
   enum Event: String, Encodable {
     case launched, registered, shown, willClose, becameKey, resignedKey, minimized, restored
     case occlusion, becameActive, resignedActive, hidden, unhidden, reopened, closeAll, tick,
-      terminating
+      terminating, memoryReclaimed
   }
   struct WindowState: Encodable {
     let id: Int
     let role: Role
     let visible, occluded, minimized, key, closing, contentAttached: Bool
   }
+  struct Reclamation: Encodable {
+    let bytes: UInt64
+    let durationSeconds: Double
+  }
   struct Report: Encodable {
     let kind = "windowLifecycle"
-    let schema = 1
+    let schema = 2
     let date: Date
     let monotonicTime: Double
     let event: Event
@@ -29,6 +33,7 @@ final class WindowLifecycle {
     let omittedWindows, droppedEvents: Int
     let allPresentationWindowsClosed: Bool?
     let app: StorageProcessResources
+    let reclamation: Reclamation?
   }
   private final class Entry {
     weak var window: NSWindow?
@@ -125,7 +130,7 @@ final class WindowLifecycle {
     }
     _ = entry(window, role: role); capture(.registered, window: window)
   }
-  func capture(_ event: Event, window: NSWindow? = nil) {
+  func capture(_ event: Event, window: NSWindow? = nil, reclamation: Reclamation? = nil) {
     let now = clock()
     let second = floor(now)
     if eventSecond != second {
@@ -151,7 +156,8 @@ final class WindowLifecycle {
         date: date(), monotonicTime: now, event: event, eventWindow: eventID,
         active: NSApp.isActive, hidden: NSApp.isHidden, windows: states,
         omittedWindows: omitted, droppedEvents: droppedEvents,
-        allPresentationWindowsClosed: omitted == 0 ? closed : nil, app: resources()))
+        allPresentationWindowsClosed: omitted == 0 ? closed : nil, app: resources(),
+        reclamation: reclamation))
     droppedEvents = 0
   }
 }
