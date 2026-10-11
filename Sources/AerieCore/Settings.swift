@@ -103,6 +103,7 @@ public struct Settings: Codable, Equatable {
   public var compactSpacing = false
   // Optional for old configurations. Full sampling remains the default until explicitly changed.
   public var sensorSampling: SensorSamplingMode?
+  public var sensorNames: [String: String]?
   public var effectiveSensorSampling: SensorSamplingMode { sensorSampling ?? .all }
   public var clockFormat = "EEE d MMM HH:mm"
   public var weekStartsMonday = true
@@ -120,6 +121,7 @@ public struct Settings: Codable, Equatable {
     if let daylight, daylight.enabled && !daylight.valid { throw SettingsError.invalid }
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
       networkSelection.valid, KeyboardShortcut.valid(shortcuts ?? []),
+      SensorIdentity.valid(names: sensorNames),
       menus.count <= Module.allCases.count,
       Set(menus.map(\.module)).count == menus.count,
       combined || menus.contains(where: \.visible), clockFormat.count <= 80,

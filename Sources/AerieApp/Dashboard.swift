@@ -796,7 +796,7 @@ final class DashboardController: NSViewController {
         DashboardRow.note(
           settings.effectiveSensorSampling == .all
             ? "All supported sensors are sampled at the selected system interval."
-            : "On-demand sensor sampling: all temperatures stay live for history and rules; other families become live when this panel is open."
+            : "On-demand sampling keeps all temperatures and enabled individual-rule sensors live; other readings wait until this panel opens."
         ),
       ]
       for unit in ["°C", "rpm", "W", "V", "A"] {
@@ -817,7 +817,7 @@ final class DashboardController: NSViewController {
           } else {
             value = $0.state == .deferred ? "Waiting for live read" : "Unavailable"
           }
-          return DashboardRow.metric($0.label, value)
+          return DashboardRow.metric($0.title(names: settings.sensorNames), value)
         }
       }
       rows += [

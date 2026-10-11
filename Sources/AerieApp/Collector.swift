@@ -72,6 +72,7 @@ final class Collector {
   private var settings = Settings()
   private var detailed = false
   private var sensorPanelVisible = false
+  private var ruleSensorKeys = Set<String>()
   private var suspended = false
   var onSample: ((Snapshot) -> Void)?
 
@@ -134,6 +135,7 @@ final class Collector {
   func configure(_ settings: Settings) {
     queue.async { [self] in
       self.settings = settings
+      self.ruleSensorKeys = SensorIdentity.requiredKeys(rules: settings.rules)
       self.processNetwork.configure(
         visible: self.networkPanelVisible && !self.suspended, interval: settings.interval)
       schedule.configure(interval: settings.interval) { [weak self] in self?.sample() }
@@ -324,7 +326,8 @@ final class Collector {
     snapshot.sensors = sensorSources.map { entry in
       Self.sensorReading(
         SensorData(key: entry.key, label: entry.label, value: nil, unit: entry.unit),
-        mode: settings.effectiveSensorSampling, panelVisible: sensorPanelVisible
+        mode: settings.effectiveSensorSampling, panelVisible: sensorPanelVisible,
+        ruleRequired: ruleSensorKeys.contains(entry.key)
       ) {
         var value = 0.0; return aerie_smc_value(entry.source, &value) == 0 ? value : nil
       }
@@ -351,10 +354,13 @@ final class Collector {
   }
   static func sensorReading(
     _ descriptor: SensorData, mode: SensorSamplingMode, panelVisible: Bool,
+    ruleRequired: Bool = false,
     read: () -> Double?
   ) -> SensorData {
     var result = descriptor; result.value = nil
-    guard SensorDemand.required(unit: descriptor.unit, mode: mode, panelVisible: panelVisible)
+    guard
+      SensorDemand.required(
+        unit: descriptor.unit, mode: mode, panelVisible: panelVisible, ruleRequired: ruleRequired)
     else {
       result.state = .deferred; return result
     }

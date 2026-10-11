@@ -23,7 +23,7 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Memory categories, OS pressure state, compression, swap, paging, and top process footprints.
 - Local/removable/network volume capacity, per-source disk activity, mounted-volume/APFS backing associations, read-only OS-reported SMART status, and process disk I/O.
 - Complete interface throughput, cumulative and observed-session totals, aggregate interface selection, local addresses, errors, passive connectivity, and available Wi-Fi details.
-- Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default with an explicit on-demand option for non-temperature families.
+- Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default, local names that retain firmware keys, individual native-unit alerts, and an explicit on-demand option that keeps enabled rule inputs live.
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
 - Local/world clocks, selectable monthly calendar with navigation and week numbers, optional selected-day/upcoming local event details with event-calendar selection, approximate lunar phase, and separately configured offline solar-noon/daylight/twilight estimates.
 - Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.

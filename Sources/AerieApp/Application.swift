@@ -240,11 +240,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     historyPersistence?.save(
       history, interval: settings.interval, selection: settings.networkSelection)
     for rule in rules.evaluate(
-      rules: settings.rules, values: metrics, time: ProcessInfo.processInfo.systemUptime)
+      rules: settings.rules,
+      values: snapshot.ruleMetrics(
+        rules: settings.rules, base: metrics, suspended: paused || sleeping),
+      time: ProcessInfo.processInfo.systemUptime)
     {
       notify(rule)
     }
-    if let configured = settings.changeRules, configured.contains(where: \.enabled) {
+    if !paused, !sleeping, let configured = settings.changeRules,
+      configured.contains(where: \.enabled)
+    {
       for event in changeRules.evaluate(
         rules: configured, values: snapshot.changeStates,
         time: ProcessInfo.processInfo.systemUptime)
@@ -781,9 +786,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   @objc private func quit() { NSApp.terminate(nil) }
   private func notify(_ rule: ThresholdRule) {
     let content = UNMutableNotificationContent()
-    content.title = "Aerie · \(rule.metric)"
+    let sensor = SensorIdentity.key(metric: rule.metric).flatMap { key in
+      snapshot.sensors.first { $0.key == key && $0.unit == rule.sensorUnit }
+    }
+    content.title = "Aerie · \(sensor?.title(names: settings.sensorNames) ?? rule.metric)"
+    let unit = rule.sensorUnit.map { " " + $0 } ?? ""
     content.body =
-      "\(rule.comparison.rawValue.capitalized) \(rule.threshold) for \(Int(rule.duration)) seconds."
+      "\(rule.comparison.rawValue.capitalized) \(rule.threshold)\(unit) for \(Int(rule.duration)) seconds."
     UNUserNotificationCenter.current().add(
       UNNotificationRequest(identifier: rule.id.uuidString, content: content, trigger: nil))
   }

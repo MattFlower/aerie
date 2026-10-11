@@ -15,22 +15,39 @@ public struct ThresholdRule: Codable, Equatable, Identifiable {
   public var comparison: RuleComparison
   public var duration: Double
   public var cooldown: Double
+  public var sensorUnit: String?
   public var enabled = true
   public init(
     metric: String, threshold: Double, comparison: RuleComparison = .above,
-    duration: Double = 30, cooldown: Double = 300
+    duration: Double = 30, cooldown: Double = 300, sensorUnit: String? = nil
   ) {
     self.metric = metric
     self.threshold = threshold
     self.comparison = comparison
     self.duration = duration
     self.cooldown = cooldown
+    self.sensorUnit = sensorUnit
   }
   public var valid: Bool {
-    ["cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload", "thermal"]
-      .contains(metric) && threshold.isFinite && threshold >= 0 && duration.isFinite
+    let individual = SensorIdentity.key(metric: metric) != nil
+    let validMetric =
+      individual
+      ? sensorUnit.map { SensorIdentity.units.contains($0) } ?? false
+      : sensorUnit == nil
+        && [
+          "cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload",
+          "thermal",
+        ].contains(metric)
+    let validThreshold =
+      individual
+      ? abs(threshold) <= 1e12 && (sensorUnit != "rpm" || threshold >= 0)
+      : threshold >= 0
+    return validMetric && threshold.isFinite && validThreshold && duration.isFinite
       && duration >= 0 && duration <= 86400 && cooldown.isFinite && cooldown >= 10
       && cooldown <= 604800
+  }
+  public var valueKey: String {
+    SensorIdentity.key(metric: metric) != nil ? metric + ":" + (sensorUnit ?? "") : metric
   }
 }
 public struct RuleEngine {
@@ -58,7 +75,7 @@ public struct RuleEngine {
         lastFired[rule.id] = nil
       }
       definitions[rule.id] = rule
-      guard rule.enabled, rule.valid, let value = values[rule.metric], value.isFinite else {
+      guard rule.enabled, rule.valid, let value = values[rule.valueKey], value.isFinite else {
         started[rule.id] = nil
         continue
       }

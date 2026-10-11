@@ -72,3 +72,78 @@ final class SensorTests: XCTestCase {
         .effectiveSensorSampling, .whenNeeded)
   }
 }
+
+extension SensorTests {
+  func testIndividualRulesReadOnlyRequiredKeysAndNeverGrowHistorySeries() {
+    let fan = ThresholdRule(metric: "sensor:F0Ac", threshold: 35, duration: 0, sensorUnit: "rpm")
+    var off = ThresholdRule(metric: "sensor:P001", threshold: 35, duration: 0, sensorUnit: "W");
+    off.enabled = false
+    let required = SensorIdentity.requiredKeys(rules: [fan, off])
+    var called: [String] = []
+    var snapshot = Snapshot()
+    snapshot.sensors = inventory.map { descriptor in
+      Collector.sensorReading(
+        descriptor, mode: .whenNeeded, panelVisible: false,
+        ruleRequired: required.contains(descriptor.key)
+      ) {
+        called.append(descriptor.key); return 40
+      }
+    }
+    XCTAssertEqual(called, ["T001", "T002", "F0Ac"])
+    XCTAssertTrue(snapshot.metrics.keys.allSatisfy { !$0.hasPrefix("sensor:") })
+    let values = snapshot.ruleMetrics(rules: [fan, off], base: snapshot.metrics)
+    XCTAssertEqual(values[fan.valueKey], 40); XCTAssertNil(values[off.valueKey])
+    XCTAssertTrue(
+      snapshot.ruleMetrics(rules: [fan], base: snapshot.metrics, suspended: true).isEmpty)
+    var engine = RuleEngine()
+    XCTAssertEqual(engine.evaluate(rules: [fan, off], values: values, time: 0), [fan])
+    var history = HistoryStore();
+    history.append(.init(date: snapshot.date, values: snapshot.metrics))
+    XCTAssertEqual(history.recent.values.last?.values, snapshot.metrics)
+    XCTAssertEqual(snapshot.ruleMetrics(rules: [], base: snapshot.metrics), snapshot.metrics)
+  }
+  func testMissingDeferredWrongUnitAndNonfiniteSensorValuesCannotFire() {
+    let rpm = ThresholdRule(metric: "sensor:F0Ac", threshold: 35, duration: 0, sensorUnit: "rpm")
+    let watts = ThresholdRule(metric: "sensor:F0Ac", threshold: 35, duration: 0, sensorUnit: "W")
+    var snapshot = Snapshot()
+    snapshot.sensors = [SensorData(key: "F0Ac", label: "Fan", value: 40, unit: "rpm")]
+    var engine = RuleEngine()
+    XCTAssertEqual(
+      engine.evaluate(
+        rules: [rpm, watts], values: snapshot.ruleMetrics(rules: [rpm, watts], base: [:]), time: 0),
+      [rpm])
+    for state in [SensorReadState.unavailable, .deferred] {
+      snapshot.sensors[0].state = state
+      XCTAssertTrue(snapshot.ruleMetrics(rules: [rpm], base: [:]).isEmpty)
+    }
+    snapshot.sensors[0].state = .live; snapshot.sensors[0].value = .nan
+    XCTAssertTrue(snapshot.ruleMetrics(rules: [rpm], base: [:]).isEmpty)
+    snapshot.sensors.removeAll();
+    XCTAssertTrue(snapshot.ruleMetrics(rules: [rpm], base: [:]).isEmpty)
+  }
+  func testMissingSensorResetsSustainAndAliasNeverChangesRuleIdentity() {
+    let rule = ThresholdRule(metric: "sensor:F0Ac", threshold: 35, duration: 2, sensorUnit: "rpm")
+    var snapshot = Snapshot();
+    snapshot.sensors = [SensorData(key: "F0Ac", label: "Fan", value: 40, unit: "rpm")]
+    XCTAssertEqual(snapshot.sensors[0].title(names: ["F0Ac": "Exhaust"]), "Exhaust [F0Ac]")
+    XCTAssertEqual(snapshot.sensors[0].title(names: nil), "Fan [F0Ac]")
+    var engine = RuleEngine()
+    XCTAssertTrue(
+      engine.evaluate(
+        rules: [rule], values: snapshot.ruleMetrics(rules: [rule], base: [:]), time: 0
+      ).isEmpty)
+    snapshot.sensors[0].value = nil
+    XCTAssertTrue(
+      engine.evaluate(
+        rules: [rule], values: snapshot.ruleMetrics(rules: [rule], base: [:]), time: 1
+      ).isEmpty)
+    snapshot.sensors[0].value = 40
+    XCTAssertTrue(
+      engine.evaluate(
+        rules: [rule], values: snapshot.ruleMetrics(rules: [rule], base: [:]), time: 2
+      ).isEmpty)
+    XCTAssertEqual(
+      engine.evaluate(
+        rules: [rule], values: snapshot.ruleMetrics(rules: [rule], base: [:]), time: 4), [rule])
+  }
+}

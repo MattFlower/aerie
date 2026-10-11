@@ -89,6 +89,10 @@ struct SensorData {
   var value: Double?
   var unit: String
   var state = SensorReadState.live
+  func title(names: [String: String]?) -> String {
+    let name = names?[key] ?? label
+    return name == key ? key : "\(name) [\(key)]"
+  }
 }
 struct PowerData {
   var source: String?
@@ -165,6 +169,26 @@ struct Snapshot {
     values["upload"] = upload
     values["diskRead"] = diskRead
     values["diskWrite"] = diskWrite
+    return values
+  }
+  /// Only explicitly configured sensor inputs are copied. History keeps its fixed series.
+  func ruleMetrics(
+    rules: [ThresholdRule], base: [String: Double], suspended: Bool = false
+  ) -> [String: Double] {
+    guard !suspended else { return [:] }
+    let required = Set(
+      rules.filter {
+        $0.enabled && $0.valid && SensorIdentity.key(metric: $0.metric) != nil
+      }.map(\.valueKey))
+    guard !required.isEmpty else { return base }
+    var values = base
+    for sensor in sensors {
+      let key = "sensor:" + sensor.key + ":" + sensor.unit
+      guard required.contains(key), sensor.state == .live,
+        let value = sensor.value, value.isFinite
+      else { continue }
+      values[key] = value
+    }
     return values
   }
   var changeStates: [ChangeKind: String] {

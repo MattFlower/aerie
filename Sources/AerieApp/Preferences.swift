@@ -18,12 +18,14 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var menuColors: [Module: NSTextField] = [:]
   private var clocksField = NSTextView()
   private var shortcutsField = NSTextView()
+  private var sensorNamesField = NSTextView()
   private var calendarPicker: CalendarPickerController?
   private let calendarAccess = CalendarAccess()
   private let calendarSelectionLabel = NSTextField(wrappingLabelWithString: "")
   private let rulesPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   private let ruleMetrics = [
     "cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload", "thermal",
+    "sensor",
   ]
   private var rulesLabel = NSTextField(wrappingLabelWithString: "")
   private var errorLabel = NSTextField(wrappingLabelWithString: "")
@@ -145,7 +147,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       values: ["All supported sensors", "Other families on demand"],
       selected: settings.effectiveSensorSampling == .all ? 0 : 1, y: 621, in: general)
     label(
-      "Full sampling is the default. On demand still samples every temperature at the chosen interval for history and rules; fans, power, voltage and current are read at that same interval while Sensors is open. Inventory is always retained; deferred readings are never treated as zero or stale live values.",
+      "Full sampling is the default. On demand keeps every temperature and enabled individual-rule sensor at the chosen interval; other readings wait for the Sensors panel. Inventory stays complete; deferred readings remain unavailable.",
       y: 661, in: general, height: 92)
     toggle(
       "persistentHistory", title: "Keep numeric history between launches",
@@ -227,6 +229,25 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Choose unique combinations containing Command or Control, with optional Option/Shift and a letter, digit, Space or F1–F20. Character keys resolve through the current keyboard layout. OS-reserved keys, conflicts, secure input or an unavailable layout can prevent registration; Aerie reports those failures. Clear all lines to release every shortcut.",
       y: 445, in: shortcuts, height: 116)
+
+    let sensors = tab("Sensors", in: tabs)
+    label("Local sensor names", y: 18, in: sensors)
+    label(
+      "Use the four-character firmware key shown in Sensors, then | and your name. Example: T001 | Enclosure probe",
+      y: 55, in: sensors, height: 55)
+    sensorNamesField.string = (settings.sensorNames ?? [:]).sorted { $0.key < $1.key }.map {
+      $0.key + " | " + $0.value
+    }.joined(separator: "\n")
+    sensorNamesField.isRichText = false
+    sensorNamesField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+    sensorNamesField.setAccessibilityLabel("Local sensor names by firmware key")
+    let sensorScroll = NSScrollView(frame: NSRect(x: 18, y: 130, width: 550, height: 300))
+    sensorScroll.hasVerticalScroller = true; sensorScroll.documentView = sensorNamesField
+    sensorNamesField.frame = NSRect(x: 0, y: 0, width: 550, height: 300)
+    sensors.addSubview(sensorScroll)
+    label(
+      "Names are local aliases; firmware keys stay visible. A name does not verify a sensor's hardware role. Missing keys remain saved for reconnection. Use Rules to alert on a specific key and its native unit. Clear a line to restore its original name, then Apply.",
+      y: 453, in: sensors, height: 104)
 
     let network = tab("Network", in: tabs)
     label(
@@ -332,6 +353,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       y: 374, in: daylight, height: 106)
 
     let rules = tab("Rules", in: tabs)
+    rules.frame.size.height = 900
     label("Sustained threshold notifications", y: 18, in: rules)
     label(
       "Missing values and sleep gaps reset the sustain timer. Notifications have a cooldown and require your permission. The rule engine keeps evaluating while menus are closed.",
@@ -341,13 +363,21 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       values: [
         "CPU %", "GPU %", "Memory used %", "Battery %", "Maximum temperature °C",
         "First volume free GiB", "Download bytes/s", "Upload bytes/s", "Thermal severity 0–3",
+        "Individual sensor",
       ], selected: 0, y: 132, in: rules)
+    choices["ruleMetric"]?.target = self
+    choices["ruleMetric"]?.action = #selector(ruleMetricChanged)
+    field("ruleSensorKey", title: "Sensor firmware key (4 chars)", value: "", y: 172, in: rules)
     choice(
-      "ruleComparison", title: "Condition", values: ["Above", "Below"], selected: 0, y: 172,
+      "ruleSensorUnit", title: "Sensor native unit", values: SensorIdentity.units, selected: 0,
+      y: 212, in: rules)
+    ruleMetricChanged()
+    choice(
+      "ruleComparison", title: "Condition", values: ["Above", "Below"], selected: 0, y: 252,
       in: rules)
-    field("ruleThreshold", title: "Threshold", value: "90", y: 212, in: rules)
-    field("ruleDuration", title: "Sustain seconds", value: "30", y: 252, in: rules)
-    field("ruleCooldown", title: "Cooldown seconds", value: "300", y: 292, in: rules)
+    field("ruleThreshold", title: "Threshold", value: "90", y: 292, in: rules)
+    field("ruleDuration", title: "Sustain seconds", value: "30", y: 332, in: rules)
+    field("ruleCooldown", title: "Cooldown seconds", value: "300", y: 372, in: rules)
     for (title, action, x, width) in [
       ("Add", #selector(addRule), 18.0, 80.0),
       ("Save Selected", #selector(saveRule), 104.0, 130.0),
@@ -356,12 +386,15 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       ("Clear All", #selector(clearRules), 465.0, 100.0),
     ] {
       let button = NSButton(title: title, target: self, action: action)
-      button.frame = NSRect(x: x, y: 337, width: width, height: 28); rules.addSubview(button)
+      button.frame = NSRect(x: x, y: 417, width: width, height: 28); rules.addSubview(button)
     }
-    rulesPicker.frame = NSRect(x: 18, y: 380, width: 550, height: 28)
+    rulesPicker.frame = NSRect(x: 18, y: 460, width: 550, height: 28)
     rulesPicker.target = self; rulesPicker.action = #selector(selectRule);
     rules.addSubview(rulesPicker)
-    rulesLabel.frame = NSRect(x: 18, y: 422, width: 550, height: 280); rules.addSubview(rulesLabel)
+    label(
+      "Sensor thresholds use native units, including °C when display units are °F. A missing key or different unit does not fire. Rules keep their keys live in on-demand mode and do not add history series.",
+      y: 500, in: rules, height: 73)
+    rulesLabel.frame = NSRect(x: 18, y: 589, width: 550, height: 280); rules.addSubview(rulesLabel)
     refreshRules()
 
     let changes = tab("Changes", in: tabs)
@@ -441,6 +474,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.persistentHistory = toggles["persistentHistory"]!.state == .on
     s.shortcuts = try KeyboardShortcut.parse(shortcutsField.string)
     s.sensorSampling = choices["sensors"]!.indexOfSelectedItem == 0 ? .all : .whenNeeded
+    s.sensorNames = try SensorIdentity.parseNames(sensorNamesField.string)
     s.combined = toggles["combined"]!.state == .on
     s.combinedModules = try MenuPresentation.modules(
       fromTitles: fields["combinedModules"]!.stringValue)
@@ -518,13 +552,18 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     else {
       errorLabel.stringValue = "Rules require numeric values."; return nil
     }
+    let metric = ruleMetrics[choices["ruleMetric"]!.indexOfSelectedItem]
+    let individual = metric == "sensor"
     let rule = ThresholdRule(
-      metric: ruleMetrics[choices["ruleMetric"]!.indexOfSelectedItem],
+      metric: individual ? "sensor:" + fields["ruleSensorKey"]!.stringValue : metric,
       threshold: threshold,
       comparison: choices["ruleComparison"]!.indexOfSelectedItem == 0 ? .above : .below,
-      duration: duration, cooldown: cooldown)
+      duration: duration, cooldown: cooldown,
+      sensorUnit: individual
+        ? SensorIdentity.units[choices["ruleSensorUnit"]!.indexOfSelectedItem] : nil)
     guard rule.valid else {
-      errorLabel.stringValue = "Use a valid threshold, sustain 0–86400s, and cooldown 10–604800s.";
+      errorLabel.stringValue =
+        "Check the four-character key/unit, threshold, sustain 0–86400s and cooldown 10–604800s.";
       return nil
     }
     return rule
@@ -553,11 +592,22 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   }
   @objc private func selectRule() {
     guard let index = selectedRuleIndex else { return }; let rule = settings.rules[index]
-    choices["ruleMetric"]?.selectItem(at: ruleMetrics.firstIndex(of: rule.metric) ?? 0)
+    let key = SensorIdentity.key(metric: rule.metric)
+    choices["ruleMetric"]?.selectItem(
+      at: key != nil ? ruleMetrics.count - 1 : ruleMetrics.firstIndex(of: rule.metric) ?? 0)
+    fields["ruleSensorKey"]?.stringValue = key ?? ""
+    choices["ruleSensorUnit"]?.selectItem(
+      at: SensorIdentity.units.firstIndex(of: rule.sensorUnit ?? "") ?? 0)
+    ruleMetricChanged()
     choices["ruleComparison"]?.selectItem(at: rule.comparison == .above ? 0 : 1)
     fields["ruleThreshold"]?.stringValue = String(rule.threshold)
     fields["ruleDuration"]?.stringValue = String(rule.duration)
     fields["ruleCooldown"]?.stringValue = String(rule.cooldown)
+  }
+  @objc private func ruleMetricChanged() {
+    let individual = choices["ruleMetric"]?.indexOfSelectedItem == ruleMetrics.count - 1
+    fields["ruleSensorKey"]?.isEnabled = individual
+    choices["ruleSensorUnit"]?.isEnabled = individual
   }
   @objc private func clearRules() {
     settings.rules.removeAll()
@@ -567,7 +617,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     rulesPicker.removeAllItems(); rulesPicker.addItem(withTitle: "New rule")
     rulesPicker.addItems(
       withTitles: settings.rules.map {
-        "\($0.enabled ? "On" : "Off") · \($0.metric) \($0.comparison.rawValue) \($0.threshold)"
+        "\($0.enabled ? "On" : "Off") · \($0.metric) \($0.comparison.rawValue) \($0.threshold) \($0.sensorUnit ?? "")"
       })
     if let id, let index = settings.rules.firstIndex(where: { $0.id == id }) {
       rulesPicker.selectItem(at: index + 1)
@@ -577,7 +627,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       settings.rules.isEmpty
       ? "No rules. Add a rule, then Apply."
       : settings.rules.map {
-        "\($0.metric) \($0.comparison.rawValue) \($0.threshold) for \($0.duration)s; cooldown \($0.cooldown)s"
+        "\($0.metric) \($0.comparison.rawValue) \($0.threshold) \($0.sensorUnit ?? "") for \($0.duration)s; cooldown \($0.cooldown)s"
       }.joined(separator: "\n")
   }
   @objc private func exportSettings() {
