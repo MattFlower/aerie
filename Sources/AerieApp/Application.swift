@@ -866,6 +866,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       title: "Aerie Settings…", action: #selector(showSettings), keyEquivalent: ",")
     settings.target = self; application.submenu?.addItem(settings)
     application.submenu?.addItem(.separator())
+    let hide = NSMenuItem(
+      title: "Hide Aerie", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+    hide.target = NSApp; application.submenu?.addItem(hide)
+    application.submenu?.addItem(.separator())
     let quit = NSMenuItem(title: "Quit Aerie", action: #selector(self.quit), keyEquivalent: "q")
     quit.target = self; application.submenu?.addItem(quit); main.addItem(application)
     let windows = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")

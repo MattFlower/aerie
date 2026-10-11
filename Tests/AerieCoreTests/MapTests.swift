@@ -2,6 +2,41 @@ import XCTest
 @testable import AerieCore
 
 final class MapTests: XCTestCase {
+  func testStateBoundariesResolveAdvertisedIdentityAndRejectUnrelatedOrTimedLayers() throws {
+    let layers: [WMSLayer] = [
+      .init(name: "old", title: "NWS County Borders"),
+      .init(name: "future", title: "NWS States Borders", times: [Date(timeIntervalSince1970: 0)]),
+      .init(name: "unsupported", title: "NWS States Borders", crs: ["unknown"]),
+      .init(name: "synthetic-new-id", title: "NWS States Borders", crs: ["CRS:84"]),
+    ]
+    XCTAssertEqual(try WMS.stateBoundaries(layers).name, "synthetic-new-id")
+    XCTAssertThrowsError(try WMS.stateBoundaries(Array(layers.prefix(3))))
+  }
+  func testLegendRequestsUseAdvertisedStyleAndExplicitLabels() throws {
+    let xml = """
+      <WMS_Capabilities><Capability><Layer><CRS>EPSG:4326</CRS>
+      <Layer><Name>synthetic</Name><Title>Synthetic imagery</Title>
+      <Style><Name>synthetic-reflectivity</Name></Style></Layer></Layer></Capability></WMS_Capabilities>
+      """
+    let layer = try XCTUnwrap(WMS.parse(Data(xml.utf8)).first)
+    let url = try WMS.legend(endpoint: WeatherMapKind.radar.endpoint, layer: layer)
+    let query = Dictionary(
+      uniqueKeysWithValues:
+        try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems).map {
+          ($0.name, $0.value ?? "")
+        })
+    XCTAssertEqual(query["STYLE"], "synthetic-reflectivity")
+    XCTAssertEqual(query["LEGEND_OPTIONS"], "forceLabels:on")
+    let image = try WMS.image(
+      endpoint: WeatherMapKind.radar.endpoint, layer: layer,
+      bounds: .centered(latitude: 40, longitude: -100, span: 16), time: nil)
+    let imageQuery = Dictionary(
+      uniqueKeysWithValues:
+        try XCTUnwrap(URLComponents(url: image, resolvingAgainstBaseURL: false)?.queryItems).map {
+          ($0.name, $0.value ?? "")
+        })
+    XCTAssertEqual(imageQuery["STYLES"], query["STYLE"])
+  }
   func testConsentIsIndependentAndOldSettingsKeepMapsOff() throws {
     var configuration = WeatherConfiguration()
     XCTAssertFalse(configuration.mapsValid)

@@ -22,7 +22,7 @@ enum MapIntegration {
         do {
           let legendURL = try WMS.legend(endpoint: kind.endpoint, layer: layer)
           if let legend = try? await client.data(legendURL) {
-            legendValid = (try? MapRaster.decode(legend)) != nil
+            legendValid = (try? MapRaster.decode(legend, requireVisibleContent: true)) != nil
           }
         }
         if !legendValid { passed = false }
@@ -40,10 +40,12 @@ enum MapIntegration {
       }
     }
     do {
+      let metadata = try await client.data(WMS.capabilities(WMS.baseEndpoint))
+      let layer = try WMS.stateBoundaries(WMS.parse(metadata))
       let url = try WMS.image(
-        endpoint: WMS.baseEndpoint, layer: WMSLayer(name: "3", title: "NWS boundaries"),
+        endpoint: WMS.baseEndpoint, layer: layer,
         bounds: bounds, time: nil)
-      let raster = try MapRaster.decode(await client.data(url))
+      let raster = try MapRaster.decode(await client.data(url), requireVisibleContent: true)
       results.append(["layer": "boundaries", "validRaster": true, "decodedCost": raster.cost])
     } catch { passed = false; results.append(["layer": "boundaries", "validRaster": false]) }
     do {

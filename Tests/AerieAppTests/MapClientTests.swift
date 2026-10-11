@@ -27,6 +27,30 @@ private final class SyntheticMapProtocol: URLProtocol {
   override func stopLoading() { Self.stopped?.fulfill() }
 }
 final class MapClientTests: XCTestCase {
+  func testAccessoryRasterRejectsBlankPNGWhileEmptyDataLayersRemainValid() throws {
+    func png(_ pixels: [UInt8]) throws -> Data {
+      let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
+      let image = try XCTUnwrap(
+        CGImage(
+          width: 2, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 8,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+          provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+      let data = NSMutableData()
+      let destination = try XCTUnwrap(
+        CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+      CGImageDestinationAddImage(destination, image, nil)
+      XCTAssertTrue(CGImageDestinationFinalize(destination))
+      return data as Data
+    }
+    for pixels: [UInt8] in [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 255, 0, 0, 0, 255]] {
+      let blank = try png(pixels)
+      XCTAssertNoThrow(try MapRaster.decode(blank))
+      XCTAssertThrowsError(try MapRaster.decode(blank, requireVisibleContent: true))
+    }
+    let line = try png([0, 0, 0, 0, 255, 0, 0, 255])
+    XCTAssertNoThrow(try MapRaster.decode(line, requireVisibleContent: true))
+  }
   override func tearDown() {
     SyntheticMapProtocol.started = nil; SyntheticMapProtocol.stopped = nil
     SyntheticMapProtocol.payload = nil; SyntheticMapProtocol.status = 200

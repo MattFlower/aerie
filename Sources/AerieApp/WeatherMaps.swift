@@ -118,7 +118,7 @@ final class MapHTTPClient: NSObject, URLSessionDataDelegate {
 struct MapRaster {
   let image: NSImage
   let cost: Int
-  static func decode(_ data: Data) throws -> MapRaster {
+  static func decode(_ data: Data, requireVisibleContent: Bool = false) throws -> MapRaster {
     guard data.count <= 2_000_000,
       let source = CGImageSourceCreateWithData(data as CFData, nil),
       let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -131,6 +131,33 @@ struct MapRaster {
     else { throw MapError.invalidResponse }
     let cost = max(image.bytesPerRow * image.height, width * height * 4)
     guard cost <= 8 * 1_048_576 else { throw MapError.oversized }
+    if requireVisibleContent {
+      // A valid PNG can still be an empty service response. Only accessories require this:
+      // a completely transparent alert or forecast raster can represent valid absence.
+      var pixels = [UInt8](repeating: 0, count: width * height * 4)
+      let visible = pixels.withUnsafeMutableBytes { bytes -> Bool in
+        guard
+          let context = CGContext(
+            data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let first = Array(bytes.prefix(4))
+        var hasOpacity = false, hasVariation = false
+        for offset in stride(from: 0, to: bytes.count, by: 4) {
+          if bytes[offset + 3] > 0 { hasOpacity = true }
+          if bytes[offset] != first[0] || bytes[offset + 1] != first[1]
+            || bytes[offset + 2] != first[2] || bytes[offset + 3] != first[3]
+          {
+            hasVariation = true
+          }
+          if hasOpacity && hasVariation { return true }
+        }
+        return false
+      }
+      guard visible else { throw MapError.invalidResponse }
+    }
     return MapRaster(
       image: NSImage(cgImage: image, size: NSSize(width: width, height: height)), cost: cost)
   }
@@ -194,16 +221,20 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   private var longitude: Double
   private var span = 16.0
   private var closed = false
-  private let canvas = MapRasterView(frame: NSRect(x: 16, y: 125, width: 512, height: 512))
+  private let canvas = MapRasterView(frame: NSRect(x: 16, y: 170, width: 512, height: 512))
   private let picker = NSPopUpButton(
-    frame: NSRect(x: 16, y: 652, width: 260, height: 28), pullsDown: false)
+    frame: NSRect(x: 16, y: 697, width: 260, height: 28), pullsDown: false)
   private let variants = NSPopUpButton(
-    frame: NSRect(x: 290, y: 652, width: 398, height: 28), pullsDown: false)
+    frame: NSRect(x: 290, y: 697, width: 398, height: 28), pullsDown: false)
   private let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
   private let timestamp = NSTextField(labelWithString: "")
   private let alertTimestamp = NSTextField(labelWithString: "")
   private let status = NSTextField(wrappingLabelWithString: "Loading metadata…")
   private let legend = MapLegendView(frame: NSRect(x: 0, y: 0, width: 145, height: 395))
+  private let wideLegend = MapLegendView(frame: NSRect(x: 16, y: 125, width: 512, height: 40))
+  private let legendStatus = NSTextField(labelWithString: "Provider legend unavailable")
+  private var boundaryLayer: WMSLayer?
+  private var boundariesAvailable = false
   private let caption = NSTextField(wrappingLabelWithString: "")
   private let play = NSButton(title: "Play", target: nil, action: nil)
   private let alertToggle = NSButton(
@@ -217,7 +248,7 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     latitude = (configuration.latitude * 100).rounded() / 100
     longitude = (configuration.longitude * 100).rounded() / 100
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 710, height: 702),
+      contentRect: NSRect(x: 0, y: 0, width: 710, height: 747),
       styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
     window.title = "Aerie Weather Maps · \(configuration.name)"; window.isReleasedWhenClosed = false
     super.init(window: window); window.delegate = self
@@ -248,11 +279,17 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     status.frame = NSRect(x: 16, y: 12, width: 670, height: 42);
     status.font = .systemFont(ofSize: 11)
     view.addSubview(status)
-    let legendScroll = NSScrollView(frame: NSRect(x: 545, y: 308, width: 145, height: 327))
+    let legendScroll = NSScrollView(frame: NSRect(x: 545, y: 353, width: 145, height: 327))
     legendScroll.documentView = legend; legendScroll.hasVerticalScroller = true
     legendScroll.autohidesScrollers = true; legendScroll.drawsBackground = false
     view.addSubview(legendScroll); legend.imageScaling = .scaleNone;
     legend.imageAlignment = .alignTop
+    legend.setAccessibilityLabel("NOAA/NWS provider legend")
+    wideLegend.imageScaling = .scaleProportionallyDown
+    wideLegend.setAccessibilityLabel("NOAA/NWS horizontal provider legend")
+    view.addSubview(wideLegend)
+    legendStatus.frame = NSRect(x: 16, y: 133, width: 510, height: 20)
+    legendStatus.font = .systemFont(ofSize: 11); view.addSubview(legendStatus)
     caption.frame = NSRect(x: 545, y: 212, width: 145, height: 90);
     caption.font = .systemFont(ofSize: 11)
     view.addSubview(caption)
@@ -276,6 +313,9 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   }
   @objc private func openSource() {
     NSWorkspace.shared.open(URL(string: "https://www.weather.gov/gis/cloudgiswebservices")!)
+  }
+  private func clearLegend() {
+    legend.image = nil; wideLegend.image = nil; legendStatus.isHidden = false
   }
   @objc private func showAlerts() {
     guard activity.active else { return }
@@ -356,7 +396,8 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   }
   private func load(metadataNeeded: Bool) {
     guard activity.active else { return }
-    stopAnimation(); canvas.clear(); legend.image = nil; alertTimestamp.stringValue = "";
+    stopAnimation(); canvas.clear(); clearLegend(); alertTimestamp.stringValue = "";
+    boundariesAvailable = false
     cache.clear()
     timestamp.stringValue = "Loading valid times…"
     status.stringValue = "Loading NOAA/NWS layer…"
@@ -403,11 +444,20 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
           "No current frames available for this time-enabled layer. Refresh later."
         return
       }
-      let baseURL = try WMS.image(
-        endpoint: WMS.baseEndpoint, layer: WMSLayer(name: "3", title: "NWS state boundaries"),
-        bounds: controller.bounds, time: nil)
-      if let base = try? await controller.client.data(baseURL), !Task.isCancelled {
-        controller.canvas.base = try? MapRaster.decode(base).image
+      do {
+        if controller.boundaryLayer == nil {
+          let data = try await controller.client.data(WMS.capabilities(WMS.baseEndpoint))
+          try Task.checkCancellation()
+          controller.boundaryLayer = try WMS.stateBoundaries(WMS.parse(data))
+        }
+        guard let boundaryLayer = controller.boundaryLayer else { throw MapError.unavailableLayer }
+        let baseURL = try WMS.image(
+          endpoint: WMS.baseEndpoint, layer: boundaryLayer, bounds: controller.bounds, time: nil)
+        let data = try await controller.client.data(baseURL); try Task.checkCancellation()
+        let base = try MapRaster.decode(data, requireVisibleContent: true)
+        controller.canvas.base = base.image; controller.boundariesAvailable = true
+      } catch is CancellationError { throw CancellationError() } catch {
+        controller.canvas.base = nil
       }
       try Task.checkCancellation()
       if controller.alertToggle.state == .on {
@@ -430,10 +480,15 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
       do {
         let url = try WMS.legend(endpoint: controller.kind.endpoint, layer: selected)
         if let data = try? await controller.client.data(url), !Task.isCancelled {
-          if let raster = try? MapRaster.decode(data) {
-            controller.legend.image = raster.image
-            controller.legend.setFrameSize(
-              NSSize(width: 145, height: max(395, raster.image.size.height)))
+          if let raster = try? MapRaster.decode(data, requireVisibleContent: true) {
+            if raster.image.size.width > 145 && raster.image.size.width > raster.image.size.height {
+              controller.wideLegend.image = raster.image
+            } else {
+              controller.legend.image = raster.image
+              controller.legend.setFrameSize(
+                NSSize(width: 145, height: max(395, raster.image.size.height)))
+            }
+            controller.legendStatus.isHidden = true
           }
         }
       }
@@ -473,6 +528,7 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
       : kind.forecast ? "Forecast" : "Observed/current product"
     status.stringValue =
       "NOAA/NWS · \(selected?.title ?? kind.title) · \(product) · \(cache.count) cached frames. Drag to pan."
+      + (boundariesAvailable ? "" : " State boundaries unavailable.")
   }
   @objc private func togglePlay() {
     if selection.playing { selection.playing = false; task?.cancel(); stopAnimation(); return }
@@ -532,7 +588,7 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     case .suspend:
       generation += 1; task?.cancel(); task = nil; stopAnimation()
       refreshTimer?.invalidate(); refreshTimer = nil; client.suspendRequests()
-      cache.clear(); canvas.clear(); legend.image = nil; alertTimestamp.stringValue = ""
+      cache.clear(); canvas.clear(); clearLegend(); alertTimestamp.stringValue = ""
       alertDetailsText?.string =
         "Map requests are paused. Close and reopen alert details after the map is visible to refresh current messages."
       status.stringValue =
@@ -558,7 +614,7 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     activity.closed = true; activity.reconcile()
     for (center, token) in observers { center.removeObserver(token) }; observers.removeAll()
     cache.clear(); metadata.removeAll(); selection = MapSelection()
-    canvas.clear(); legend.image = nil; alertTimestamp.stringValue = ""
+    canvas.clear(); clearLegend(); boundaryLayer = nil; alertTimestamp.stringValue = ""
     alertDetailsText?.string = ""; alertDetailsText = nil
     alertDetailsWindow?.delegate = nil; alertDetailsWindow?.close(); alertDetailsWindow = nil
   }

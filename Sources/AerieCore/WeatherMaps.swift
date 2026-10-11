@@ -145,6 +145,16 @@ public enum WMS {
   public static let allowedHosts: Set<String> = [
     "opengeo.ncep.noaa.gov", "nowcoast.noaa.gov", "mapservices.weather.noaa.gov", "api.weather.gov",
   ]
+  public static func stateBoundaries(_ layers: [WMSLayer]) throws -> WMSLayer {
+    guard
+      let layer = layers.first(where: {
+        let title = $0.title.lowercased()
+        return title.contains("states") && title.contains("border") && !$0.timeEnabled
+          && !$0.crs.isDisjoint(with: ["CRS:84", "EPSG:4326"])
+      })
+    else { throw MapError.unavailableLayer }
+    return layer
+  }
   public static func allowed(_ url: URL) -> Bool {
     url.scheme == "https" && allowedHosts.contains(url.host?.lowercased() ?? "") && url.user == nil
       && url.password == nil
@@ -180,7 +190,8 @@ public enum WMS {
     }.joined(separator: ",")
     var values = [
       ("SERVICE", "WMS"), ("VERSION", "1.3.0"), ("REQUEST", "GetMap"), ("LAYERS", layer.name),
-      ("STYLES", ""), ("CRS", crs), ("BBOX", bbox), ("WIDTH", String(size)),
+      ("STYLES", layer.name.contains(",") ? "" : layer.styles.first ?? ""),
+      ("CRS", crs), ("BBOX", bbox), ("WIDTH", String(size)),
       ("HEIGHT", String(size)), ("FORMAT", "image/png"), ("TRANSPARENT", "TRUE"),
     ]
     if let time { values.append(("TIME", ISO8601DateFormatter().string(from: time))) }
@@ -192,6 +203,7 @@ public enum WMS {
       [
         ("SERVICE", "WMS"), ("VERSION", "1.3.0"), ("REQUEST", "GetLegendGraphic"),
         ("LAYER", layer.name.split(separator: ",").first.map(String.init) ?? layer.name),
+        ("STYLE", layer.styles.first ?? ""), ("LEGEND_OPTIONS", "forceLabels:on"),
         ("FORMAT", "image/png"), ("WIDTH", "20"), ("HEIGHT", "20"),
       ])
   }
