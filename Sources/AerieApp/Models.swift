@@ -95,11 +95,12 @@ struct SensorData {
   }
 }
 struct PowerData {
+  var inventory = PowerSourceInventory()
   var source: String?
   var present = false
   var percent: Double?
-  var charging = false
-  var external = false
+  var charging: Bool?
+  var external: Bool?
   var minutes: Int?
   var health: Double?
   var cycles: Int?
@@ -108,6 +109,14 @@ struct PowerData {
   var amperage: Double?
   var temperature: Double?
   var peripherals: [(String, Double)] = []
+  var sourceLabel: String {
+    switch source {
+    case "AC Power": return "AC"
+    case "Battery Power": return "BAT"
+    case "UPS Power": return "UPS"
+    default: return "—"
+    }
+  }
 }
 struct Snapshot {
   var clockSubscriptions: Int? = nil
@@ -202,8 +211,8 @@ struct Snapshot {
     ]
     if connectivity != "Checking" { values[.connectivity] = connectivity }
     values[.powerSource] = power.source
-    if power.present, power.percent != nil {
-      values[.charging] = power.charging ? "Charging" : "Not charging"
+    if power.present, let charging = power.charging {
+      values[.charging] = charging ? "Charging" : "Not charging"
     }
     values[.volumes] = mountedVolumePaths.map { $0.sorted().joined(separator: "\n") }
     return values

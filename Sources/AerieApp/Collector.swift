@@ -522,42 +522,32 @@ final class Collector {
     if let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
       let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
     {
-      if let source = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() {
-        power.source = source as String
+      let supplied = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String?
+      let descriptions = sources.prefix(PowerSourceInventory.limit).map { source in
+        IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any]
       }
-      for source in sources {
-        guard
-          let details = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue()
-            as? [String: Any],
-          let current = details[kIOPSCurrentCapacityKey] as? Double,
-          let maximum = details[kIOPSMaxCapacityKey] as? Double, maximum > 0
-        else { continue }
-        power.present = true
-        power.percent = current / maximum
-        power.charging = details[kIOPSIsChargingKey] as? Bool ?? false
-        power.external = (details[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
-        let remaining =
-          details[power.charging ? kIOPSTimeToFullChargeKey : kIOPSTimeToEmptyKey] as? Int
-        power.minutes = remaining.flatMap { $0 >= 0 ? $0 : nil }
-      }
+      power = PowerSourceDecoder.data(
+        descriptions: descriptions, reportedCount: sources.count, suppliedSource: supplied)
     }
+    guard power.inventory.primaryBattery != nil else { return power }
     let battery = IOServiceGetMatchingService(
       kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
     if battery != 0 {
       defer { IOObjectRelease(battery) }
-      func number(_ key: String) -> Double? { (property(battery, key) as? NSNumber)?.doubleValue }
+      func number(_ key: String) -> Double? { PowerSourceDecoder.number(property(battery, key)) }
       if let maximum = number("AppleRawMaxCapacity"), let design = number("DesignCapacity"),
-        design > 0
+        design > 0, maximum >= 0, (maximum / design).isFinite
       {
         power.health = maximum / design
       }
-      power.cycles = number("CycleCount").map(Int.init)
+      power.cycles = PowerSourceDecoder.integer(property(battery, "CycleCount"), maximum: Int.max)
       power.voltage = number("Voltage").map { $0 / 1000 }
       // Some drivers expose signed current using an unsigned 64-bit NSNumber.
-      if let n = property(battery, "Amperage") as? NSNumber {
+      if let n = property(battery, "Amperage") as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID()
+      {
         power.amperage = Double(Int64(bitPattern: n.uint64Value)) / 1000
       }
-      if let v = power.voltage, let a = power.amperage { power.watts = v * a }
+      if let v = power.voltage, let a = power.amperage, (v * a).isFinite { power.watts = v * a }
       power.temperature = number("Temperature").map { $0 / 100 }
     }
     return power

@@ -542,6 +542,52 @@ final class DashboardController: NSViewController {
       ))
     return rows
   }
+  static func powerSourceRows(_ inventory: PowerSourceInventory) -> [DashboardRow] {
+    var rows: [DashboardRow] = [.heading("Power sources")]
+    guard inventory.available else { return rows + [.note("Power source inventory unavailable.")] }
+    if !inventory.complete {
+      rows.append(
+        .note(
+          "Partial inventory: \(inventory.sources.count) readable of \(inventory.reportedCount) reported sources; retained limit \(PowerSourceInventory.limit)."
+        ))
+    }
+    if inventory.sources.isEmpty {
+      rows.append(.note("No battery or UPS descriptions reported by macOS."))
+    }
+    for source in inventory.sources {
+      rows += [
+        .heading(source.name),
+        .metric(
+          "Type",
+          source.kind == .internalBattery
+            ? "Internal battery" : source.kind == .ups ? "UPS" : "Unknown"),
+        .metric("Present", source.present.map { $0 ? "Yes" : "No" } ?? "Unavailable"),
+        .metric(
+          "Input",
+          source.input == .ac
+            ? "External AC"
+            : source.input == .battery
+              ? "Battery" : source.input == .offline ? "Offline" : "Unavailable"),
+        .metric("Charging", source.charging.map { $0 ? "Yes" : "No" } ?? "Unavailable"),
+        .metric("Charge", Format.percent(source.percent)),
+        .metric(
+          source.charging == true ? "Time to full" : "Time remaining",
+          source.minutes.map { Format.duration(Double($0) * 60) } ?? "Unavailable or calculating"),
+      ]
+      if let transport = source.transport { rows.append(.metric("Transport", transport)) }
+      if let value = source.voltage {
+        rows.append(.metric("Voltage", String(format: "%.2f V", value)))
+      }
+      if let value = source.amperage {
+        rows.append(.metric("Current", String(format: "%.2f A", value)))
+      }
+      if let value = source.watts { rows.append(.metric("Power", String(format: "%.2f W", value))) }
+      if let value = source.temperature {
+        rows.append(.metric("Temperature", String(format: "%.1f °C", value)))
+      }
+    }
+    return rows
+  }
   private func makeRows() -> [DashboardRow] {
     let s = snapshot
     switch module {
@@ -867,16 +913,16 @@ final class DashboardController: NSViewController {
       var rows: [DashboardRow] = [
         DashboardRow.heading("Power"),
         DashboardRow.metric(
-          "Source", p.present ? (p.external ? "Power adapter" : "Battery") : "No battery reported"),
+          "System supply", p.source ?? "Unavailable"),
         DashboardRow.metric("Low Power Mode", s.lowPower ? "On" : "Off"),
         DashboardRow.metric("Thermal state", s.thermal),
       ]
       if p.present {
         rows += [
           DashboardRow.metric("Charge", Format.percent(p.percent)),
-          DashboardRow.metric("Charging", p.charging ? "Yes" : "No"),
+          DashboardRow.metric("Charging", p.charging.map { $0 ? "Yes" : "No" } ?? "Unavailable"),
           DashboardRow.metric(
-            p.charging ? "Time to full" : "Time remaining",
+            p.charging == true ? "Time to full" : "Time remaining",
             p.minutes.map { Format.duration(Double($0 * 60)) } ?? "Calculating"),
           DashboardRow.chart("battery", "Battery %", AeriePalette.power, 100),
           DashboardRow.metric("Health", Format.percent(p.health)),
@@ -889,6 +935,14 @@ final class DashboardController: NSViewController {
             "Current", p.amperage.map { String(format: "%.2f A", $0) } ?? "Unavailable"),
         ]
       }
+      if p.present && p.inventory.primaryBattery == nil {
+        rows += [
+          .note(
+            "Battery summary unavailable: multiple, unknown or unreadable sources. Each source is shown separately; no combined capacity is inferred."
+          )
+        ]
+      }
+      rows += Self.powerSourceRows(p.inventory)
       rows += [DashboardRow.heading("Peripheral batteries")]
       rows +=
         p.peripherals.isEmpty

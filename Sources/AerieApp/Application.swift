@@ -370,7 +370,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
           "temperatureInventory": snapshot.sensors.filter { $0.unit == "°C" }.count,
           "liveTemperatures": snapshot.sensors.filter { $0.unit == "°C" && $0.state == .live }
             .count,
-          "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,
+          "battery": snapshot.power.present,
+          "powerSources": snapshot.power.inventory.sources.count,
+          "powerSourcesComplete": snapshot.power.inventory.complete,
+          "internalPowerSources": snapshot.power.inventory.sources.filter {
+            $0.kind == .internalBattery
+          }.count,
+          "upsPowerSources": snapshot.power.inventory.sources.filter { $0.kind == .ups }.count,
+          "unambiguousBattery": snapshot.power.inventory.primaryBattery != nil,
+          "diskActivity": snapshot.diskRead != nil,
           "refreshInterval": settings.interval, "weatherOptIn": settings.weather.enabled,
           "clockStateSubscriptions": snapshot.clockSubscriptions ?? -1,
           "clockStateChannels": snapshot.clockResidencies.count,
@@ -626,8 +634,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         } ?? "Unavailable")
     case .power:
       return MenuValue(
-        full: snapshot.power.present ? "BAT " + Format.percent(snapshot.power.percent) : "PWR AC",
-        compact: snapshot.power.present ? Format.percent(snapshot.power.percent) : "AC",
+        full: snapshot.power.present
+          ? "BAT " + Format.percent(snapshot.power.percent) : "PWR " + snapshot.power.sourceLabel,
+        compact: snapshot.power.present
+          ? Format.percent(snapshot.power.percent) : snapshot.power.sourceLabel,
         secondary: snapshot.power.minutes.map { Format.duration(Double($0) * 60) } ?? snapshot.power
           .source ?? "Time unavailable")
     case .time:
