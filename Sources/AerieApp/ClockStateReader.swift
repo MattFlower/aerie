@@ -16,13 +16,18 @@ protocol ClockStateSource: AnyObject {
 }
 private final class NativeClockStateSource: ClockStateSource {
   private var reader: OpaquePointer?
-  init?() {
+  private let profiler: SamplingProfiler?
+  init?(profiler: SamplingProfiler? = nil) {
+    self.profiler = profiler
     guard let value = aerie_performance_create() else { return nil }; reader = value
   }
   func read() -> ClockSourceReading {
+    profiler?.mark(.clockPrepare)
     var channels = [AerieClockChannel](repeating: AerieClockChannel(), count: 128)
     var statuses = [Int32](repeating: 1, count: 3)
+    profiler?.mark(.clockNative)
     let count = Int(aerie_performance_read(reader, &channels, 128, &statuses))
+    profiler?.mark(.clockDecode)
     let counters: [ClockCounter] = channels.prefix(max(0, min(128, count))).compactMap { channel in
       guard let kind = ClockChannelKind(rawValue: Int(channel.kind)),
         (1...64).contains(channel.state_count)
@@ -49,13 +54,15 @@ private final class NativeClockStateSource: ClockStateSource {
 }
 /// Serial collector ownership, with no additional sampling timer or child process.
 final class ClockStateReader {
+  private let profiler: SamplingProfiler?
   private let factory: () -> ClockStateSource?
   private var source: ClockStateSource?
   private var tracker = ClockResidencyTracker()
   private var attempted = -Double.infinity
   private var retryNeeded = true
-  init(factory: @escaping () -> ClockStateSource? = { NativeClockStateSource() }) {
-    self.factory = factory
+  init(profiler: SamplingProfiler? = nil, factory: (() -> ClockStateSource?)? = nil) {
+    self.profiler = profiler
+    self.factory = factory ?? { NativeClockStateSource(profiler: profiler) }
   }
   func sample(time: Double) -> ClockStateReading {
     if retryNeeded && time - attempted >= 60 {
@@ -79,6 +86,7 @@ final class ClockStateReader {
       }
       return names[index] + ": " + message
     }
+    profiler?.mark(.clockDerive)
     let rows = tracker.update(reading.counters, time: time)
     return ClockStateReading(
       rows: rows,

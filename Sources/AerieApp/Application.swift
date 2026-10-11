@@ -21,6 +21,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var keyboardShortcuts: KeyboardShortcuts?
   private var shortcutStatus: String?
   private var publicAddressReader: PublicAddressReader?
+  private let samplingProfiler: SamplingProfiler? =
+    CommandLine.arguments.contains("--sampling-profile")
+    ? SamplingProfiler(scope: "presentation") : nil
   private var wifiAccess: WiFiAccess?
   private let calendarAccess = CalendarAccess()
   private lazy var calendarReader = CalendarEventReader(access: calendarAccess)
@@ -238,6 +241,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
   private func receive(_ reading: Snapshot) {
+    samplingProfiler?.begin(.appReceive)
+    defer { samplingProfiler?.finish() }
     dashboard.suspended = paused || sleeping
     preferences?.validateCalendarAccess()
     var snapshot = reading; snapshot.networkSelection = settings.networkSelection
@@ -251,10 +256,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       time: ProcessInfo.processInfo.systemUptime,
       route: snapshot.networkAvailable && snapshot.connectivity == "Connected"
         ? String(snapshot.networkPathVersion) : nil)
+    samplingProfiler?.mark(.appHistory)
     let metrics = snapshot.metrics
     history.append(HistoryPoint(date: snapshot.date, values: metrics))
     historyPersistence?.save(
       history, interval: settings.interval, selection: settings.networkSelection)
+    samplingProfiler?.mark(.appRules)
     for rule in rules.evaluate(
       rules: settings.rules,
       values: snapshot.ruleMetrics(
@@ -273,7 +280,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         notify(event)
       }
     }
+    samplingProfiler?.mark(.appMenu)
     updateItems()
+    samplingProfiler?.mark(.appVisible)
     if popover.isShown {
       if dashboard.module == .time { updateCalendar(force: false) }
       dashboard.snapshot = snapshot
@@ -286,6 +295,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       updatePublicAddressView()
       dashboard.refresh()
     }
+    samplingProfiler?.mark(.appWeather)
     updateWeather()
     if CommandLine.arguments.contains("--storage-self-check") {
       selfCheckSamples += 1

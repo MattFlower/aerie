@@ -63,7 +63,10 @@ final class Collector {
   private var accelerators = services("IOAccelerator")
   private var disks = services("IOBlockStorageDriver")
   private var groups: [(String, Int)] = []
-  private let clockStates = ClockStateReader()
+  private let samplingProfiler: SamplingProfiler? =
+    CommandLine.arguments.contains("--sampling-profile")
+    ? SamplingProfiler(scope: "collector") : nil
+  private lazy var clockStates = ClockStateReader(profiler: samplingProfiler)
   private var storageIDs: Set<UInt64> = []
   private var inventoryTime = -Double.infinity
   private var cache = Snapshot()
@@ -199,6 +202,8 @@ final class Collector {
   }
   private func sample() {
     guard !suspended else { return }
+    samplingProfiler?.begin(.demand)
+    defer { samplingProfiler?.finish() }
     let now = ProcessInfo.processInfo.systemUptime
     var snapshot = cache
     snapshot.date = Date()
@@ -207,6 +212,7 @@ final class Collector {
     let processTraffic = processNetwork.current(time: now)
     snapshot.networkProcesses = processTraffic.rows;
     snapshot.processNetworkStatus = processTraffic.status
+    samplingProfiler?.mark(.inventory)
     if now - inventoryTime >= 30 {
       for item in accelerators { IOObjectRelease(item) }; accelerators = services("IOAccelerator")
       for item in disks { IOObjectRelease(item) }; disks = services("IOBlockStorageDriver")
@@ -227,6 +233,7 @@ final class Collector {
         storageIDs = latest
       }
     }
+    samplingProfiler?.mark(.cpu)
     var ticks = [UInt64](repeating: 0, count: 256 * 4)
     let count = Int(aerie_cpu(&ticks, 256))
     ticks = Array(ticks.prefix(count * 4))
@@ -259,9 +266,11 @@ final class Collector {
     snapshot.cpu.load = loads
     snapshot.cpu.uptime = now
     snapshot.cpu.frequency = sysNumber("hw.cpufrequency").map { Double($0) / 1e9 }
+    samplingProfiler?.mark(.clockPrepare)
     let clockReading = clockStates.sample(time: now)
     snapshot.clockResidencies = clockReading.rows
     snapshot.clockResidencyStatus = clockReading.status
+    samplingProfiler?.mark(.memory)
     let memory = aerie_memory()
     snapshot.memory = Self.memoryReading(memory, previous: cache.memory, date: snapshot.date) {
       key, count in
@@ -270,6 +279,7 @@ final class Collector {
     if snapshot.memory.validity != .fresh {
       for key in ["pageIn", "pageOut", "swapIn", "swapOut"] { counters.removeValue(forKey: key) }
     }
+    samplingProfiler?.mark(.network)
     var interfaces = [AerieInterface](repeating: AerieInterface(), count: 128)
     let networkCount = Int(aerie_interfaces(&interfaces, 128))
     snapshot.networkAvailable = networkCount >= 0
@@ -301,6 +311,7 @@ final class Collector {
     for index in snapshot.interfaces.indices {
       snapshot.interfaces[index].session = sessions[snapshot.interfaces[index].name]
     }
+    samplingProfiler?.mark(.storage)
     var reads: UInt64 = 0
     var writes: UInt64 = 0
     var diskValid = false
@@ -322,6 +333,7 @@ final class Collector {
     }
     snapshot.diskRead = diskValid ? rate("diskRead", reads, now) : nil
     snapshot.diskWrite = diskValid ? rate("diskWrite", writes, now) : nil
+    samplingProfiler?.mark(.gpu)
     snapshot.gpu = accelerators.map { service in
       var gpu = GPUData()
       gpu.name = property(service, "model") as? String ?? "GPU"
@@ -335,6 +347,7 @@ final class Collector {
       gpu.fps = stats["Frames Per Second"]?.doubleValue
       return gpu
     }
+    samplingProfiler?.mark(.sensors)
     snapshot.sensors = sensorSources.map { entry in
       Self.sensorReading(
         SensorData(key: entry.key, label: entry.label, value: nil, unit: entry.unit),
@@ -344,6 +357,7 @@ final class Collector {
         var value = 0.0; return aerie_smc_value(entry.source, &value) == 0 ? value : nil
       }
     }
+    samplingProfiler?.mark(.power)
     snapshot.power = power()
     if now - inventoryTime >= 30 {
       let inventory = volumes()
@@ -354,6 +368,7 @@ final class Collector {
     } else {
       snapshot.power.peripherals = cache.power.peripherals
     }
+    samplingProfiler?.mark(.other)
     snapshot.connectivity = connection
     if let wifiReader {
       snapshot.wifi = wifiReader.current(
@@ -366,7 +381,9 @@ final class Collector {
     snapshot.thermal = ["Nominal", "Fair", "Serious", "Critical"][min(3, state.rawValue)]
     snapshot.thermalLevel = Double(state.rawValue)
     snapshot.lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    samplingProfiler?.mark(.processes)
     if detailed { snapshot.processes = processes(now, &snapshot.processDenied) }
+    samplingProfiler?.mark(.delivery)
     cache = snapshot
     DispatchQueue.main.async { [weak self] in self?.onSample?(snapshot) }
   }
