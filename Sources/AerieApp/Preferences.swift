@@ -111,7 +111,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       "spacing", title: "Compact menu-bar spacing", value: settings.compactSpacing, y: 334,
       in: general)
     label(
-      "Expensive process details are collected while a menu is visible. Sampling is suspended during system sleep. Timer tolerance is 100 ms; the chosen interval is never silently reduced.",
+      "Process details are collected only while CPU, memory, storage or power panels need them. Pausing and system sleep cancel the sampling timer. Timer tolerance is 100 ms; the chosen interval is never silently reduced.",
       y: 378, in: general, height: 70)
     let export = NSButton(
       title: "Export Settings…", target: self, action: #selector(exportSettings))

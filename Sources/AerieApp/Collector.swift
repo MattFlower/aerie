@@ -43,12 +43,15 @@ private func services(_ name: String) -> [io_registry_entry_t] {
 
 final class Collector {
   private let queue = DispatchQueue(label: "app.aerie.sampling", qos: .utility)
-  private var timer: DispatchSourceTimer?
+  private lazy var schedule = SamplingSchedule { [queue] interval, tick in
+    DispatchSamplingTimer(queue: queue, interval: interval, tick: tick)
+  }
   private var previousCPU: [UInt64] = []
   private var counters: [String: CounterSample] = [:]
   private var previousProcesses: [Int32: AerieProcess] = [:]
   private var processTime: Double?
-  private var smcKeys: [String] = []
+  private var sensorSources:
+    [(source: AerieSensorSource, key: String, label: String, unit: String)] = []
   private var accelerators = services("IOAccelerator")
   private var disks = services("IOBlockStorageDriver")
   private var groups: [(String, Int)] = []
@@ -83,15 +86,25 @@ final class Collector {
           if aerie_smc_read(key, &sensor) == 0, sensor.value.isFinite,
             !text(sensor.type).hasPrefix("ui")
           {
-            smcKeys.append(key)
+            var source = AerieSensorSource()
+            if aerie_smc_source(key, &source) == 0 {
+              let unit =
+                key.hasPrefix("T")
+                ? "°C"
+                : key.hasPrefix("F")
+                  ? "rpm" : key.hasPrefix("P") ? "W" : key.hasPrefix("V") ? "V" : "A"
+              sensorSources.append((source, key, sensorLabel(key), unit))
+            }
           }
         }
       }
-      if smcKeys.isEmpty {
+      sensorSources.sort { $0.key < $1.key }
+      if sensorSources.isEmpty {
         cache.sensorStatus = "Firmware exposes no supported sensors to this process"
       }
     }
     pathMonitor.pathUpdateHandler = { [weak self] path in
+      aerie_interfaces_invalidate()
       self?.connection =
         path.status == .satisfied
         ? "Connected" : path.status == .requiresConnection ? "Connection required" : "Offline"
@@ -99,7 +112,6 @@ final class Collector {
     pathMonitor.start(queue: queue)
   }
   deinit {
-    timer?.cancel()
     pathMonitor.cancel()
     aerie_smc_close()
     for accelerator in accelerators { IOObjectRelease(accelerator) }
@@ -108,12 +120,7 @@ final class Collector {
   func configure(_ settings: Settings) {
     queue.async { [self] in
       self.settings = settings
-      timer?.cancel()
-      let timer = DispatchSource.makeTimerSource(queue: queue)
-      timer.schedule(deadline: .now(), repeating: settings.interval, leeway: .milliseconds(100))
-      timer.setEventHandler { [weak self] in self?.sample() }
-      self.timer = timer
-      timer.resume()
+      schedule.configure(interval: settings.interval) { [weak self] in self?.sample() }
     }
   }
   func setDetailed(_ value: Bool) {
@@ -133,7 +140,9 @@ final class Collector {
         self.previousProcesses.removeAll()
         self.processTime = nil
         self.inventoryTime = -.infinity
+        aerie_interfaces_invalidate()
       }
+      self.schedule.setPaused(value)
     }
   }
   private func rate(_ key: String, _ value: UInt64, _ now: Double) -> Double? {
@@ -180,25 +189,12 @@ final class Collector {
     snapshot.cpu.uptime = now
     snapshot.cpu.frequency = sysNumber("hw.cpufrequency").map { Double($0) / 1e9 }
     let memory = aerie_memory()
-    if memory.valid != 0 {
-      snapshot.memory = MemoryData(
-        total: Double(memory.total),
-        app: Double(memory.internal > memory.purgeable ? memory.internal - memory.purgeable : 0),
-        wired: Double(memory.wired), compressed: Double(memory.compressed),
-        free: Double(memory.free), cached: Double(memory.external),
-        purgeable: Double(memory.purgeable),
-        swap: Double(memory.swap_used), swapTotal: Double(memory.swap_total),
-        pressure: memory.pressure == 1
-          ? "Normal"
-          : memory.pressure == 2 ? "Warning" : memory.pressure == 4 ? "Critical" : "Unavailable",
-        usedFraction: memory.total > 0
-          ? min(
-            1,
-            Double(
-              memory.internal + memory.wired + memory.compressed
-                - min(memory.internal, memory.purgeable)) / Double(memory.total)) : nil,
-        pageIn: rate("pageIn", memory.pageins, now), pageOut: rate("pageOut", memory.pageouts, now),
-        swapIn: rate("swapIn", memory.swapins, now), swapOut: rate("swapOut", memory.swapouts, now))
+    snapshot.memory = Self.memoryReading(memory, previous: cache.memory, date: snapshot.date) {
+      key, count in
+      self.rate(key, count, now)
+    }
+    if snapshot.memory.validity != .fresh {
+      for key in ["pageIn", "pageOut", "swapIn", "swapOut"] { counters.removeValue(forKey: key) }
     }
     var interfaces = [AerieInterface](repeating: AerieInterface(), count: 128)
     let networkCount = Int(aerie_interfaces(&interfaces, 128))
@@ -236,16 +232,13 @@ final class Collector {
       gpu.fps = stats["Frames Per Second"]?.doubleValue
       return gpu
     }
-    snapshot.sensors = smcKeys.compactMap { key in
-      var sensor = AerieSensor()
-      guard aerie_smc_read(key, &sensor) == 0, sensor.value.isFinite else { return nil }
-      let unit =
-        key.hasPrefix("T")
-        ? "°C"
-        : key.hasPrefix("F") ? "rpm" : key.hasPrefix("P") ? "W" : key.hasPrefix("V") ? "V" : "A"
-      guard unit != "°C" || (-50...150).contains(sensor.value) else { return nil }
-      return SensorData(key: key, label: sensorLabel(key), value: sensor.value, unit: unit)
-    }.sorted { $0.key < $1.key }
+    snapshot.sensors = sensorSources.compactMap { entry in
+      var value = 0.0
+      guard aerie_smc_value(entry.source, &value) == 0, value.isFinite,
+        entry.unit != "°C" || (-50...150).contains(value)
+      else { return nil }
+      return SensorData(key: entry.key, label: entry.label, value: value, unit: entry.unit)
+    }
     snapshot.power = power()
     if now - inventoryTime >= 30 {
       snapshot.volumes = volumes()
@@ -263,6 +256,36 @@ final class Collector {
     if detailed { snapshot.processes = processes(now, &snapshot.processDenied) }
     cache = snapshot
     DispatchQueue.main.async { [weak self] in self?.onSample?(snapshot) }
+  }
+  static func memoryReading(
+    _ memory: AerieMemory, previous: MemoryData, date: Date,
+    rate: (String, UInt64) -> Double?
+  ) -> MemoryData {
+    guard memory.valid != 0, memory.total > 0 else {
+      var missing = MemoryData()
+      missing.sampledAt = previous.sampledAt
+      missing.validity = previous.sampledAt.map { .stale(lastSuccess: $0) } ?? .unavailable
+      return missing
+    }
+    return MemoryData(
+      validity: .fresh, sampledAt: date,
+      total: Double(memory.total),
+      app: Double(memory.internal > memory.purgeable ? memory.internal - memory.purgeable : 0),
+      wired: Double(memory.wired), compressed: Double(memory.compressed),
+      free: Double(memory.free), cached: Double(memory.external),
+      purgeable: Double(memory.purgeable),
+      swap: Double(memory.swap_used), swapTotal: Double(memory.swap_total),
+      pressure: memory.pressure == 1
+        ? "Normal"
+        : memory.pressure == 2 ? "Warning" : memory.pressure == 4 ? "Critical" : "Unavailable",
+      usedFraction: memory.total > 0
+        ? min(
+          1,
+          Double(
+            memory.internal + memory.wired + memory.compressed
+              - min(memory.internal, memory.purgeable)) / Double(memory.total)) : nil,
+      pageIn: rate("pageIn", memory.pageins), pageOut: rate("pageOut", memory.pageouts),
+      swapIn: rate("swapIn", memory.swapins), swapOut: rate("swapOut", memory.swapouts))
   }
   private func processes(_ now: Double, _ denied: inout Int) -> [ProcessData] {
     var buffer = [AerieProcess](repeating: AerieProcess(), count: 8192)

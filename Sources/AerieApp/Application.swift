@@ -24,6 +24,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var paused = false
   private var selfCheckSamples = 0
   private var observers: [NSObjectProtocol] = []
+  private lazy var ridgeMark = ridgeImage()
+  private let clockFormatter = DateFormatter()
+  private var graphValues: [Module: [Double?]] = [:]
+  private var accessibilityValues: [Module: String] = [:]
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -39,7 +43,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.contentViewController = dashboard
     popover.delegate = self
     dashboard.onSettings = { [weak self] in self?.showSettings() }
-    dashboard.onModule = { [weak self] _ in self?.updateCalendar() }
+    dashboard.onModule = { [weak self] module in
+      self?.collector?.setDetailed(ProcessDemand.required(module: module, visible: true))
+      self?.updateCalendar()
+    }
     rebuildItems()
     applyAppearance()
     let collector = Collector()
@@ -112,6 +119,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private func rebuildItems() {
     for (_, item) in items { NSStatusBar.system.removeStatusItem(item) }
     items.removeAll()
+    graphValues.removeAll()
+    accessibilityValues.removeAll()
+    clockFormatter.dateFormat = settings.clockFormat
     let menus =
       settings.combined
       ? [MenuConfiguration(module: .overview, style: settings.menus.first?.style ?? .text)]
@@ -157,7 +167,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     _ = dashboard.view
     dashboard.show(module)
     updateCalendar()
-    collector?.setDetailed(true)
+    collector?.setDetailed(ProcessDemand.required(module: module, visible: true))
     popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     popover.contentViewController?.view.window?.makeKey()
   }
@@ -187,30 +197,41 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       case .power:
         value = snapshot.power.present ? "BAT \(Format.percent(snapshot.power.percent))" : "PWR AC"
       case .time:
-        let f = DateFormatter()
-        f.dateFormat = settings.clockFormat
-        value = f.string(from: Date())
+        value = clockFormatter.string(from: Date())
       case .weather:
         value =
           weatherReport?.temperature.map { Format.temperature($0, unit: settings.temperature) }
           ?? "WX —"
       }
       if configuration.style == .graph, let key = graphKey(module) {
-        button.title = ""
-        button.image = graphImage(key)
+        let points = history.recent.suffix(48).map { $0.values[key] }
+        if graphValues[module] != points {
+          if !button.title.isEmpty { button.title = "" }
+          button.image = graphImage(points, key: key)
+          graphValues[module] = points
+        }
       } else {
-        button.image = module == .overview ? ridgeImage() : nil
+        if module == .overview {
+          if button.image !== ridgeMark { button.image = ridgeMark }
+        } else if button.image != nil {
+          button.image = nil
+        }
         let title =
           configuration.style == .compact
           ? value.replacingOccurrences(
             of: "\(module == .memory ? "MEM" : module.title.uppercased()) ", with: "") : value
-        let font = NSFont.monospacedDigitSystemFont(
-          ofSize: settings.compactSpacing ? 10 : 11, weight: .medium)
-        button.attributedTitle = NSAttributedString(
-          string: paused ? "⏸ " + title : title, attributes: [.font: font])
+        let displayed = paused ? "⏸ " + title : title
+        if button.attributedTitle.string != displayed {
+          let font = NSFont.monospacedDigitSystemFont(
+            ofSize: settings.compactSpacing ? 10 : 11, weight: .medium)
+          button.attributedTitle = NSAttributedString(string: displayed, attributes: [.font: font])
+        }
       }
-      button.toolTip = "Aerie \(module.title): \(value)\(paused ? " · sampling paused" : "")"
-      button.setAccessibilityValue(value)
+      let tooltip = "Aerie \(module.title): \(value)\(paused ? " · sampling paused" : "")"
+      if button.toolTip != tooltip { button.toolTip = tooltip }
+      if accessibilityValues[module] != value {
+        button.setAccessibilityValue(value); accessibilityValues[module] = value
+      }
     }
   }
   private func shortRate(_ value: Double?) -> String {
@@ -232,9 +253,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     default: return nil
     }
   }
-  private func graphImage(_ key: String) -> NSImage {
+  private func graphImage(_ points: [Double?], key: String) -> NSImage {
     let image = NSImage(size: NSSize(width: 48, height: 18), flipped: true) { rect in
-      let points = Array(self.history.recent.values.suffix(48)).map { $0.values[key] }
       let maxValue =
         ["cpu", "gpu", "memory", "battery"].contains(key)
         ? 100 : max(1, points.compactMap { $0 }.max() ?? 1)

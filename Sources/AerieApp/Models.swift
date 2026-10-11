@@ -25,6 +25,8 @@ struct GPUData {
   var fps: Double?
 }
 struct MemoryData {
+  var validity = ReadingValidity.unavailable
+  var sampledAt: Date?
   var total = 0.0
   var app = 0.0
   var wired = 0.0
@@ -122,7 +124,7 @@ struct Snapshot {
     var values: [String: Double] = ["thermal": thermalLevel]
     values["cpu"] = cpu.total.map { $0 * 100 }
     values["gpu"] = gpu.first?.utilization.map { $0 * 100 }
-    values["memory"] = memory.usedFraction.map { $0 * 100 }
+    values["memory"] = memory.validity.live(memory.usedFraction).map { $0 * 100 }
     values["battery"] = power.percent.map { $0 * 100 }
     values["temperature"] = sensors.filter { $0.unit == "°C" }.map(\.value).max()
     values["diskFree"] = volumes.first.map { $0.free / 1_073_741_824 }

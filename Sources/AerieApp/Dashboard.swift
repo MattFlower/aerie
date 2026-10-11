@@ -270,13 +270,9 @@ final class DashboardController: NSViewController {
   private func bytes(_ value: Double) -> String {
     Format.bytes(value, binary: settings.binaryBytes)
   }
-  private func rate(_ value: Double?) -> String {
-    guard let value else { return "Unavailable" }
-    if settings.networkBits {
-      return Format.bytes(value * 8, binary: false).replacingOccurrences(of: "B", with: "bit")
-        + "/s"
-    }
-    return bytes(value) + "/s"
+  private func rate(_ value: Double?, domain: RateDomain = .storage) -> String {
+    Format.rate(
+      value, domain: domain, binary: settings.binaryBytes, networkBits: settings.networkBits)
   }
   private func top(_ sort: (ProcessData, ProcessData) -> Bool, value: (ProcessData) -> String)
     -> [DashboardRow]
@@ -302,8 +298,8 @@ final class DashboardController: NSViewController {
         DashboardRow.metric("GPU", Format.percent(s.gpu.first?.utilization)),
         DashboardRow.metric("Memory used", Format.percent(s.memory.usedFraction)),
         DashboardRow.metric("Memory pressure", s.memory.pressure),
-        DashboardRow.metric("Download", rate(s.download)),
-        DashboardRow.metric("Upload", rate(s.upload)),
+        DashboardRow.metric("Download", rate(s.download, domain: .network)),
+        DashboardRow.metric("Upload", rate(s.upload, domain: .network)),
         DashboardRow.metric("Disk read", rate(s.diskRead)),
         DashboardRow.metric("Disk write", rate(s.diskWrite)),
         DashboardRow.metric("Thermal state", s.thermal),
@@ -367,6 +363,13 @@ final class DashboardController: NSViewController {
       return rows
     case .memory:
       let m = s.memory
+      guard m.validity == .fresh else {
+        return [
+          .heading("Memory"), .note(m.validity.description),
+          .note("Latest memory sample failed. Old values are excluded from history and rules."),
+          .heading("Top memory processes"),
+        ] + top({ $0.memory > $1.memory }, value: { bytes($0.memory) })
+      }
       return [
         DashboardRow.heading("Memory"), DashboardRow.metric("Pressure", m.pressure),
         DashboardRow.metric("Used", Format.percent(m.usedFraction)),
@@ -421,15 +424,17 @@ final class DashboardController: NSViewController {
     case .network:
       var rows: [DashboardRow] = [
         DashboardRow.heading("Traffic"), DashboardRow.metric("Connectivity", s.connectivity),
-        DashboardRow.metric("Download", rate(s.download)),
-        DashboardRow.metric("Upload", rate(s.upload)),
+        DashboardRow.metric("Download", rate(s.download, domain: .network)),
+        DashboardRow.metric("Upload", rate(s.upload, domain: .network)),
         DashboardRow.chart("download", "Download bytes/s", AeriePalette.incoming, nil),
         DashboardRow.chart("upload", "Upload bytes/s", AeriePalette.outgoing, nil),
       ]
       for i in s.interfaces.sorted(by: { $0.active && !$1.active }) {
         rows += [
           DashboardRow.heading(i.name + (i.active ? " · active" : " · inactive")),
-          DashboardRow.metric("Download / upload", "\(rate(i.download)) / \(rate(i.upload))"),
+          DashboardRow.metric(
+            "Download / upload",
+            "\(rate(i.download, domain: .network)) / \(rate(i.upload, domain: .network))"),
           DashboardRow.metric("Received since boot", bytes(Double(i.received))),
           DashboardRow.metric("Sent since boot", bytes(Double(i.sent))),
           DashboardRow.metric("Errors", "\(i.errors)"),

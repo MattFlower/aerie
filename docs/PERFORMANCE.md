@@ -4,7 +4,7 @@
 
 Use a release build with matching visible features, process counts, refresh intervals, and history configuration. Record UTC timestamps, OS/toolchain, hardware privately, power/thermal state, settings, process inventory, and scenario boundaries. Include every related process and helper; do not count only resident memory or omit a daemon.
 
-`AerieMeasure` emits JSON Lines using libproc `ri_phys_footprint`, resident bytes as a separate field, CPU percentage (one logical core = 100%), and interrupt wakeups per second. It includes descendants of the selected PIDs. Related helpers launched independently must be listed explicitly. A denied/exited process marks a sample incomplete rather than silently lowering the total. The first sample has no CPU/wakeup rate baseline.
+`AerieMeasure` emits JSON Lines using libproc `ri_phys_footprint`, resident bytes as a separate field, CPU percentage (one logical core = 100%), and interrupt wakeups per second. It retains every observed PID plus process-start identity, including exited or reparented descendants. PID reuse cannot inherit a previous identity or rate baseline. Related helpers launched independently must be listed explicitly. A denied/exited identity marks affected metrics incomplete rather than silently lowering totals. Physical footprint, CPU and wakeups each have a completeness flag; incomplete totals are JSON null. The first sample and newly observed helpers have no CPU/wakeup baseline and are incomplete for those metrics. Record helpers present before launch as explicit selected PIDs. Historical measurements made before these completeness fields existed must retain their caveats; do not rewrite raw evidence.
 
 ```sh
 swift build --build-system native -c release --product AerieMeasure

@@ -16,6 +16,11 @@ public struct RingBuffer<Element> {
     let start = count == storage.count ? next : 0
     return (0..<count).compactMap { storage[(start + $0) % storage.count] }
   }
+  public func suffix(_ maximum: Int) -> [Element] {
+    let length = min(count, max(0, maximum))
+    let start = (next - length + storage.count) % storage.count
+    return (0..<length).compactMap { storage[(start + $0) % storage.count] }
+  }
 }
 
 public struct CounterSample: Equatable {

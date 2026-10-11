@@ -10,9 +10,12 @@
 #include <net/route.h>
 #include <net/if_dl.h>
 #include <netdb.h>
+#include <arpa/inet.h>
+#include <time.h>
 #include <IOKit/IOKitLib.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <mach/mach_time.h>
 
@@ -52,44 +55,77 @@ AerieMemory aerie_memory(void) {
     out.valid = 1; return out;
 }
 
+// Names/addresses are inventory; throughput counters are read on every sample.
+static struct { unsigned index; AerieInterface value; } interface_inventory[256];
+static int interface_inventory_count = 0;
+static uint64_t interface_inventory_at = 0;
+void aerie_interfaces_invalidate(void) { interface_inventory_at = 0; }
+static uint64_t monotonic_ns(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
+static void refresh_interface_inventory(void) {
+    struct ifaddrs *addresses = NULL;
+    if (getifaddrs(&addresses) != 0) return;
+    interface_inventory_count = 0;
+    for (struct ifaddrs *a = addresses; a; a = a->ifa_next) {
+        if (!a->ifa_addr || a->ifa_addr->sa_family != AF_LINK || interface_inventory_count >= 256) continue;
+        struct sockaddr_dl *link = (struct sockaddr_dl *)a->ifa_addr;
+        int i = interface_inventory_count++;
+        memset(&interface_inventory[i], 0, sizeof(interface_inventory[i]));
+        interface_inventory[i].index = link->sdl_index;
+        strlcpy(interface_inventory[i].value.name, a->ifa_name, sizeof(interface_inventory[i].value.name));
+    }
+    for (struct ifaddrs *a = addresses; a; a = a->ifa_next) {
+        if (!a->ifa_addr) continue;
+        int family = a->ifa_addr->sa_family;
+        if (family != AF_INET && family != AF_INET6) continue;
+        char address[INET6_ADDRSTRLEN + 24] = {0};
+        const void *bytes = family == AF_INET ? (const void *)&((struct sockaddr_in *)a->ifa_addr)->sin_addr
+                                            : (const void *)&((struct sockaddr_in6 *)a->ifa_addr)->sin6_addr;
+        if (!inet_ntop(family, bytes, address, sizeof(address))) continue;
+        if (family == AF_INET6) {
+            unsigned scope = ((struct sockaddr_in6 *)a->ifa_addr)->sin6_scope_id;
+            if (scope) { char suffix[24]; snprintf(suffix, sizeof(suffix), "%%%u", scope); strlcat(address, suffix, sizeof(address)); }
+        }
+        for (int i = 0; i < interface_inventory_count; i++) if (strcmp(interface_inventory[i].value.name, a->ifa_name) == 0) {
+            char *target = interface_inventory[i].value.addresses;
+            if (target[0]) strlcat(target, ", ", sizeof(interface_inventory[i].value.addresses));
+            strlcat(target, address, sizeof(interface_inventory[i].value.addresses));
+            break;
+        }
+    }
+    freeifaddrs(addresses); interface_inventory_at = monotonic_ns();
+}
 int aerie_interfaces(AerieInterface *out, int capacity) {
+    if (!out || capacity <= 0) return 0;
+    if (!interface_inventory_at || monotonic_ns() - interface_inventory_at >= 30000000000ULL) refresh_interface_inventory();
     int mib[] = {CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0}; size_t size = 0;
     if (sysctl(mib, 6, NULL, &size, NULL, 0) != 0 || size > 16 * 1024 * 1024) return 0;
     char *data = malloc(size); if (!data) return 0;
     if (sysctl(mib, 6, data, &size, NULL, 0) != 0) { free(data); return 0; }
     int count = 0;
-    for (char *cursor = data; cursor < data + size && count < capacity;) {
+    for (char *cursor = data; cursor + sizeof(struct if_msghdr) <= data + size && count < capacity;) {
         struct if_msghdr *msg = (struct if_msghdr *)cursor;
-        if (!msg->ifm_msglen || cursor + msg->ifm_msglen > data + size) break;
+        if (msg->ifm_msglen < sizeof(*msg) || cursor + msg->ifm_msglen > data + size) break;
         if (msg->ifm_type == RTM_IFINFO2 && msg->ifm_msglen >= sizeof(struct if_msghdr2)) {
             struct if_msghdr2 *m = (struct if_msghdr2 *)cursor;
-            AerieInterface *item = &out[count]; memset(item, 0, sizeof(*item));
-            if (if_indextoname(m->ifm_index, item->name) && !(m->ifm_flags & IFF_LOOPBACK)) {
-                item->received = m->ifm_data.ifi_ibytes; item->sent = m->ifm_data.ifi_obytes;
-                item->packets_in = m->ifm_data.ifi_ipackets; item->packets_out = m->ifm_data.ifi_opackets;
-                item->errors_in = m->ifm_data.ifi_ierrors; item->errors_out = m->ifm_data.ifi_oerrors;
-                item->active = (m->ifm_flags & IFF_UP) && (m->ifm_flags & IFF_RUNNING);
-                count++;
+            if (!(m->ifm_flags & IFF_LOOPBACK)) {
+                int match = -1;
+                for (int i = 0; i < interface_inventory_count; i++) if (interface_inventory[i].index == m->ifm_index) { match = i; break; }
+                if (match < 0) {
+                    refresh_interface_inventory();
+                    for (int i = 0; i < interface_inventory_count; i++) if (interface_inventory[i].index == m->ifm_index) { match = i; break; }
+                }
+                if (match >= 0) {
+                    AerieInterface *item = &out[count++]; *item = interface_inventory[match].value;
+                    item->received = m->ifm_data.ifi_ibytes; item->sent = m->ifm_data.ifi_obytes;
+                    item->packets_in = m->ifm_data.ifi_ipackets; item->packets_out = m->ifm_data.ifi_opackets;
+                    item->errors_in = m->ifm_data.ifi_ierrors; item->errors_out = m->ifm_data.ifi_oerrors;
+                    item->active = (m->ifm_flags & IFF_UP) && (m->ifm_flags & IFF_RUNNING);
+                }
             }
         }
         cursor += msg->ifm_msglen;
     }
-    free(data);
-    struct ifaddrs *addresses = NULL;
-    if (getifaddrs(&addresses) == 0) {
-        for (struct ifaddrs *a = addresses; a; a = a->ifa_next) {
-            if (!a->ifa_addr || (a->ifa_addr->sa_family != AF_INET && a->ifa_addr->sa_family != AF_INET6)) continue;
-            for (int i = 0; i < count; i++) if (strcmp(out[i].name, a->ifa_name) == 0) {
-                char address[NI_MAXHOST];
-                if (getnameinfo(a->ifa_addr, a->ifa_addr->sa_len, address, sizeof(address), NULL, 0, NI_NUMERICHOST) == 0) {
-                    if (out[i].addresses[0]) strlcat(out[i].addresses, ", ", sizeof(out[i].addresses));
-                    strlcat(out[i].addresses, address, sizeof(out[i].addresses));
-                }
-            }
-        }
-        freeifaddrs(addresses);
-    }
-    return count;
+    free(data); return count;
 }
 
 AerieProcess aerie_process(int pid) {
@@ -152,8 +188,8 @@ int aerie_smc_open(void) {
     return r == KERN_SUCCESS ? 0 : (int)r;
 }
 void aerie_smc_close(void) { if (smc) IOServiceClose(smc); smc = IO_OBJECT_NULL; smc_info_count = 0; }
-int aerie_smc_read(const char *key, AerieSensor *sensor) {
-    if (!key || strlen(key) != 4 || !sensor) return -1;
+int aerie_smc_source(const char *key, AerieSensorSource *source) {
+    if (!key || strlen(key) != 4 || !source) return -1;
     SMCData in = {0}, out = {0}; in.key = fourcc(key); in.command = 9;
     int cached = 0;
     for (int i = 0; i < smc_info_count; i++) if (smc_info_cache[i].key == in.key) {
@@ -167,26 +203,35 @@ int aerie_smc_read(const char *key, AerieSensor *sensor) {
             smc_info_cache[smc_info_count++].info = in.info;
         }
     }
-    in.command = 5;
+    source->key = in.key; source->type = in.info.type; source->size = in.info.size; return 0;
+}
+int aerie_smc_value(AerieSensorSource source, double *value) {
+    if (!value || !source.size || source.size > 32) return -1;
+    SMCData in = {0}, out = {0}; in.key = source.key; in.info.size = source.size; in.info.type = source.type; in.command = 5;
     if (smc_call(&in, &out) != 0) return -1;
-    memset(sensor, 0, sizeof(*sensor)); memcpy(sensor->key, key, 4); unfourcc(in.info.type, sensor->type);
-    if (in.info.type == fourcc("sp78")) {
-        sensor->value = (int16_t)((out.bytes[0] << 8) | out.bytes[1]) / 256.0;
-    } else if (in.info.type == fourcc("fpe2")) {
-        sensor->value = ((out.bytes[0] << 8) | out.bytes[1]) / 4.0;
-    } else if (in.info.type == fourcc("flt ")) {
-        float f; memcpy(&f, out.bytes, sizeof(f)); sensor->value = f;
-    } else if ((sensor->type[0] == 'f' || sensor->type[0] == 's') && sensor->type[1] == 'p' && in.info.size == 2) {
-        char c = sensor->type[3]; int fractional = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+    char type[5]; unfourcc(source.type, type);
+    if (source.type == fourcc("sp78")) *value = (int16_t)((out.bytes[0] << 8) | out.bytes[1]) / 256.0;
+    else if (source.type == fourcc("fpe2")) *value = ((out.bytes[0] << 8) | out.bytes[1]) / 4.0;
+    else if (source.type == fourcc("flt ")) { float f; memcpy(&f, out.bytes, sizeof(f)); *value = f; }
+    else if ((type[0] == 'f' || type[0] == 's') && type[1] == 'p' && source.size == 2) {
+        char c = type[3]; int fractional = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
         if (fractional < 0) return -1;
         uint16_t raw = (out.bytes[0] << 8) | out.bytes[1];
-        sensor->value = (sensor->type[0] == 's' ? (int16_t)raw : (int)raw) / (double)(1U << fractional);
-    } else if (in.info.type == fourcc("ui8 ")) sensor->value = out.bytes[0];
-    else if (in.info.type == fourcc("ui16")) sensor->value = (out.bytes[0] << 8) | out.bytes[1];
-    else if (in.info.type == fourcc("ui32")) sensor->value = fourcc((const char *)out.bytes);
+        *value = (type[0] == 's' ? (int16_t)raw : (int)raw) / (double)(1U << fractional);
+    } else if (source.type == fourcc("ui8 ")) *value = out.bytes[0];
+    else if (source.type == fourcc("ui16")) *value = (out.bytes[0] << 8) | out.bytes[1];
+    else if (source.type == fourcc("ui32")) *value = fourcc((const char *)out.bytes);
     else return -1;
     return 0;
 }
+int aerie_smc_read(const char *key, AerieSensor *sensor) {
+    if (!sensor) return -1;
+    AerieSensorSource source;
+    if (aerie_smc_source(key, &source) != 0) return -1;
+    memset(sensor, 0, sizeof(*sensor)); memcpy(sensor->key, key, 4); unfourcc(source.type, sensor->type);
+    return aerie_smc_value(source, &sensor->value);
+}
+
 int aerie_smc_keys(char *keys, int capacity) {
     AerieSensor n = {0}; if (aerie_smc_read("#KEY", &n) != 0) return 0;
     int total = (int)n.value; if (total < 0 || total > 20000) return 0;
