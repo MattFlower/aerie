@@ -44,12 +44,17 @@ public struct ProcessSample: Codable {
   public var totalFootprintBytes: UInt64?
   public var totalCPUPercent: Double?
   public var totalWakeupsPerSecond: Double?
+  public var observedFootprintBytes: UInt64?
+  public var observedCPUPercent: Double?
+  public var observedWakeupsPerSecond: Double?
+  public var cohortComplete: Bool
   public var footprintComplete: Bool
   public var cpuComplete: Bool
   public var wakeupsComplete: Bool
   public var incomplete: Bool
   enum CodingKeys: String, CodingKey {
     case scenario, timestamp, readings, totalFootprintBytes, totalCPUPercent, totalWakeupsPerSecond
+    case observedFootprintBytes, observedCPUPercent, observedWakeupsPerSecond, cohortComplete
     case footprintComplete, cpuComplete, wakeupsComplete, incomplete
   }
   public func encode(to encoder: Encoder) throws {
@@ -59,6 +64,10 @@ public struct ProcessSample: Codable {
     try c.encode(totalFootprintBytes, forKey: .totalFootprintBytes)
     try c.encode(totalCPUPercent, forKey: .totalCPUPercent)
     try c.encode(totalWakeupsPerSecond, forKey: .totalWakeupsPerSecond)
+    try c.encode(observedFootprintBytes, forKey: .observedFootprintBytes)
+    try c.encode(observedCPUPercent, forKey: .observedCPUPercent)
+    try c.encode(observedWakeupsPerSecond, forKey: .observedWakeupsPerSecond)
+    try c.encode(cohortComplete, forKey: .cohortComplete)
     try c.encode(footprintComplete, forKey: .footprintComplete)
     try c.encode(cpuComplete, forKey: .cpuComplete);
     try c.encode(wakeupsComplete, forKey: .wakeupsComplete)
@@ -79,7 +88,8 @@ public struct ProcessSampler {
   public init(pids: [Int]) { selected = Set(pids) }
   public mutating func sample(
     observations: [ProcessObservation], monotonicTime: Double,
-    date: Date, scenario: String, confirmedExits: Set<ProcessIdentity> = []
+    date: Date, scenario: String, confirmedExits: Set<ProcessIdentity> = [],
+    verifiedRecursiveMembers: Set<ProcessIdentity>? = nil
   ) -> ProcessSample {
     let current = Dictionary(
       observations.map { ($0.identity, $0) }, uniquingKeysWith: { _, last in last })
@@ -120,7 +130,9 @@ public struct ProcessSampler {
       let live = current[identity]
       let observation = live ?? tracked[identity]!
       func rate(_ value: UInt64?, _ prior: UInt64?) -> Double? {
-        guard live != nil, let value, let prior, value >= prior, dt > 0 else { return nil }
+        guard live != nil, let value, let prior, value >= prior, dt.isFinite, dt > 0 else {
+          return nil
+        }
         return Double(value - prior) / dt
       }
       let present = live != nil
@@ -143,9 +155,17 @@ public struct ProcessSampler {
       if let live { tracked[identity] = live }
     }
     previous = current; previousTime = monotonicTime
-    let footprintComplete = readings.allSatisfy { $0.footprintBytes != nil }
-    let cpuComplete = readings.allSatisfy { $0.cpuPercent != nil }
-    let wakeupsComplete = readings.allSatisfy { $0.interruptWakeupsPerSecond != nil }
+    // A readable selected subset does not prove recursive helper coverage.
+    let cohortComplete =
+      verifiedRecursiveMembers == Set(tracked.keys)
+      && !tracked.isEmpty && tracked.keys.allSatisfy { $0.startTime > 0 }
+      && selected.allSatisfy { pid in readings.contains { $0.pid == pid && $0.status == "live" } }
+      && readings.allSatisfy { $0.status == "live" || $0.status == "exited-confirmed" }
+      && Set(observations.map(\.identity)).count == observations.count
+    let footprintComplete = cohortComplete && readings.allSatisfy { $0.footprintBytes != nil }
+    let cpuComplete = cohortComplete && readings.allSatisfy { $0.cpuPercent != nil }
+    let wakeupsComplete =
+      cohortComplete && readings.allSatisfy { $0.interruptWakeupsPerSecond != nil }
     return ProcessSample(
       scenario: scenario, timestamp: date, readings: readings,
       totalFootprintBytes: footprintComplete
@@ -153,6 +173,13 @@ public struct ProcessSampler {
       totalCPUPercent: cpuComplete ? readings.reduce(0) { $0 + ($1.cpuPercent ?? 0) } : nil,
       totalWakeupsPerSecond: wakeupsComplete
         ? readings.reduce(0) { $0 + ($1.interruptWakeupsPerSecond ?? 0) } : nil,
+      observedFootprintBytes: readings.compactMap(\.footprintBytes).isEmpty
+        ? nil : readings.compactMap(\.footprintBytes).reduce(0, +),
+      observedCPUPercent: readings.compactMap(\.cpuPercent).isEmpty
+        ? nil : readings.compactMap(\.cpuPercent).reduce(0, +),
+      observedWakeupsPerSecond: readings.compactMap(\.interruptWakeupsPerSecond).isEmpty
+        ? nil : readings.compactMap(\.interruptWakeupsPerSecond).reduce(0, +),
+      cohortComplete: cohortComplete,
       footprintComplete: footprintComplete, cpuComplete: cpuComplete,
       wakeupsComplete: wakeupsComplete,
       incomplete: !footprintComplete || !cpuComplete || !wakeupsComplete)

@@ -5,3 +5,4 @@ dist/
 *.xcuserstate
 *.private.json
 measurements/
+__pycache__/

@@ -23,7 +23,8 @@ final class SamplingTests: XCTestCase {
   ) -> ProcessSample {
     sampler.sample(
       observations: observations, monotonicTime: time, date: Date(timeIntervalSince1970: time),
-      scenario: "synthetic")
+      scenario: "synthetic",
+      verifiedRecursiveMembers: sampler.trackedIdentities.union(observations.map(\.identity)))
   }
   func testFirstBaselineRatesAreIncompleteAndExplicitlyNull() throws {
     var sampler = ProcessSampler(pids: [10])
@@ -89,6 +90,51 @@ final class SamplingTests: XCTestCase {
     XCTAssertEqual(sample.readings.first { $0.pid == 10 }?.status, "live")
     XCTAssertEqual(sample.readings.first { $0.pid == 20 }?.status, "unreadable")
     XCTAssertFalse(sample.footprintComplete); XCTAssertNil(sample.totalFootprintBytes)
+  }
+  func testReadableSelectedSubsetCannotClaimWholeCohortCompleteness() throws {
+    var sampler = ProcessSampler(pids: [10])
+    _ = sampler.sample(
+      observations: [observation(10), observation(11, parent: 10)],
+      monotonicTime: 0, date: Date(timeIntervalSince1970: 0), scenario: "synthetic")
+    let sample = sampler.sample(
+      observations: [observation(10), observation(11, parent: 10)],
+      monotonicTime: 1, date: Date(timeIntervalSince1970: 1), scenario: "synthetic")
+    XCTAssertFalse(sample.cohortComplete); XCTAssertFalse(sample.footprintComplete)
+    XCTAssertTrue(sample.incomplete); XCTAssertNil(sample.totalFootprintBytes)
+    XCTAssertEqual(sample.observedFootprintBytes, 2048)
+    let json =
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(sample)) as! [String: Any]
+    XCTAssertTrue(json["totalFootprintBytes"] is NSNull)
+    XCTAssertEqual(json["cohortComplete"] as? Bool, false)
+  }
+  func testMissingNestedOrUnexpectedMemberInvalidatesVerifiedSet() {
+    for members: Set<ProcessIdentity> in [
+      [.init(pid: 10, startTime: 1)],
+      [.init(pid: 10, startTime: 1), .init(pid: 11, startTime: 1), .init(pid: 12, startTime: 1)],
+    ] {
+      var sampler = ProcessSampler(pids: [10])
+      let sample = sampler.sample(
+        observations: [observation(10), observation(11, parent: 10)], monotonicTime: 0,
+        date: Date(timeIntervalSince1970: 0), scenario: "synthetic",
+        verifiedRecursiveMembers: members)
+      XCTAssertFalse(sample.cohortComplete); XCTAssertNil(sample.totalFootprintBytes)
+      XCTAssertEqual(sample.observedFootprintBytes, 2048)
+    }
+  }
+  func testTerminatedRootAndDuplicateObservationsCannotClaimCompleteTotals() {
+    var sampler = ProcessSampler(pids: [10])
+    let root = observation(10)
+    let duplicate = sampler.sample(
+      observations: [root, root], monotonicTime: 0,
+      date: Date(timeIntervalSince1970: 0), scenario: "synthetic",
+      verifiedRecursiveMembers: [root.identity])
+    XCTAssertFalse(duplicate.cohortComplete); XCTAssertNil(duplicate.totalFootprintBytes)
+    let exited = sampler.sample(
+      observations: [], monotonicTime: 1, date: Date(timeIntervalSince1970: 1),
+      scenario: "synthetic", confirmedExits: [root.identity],
+      verifiedRecursiveMembers: [root.identity])
+    XCTAssertEqual(exited.readings[0].status, "exited-confirmed")
+    XCTAssertFalse(exited.cohortComplete); XCTAssertNil(exited.totalFootprintBytes)
   }
   func testBitPreferenceOnlyChangesNetworkRates() {
     XCTAssertEqual(Format.rate(1024, domain: .storage, networkBits: true), "1.0 KiB/s")

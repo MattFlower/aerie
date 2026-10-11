@@ -23,6 +23,8 @@ jobs:
         run: swift --version
       - name: Test synthetic accounting and forecast fixtures
         run: swift test --build-system native
+      - name: Test recursive cohort coverage
+        run: python3 -m unittest discover -s Tests/MeasurementTests -p 'test_*.py'
       - name: Lint Swift
         run: xcrun swift-format lint --strict --recursive Sources Tests Package.swift
       - name: Build native application
