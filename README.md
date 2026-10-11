@@ -29,12 +29,13 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Configurable sustained threshold notifications with cooldowns and missing-data/sleep handling.
 - Ten-minute detailed history, one day of minute averages, and one week of hourly averages.
 - Opt-in Open-Meteo current/hourly/daily model forecasts, with attribution and explicit provider/location consent.
+- Separately opted-in native NOAA weather maps: observed radar, satellite bands, tropical tracks, official alert overlays, wind barbs/speed, temperature, precipitation and snow forecasts.
 
-Some statistics require hardware or permissions that are unavailable to a normal user process. Aerie shows unavailable states and does not install an elevated helper. Detailed weather maps, official alerts, and other open requirements are tracked in the capability checklist.
+Some statistics require hardware or permissions that are unavailable to a normal user process. Aerie shows unavailable states and does not install an elevated helper. Regional weather coverage, per-alert detail, visual validation and other open requirements are tracked in the capability checklist.
 
 ## Privacy and weather
 
-System readings stay local. Weather is off by default; Aerie does not use device location, IP geolocation, or automatic city search. Enabling weather sends your chosen coordinates (rounded to two decimal places) and network IP to Open-Meteo. Read [weather sources and terms](docs/WEATHER.md) before opting in. The free hosted API is for personal/noncommercial use; an open-source application license does not remove that restriction.
+System readings stay local. Forecasts and maps are off by default; Aerie does not use device location, IP geolocation, or automatic city search. Enabling weather sends your chosen coordinates (rounded to two decimal places) and network IP to Open-Meteo. Map consent is separate and sends the selected map extent and IP to NOAA/NWS services only while a map is open. Read [weather sources and terms](docs/WEATHER.md) before opting in. The free hosted API is for personal/noncommercial use; an open-source application license does not remove that restriction.
 
 Notifications, calendar events, and launch-at-login are requested only through explicit Settings actions. Exported settings remove weather location. Public tests contain synthetic fixtures and do not make weather requests.
 

@@ -21,6 +21,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var weatherReport: WeatherReport?
   private var weatherFetchTime = Date.distantPast
   private var weatherStatus = "Weather is off"
+  private var weatherMaps: WeatherMapWindowController?
   private var paused = false
   private var selfCheckSamples = 0
   private var observers: [NSObjectProtocol] = []
@@ -43,6 +44,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.contentViewController = dashboard
     popover.delegate = self
     dashboard.onSettings = { [weak self] in self?.showSettings() }
+    dashboard.onMaps = { [weak self] in self?.showMaps() }
     dashboard.onModule = { [weak self] module in
       self?.collector?.setDetailed(ProcessDemand.required(module: module, visible: true))
       self?.updateCalendar()
@@ -75,6 +77,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   func applicationWillTerminate(_ notification: Notification) {
     weatherTask?.cancel()
+    weatherMaps?.releaseResources(); weatherMaps = nil
     collector = nil
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
@@ -310,6 +313,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     applyAppearance()
     rules.reset()
     if weatherChanged {
+      weatherMaps?.close(); weatherMaps = nil
       weatherGeneration += 1
       weatherTask?.cancel()
       weatherTask = nil
@@ -318,6 +322,19 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       weatherStatus = valid.weather.valid ? "Fetching forecast" : "Weather is off"
       updateWeather()
     }
+  }
+  private func showMaps() {
+    popover.performClose(nil)
+    guard settings.weather.mapsValid else { showSettings(); return }
+    if let weatherMaps {
+      weatherMaps.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
+    }
+    do {
+      let controller = try WeatherMapWindowController(configuration: settings.weather)
+      weatherMaps = controller
+      controller.onClose = { [weak self] in self?.weatherMaps = nil }
+      controller.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
+    } catch { notice("Enable NOAA maps and choose a manual location in Weather Settings.") }
   }
   private func applyAppearance() {
     switch settings.theme {

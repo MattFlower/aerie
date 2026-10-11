@@ -200,6 +200,8 @@ final class DashboardController: NSViewController {
   let windowPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   let stateLabel = NSTextField(labelWithString: "Sampling")
   var onSettings: (() -> Void)?
+  var onMaps: (() -> Void)?
+  private let mapsButton = NSButton(title: "Maps…", target: nil, action: nil)
   var onModule: ((Module) -> Void)?
   var module = Module.overview
   var snapshot = Snapshot()
@@ -233,6 +235,9 @@ final class DashboardController: NSViewController {
     windowPicker.target = self
     windowPicker.action = #selector(changeWindow)
     view.addSubview(windowPicker)
+    mapsButton.frame = NSRect(x: 110, y: 9, width: 122, height: 28)
+    mapsButton.target = self; mapsButton.action = #selector(openMaps); mapsButton.isHidden = true
+    view.addSubview(mapsButton)
     stateLabel.font = .systemFont(ofSize: 10)
     stateLabel.textColor = .secondaryLabelColor
     stateLabel.alignment = .right
@@ -249,6 +254,7 @@ final class DashboardController: NSViewController {
     }
   }
   @objc private func openSettings() { onSettings?() }
+  @objc private func openMaps() { onMaps?() }
   @objc private func changeWindow() {
     canvas.selectedPoint = nil
     refresh()
@@ -260,6 +266,8 @@ final class DashboardController: NSViewController {
   }
   func refresh() {
     guard isViewLoaded else { return }
+    mapsButton.isHidden = module != .weather; windowPicker.isHidden = module == .weather
+    mapsButton.title = settings.weather.mapsValid ? "Maps…" : "Enable Maps…"
     let age = max(0, Date().timeIntervalSince(snapshot.date))
     stateLabel.stringValue =
       age > settings.interval * 3

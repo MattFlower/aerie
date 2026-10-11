@@ -122,7 +122,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     importButton.frame = NSRect(x: 195, y: 468, width: 170, height: 28)
     general.addSubview(importButton)
     label(
-      "Exports remove weather location and disable weather. Imports keep weather off until you opt in again.",
+      "Exports remove location and disable forecasts/maps. Imports keep both off until you opt in again.",
       y: 511, in: general, height: 45)
 
     let dashboard = NSButton(
@@ -183,6 +183,12 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Applying an enabled weather configuration sends a forecast request. Forecasts refresh every 15 minutes. Requests are cached in memory, are cancelled when disabled, and never run in tests or CI. Open-Meteo data is CC BY 4.0; attribution appears in the menu.",
       y: 389, in: weather, height: 100)
+    toggle(
+      "maps", title: "Enable NOAA/NWS maps for this manual location",
+      value: settings.weather.mapsEnabled, y: 505, in: weather)
+    label(
+      "Map provider: NOAA/NWS. Opening Maps sends the selected map area and your IP to NOAA services. Maps load only on demand; forecast consent above is separate. NOAA boundaries are used; no third-party basemap or device location is requested.",
+      y: 546, in: weather, height: 96)
 
     let time = tab("Time", in: tabs)
     field("clockFormat", title: "Date format", value: settings.clockFormat, y: 18, in: time)
@@ -299,6 +305,8 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     }
     s.weather.enabled = toggles["weather"]!.state == .on
     s.weather.provider = "openMeteo"
+    s.weather.mapsEnabled = toggles["maps"]!.state == .on
+    s.weather.mapsProvider = "noaa"
     s.weather.name = fields["weatherName"]!.stringValue
     s.weather.latitude = latitude
     s.weather.longitude = longitude
@@ -378,6 +386,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       guard data.count < 1_000_000 else { throw SettingsError.invalid }
       var s = try JSONDecoder().decode(Settings.self, from: data)
       s.weather.enabled = false
+      s.weather.mapsEnabled = false
       s = try s.validated()
       settings = s
       onApply?(s)

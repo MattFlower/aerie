@@ -44,9 +44,28 @@ public struct WeatherConfiguration: Codable, Equatable {
   public var name = ""
   public var latitude = 0.0
   public var longitude = 0.0
+  public var mapsEnabled = false
+  public var mapsProvider = "noaa"
   public init() {}
+  enum CodingKeys: String, CodingKey {
+    case enabled, provider, name, latitude, longitude, mapsEnabled, mapsProvider
+  }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+    provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? "openMeteo"
+    name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+    latitude = try c.decodeIfPresent(Double.self, forKey: .latitude) ?? 0
+    longitude = try c.decodeIfPresent(Double.self, forKey: .longitude) ?? 0
+    mapsEnabled = try c.decodeIfPresent(Bool.self, forKey: .mapsEnabled) ?? false
+    mapsProvider = try c.decodeIfPresent(String.self, forKey: .mapsProvider) ?? "noaa"
+  }
+  public var mapsValid: Bool { hasLocation && mapsEnabled && mapsProvider == "noaa" }
   public var valid: Bool {
-    enabled && !name.trimmingCharacters(in: .whitespaces).isEmpty && latitude.isFinite
+    enabled && hasLocation
+  }
+  public var hasLocation: Bool {
+    !name.trimmingCharacters(in: .whitespaces).isEmpty && latitude.isFinite
       && longitude.isFinite && (-90...90).contains(latitude) && (-180...180).contains(longitude)
   }
 }
@@ -83,8 +102,8 @@ public struct Settings: Codable, Equatable {
       menus.contains(where: \.visible), clockFormat.count <= 80,
       clocks.count <= 20, clocks.allSatisfy({ TimeZone(identifier: $0.zone) != nil }),
       rules.count <= 50, rules.allSatisfy(\.valid),
-      !weather.enabled || weather.valid,
-      ["openMeteo", "nws"].contains(weather.provider)
+      !weather.enabled || weather.valid, !weather.mapsEnabled || weather.mapsValid,
+      ["openMeteo", "nws"].contains(weather.provider), weather.mapsProvider == "noaa"
     else { throw SettingsError.invalid }
     return self
   }
