@@ -6,6 +6,7 @@ import XCTest
 final class CalendarViewTests: XCTestCase {
   func testNativeControlsSelectDatesAndNavigateWithoutRebuildingOnEachSample() async throws {
     try await MainActor.run {
+      _ = NSApplication.shared
       var calendar = Calendar(identifier: .gregorian)
       calendar.timeZone = TimeZone(secondsFromGMT: 0)!; calendar.firstWeekday = 2
       let date = calendar.date(from: DateComponents(year: 2026, month: 3, day: 31))!
@@ -38,6 +39,7 @@ final class CalendarViewTests: XCTestCase {
   }
   func testInteractiveRowsReleaseCalendarAndEventControlsAfterClosing() async throws {
     try await MainActor.run {
+      _ = NSApplication.shared
       let date = Date(timeIntervalSince1970: 1_700_000_000)
       let model = try XCTUnwrap(
         CalendarMonth.make(
