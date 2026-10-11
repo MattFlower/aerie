@@ -55,6 +55,7 @@ final class Collector {
   private var accelerators = services("IOAccelerator")
   private var disks = services("IOBlockStorageDriver")
   private var groups: [(String, Int)] = []
+  private var storageIDs: Set<UInt64> = []
   private var inventoryTime = -Double.infinity
   private var cache = Snapshot()
   private var pathMonitor = NWPathMonitor()
@@ -156,6 +157,18 @@ final class Collector {
     let now = ProcessInfo.processInfo.systemUptime
     var snapshot = cache
     snapshot.date = Date()
+    if now - inventoryTime >= 30 {
+      for item in accelerators { IOObjectRelease(item) }; accelerators = services("IOAccelerator")
+      for item in disks { IOObjectRelease(item) }; disks = services("IOBlockStorageDriver")
+      let latest = Set(
+        disks.map { service -> UInt64 in
+          var id: UInt64 = 0; IORegistryEntryGetRegistryEntryID(service, &id); return id
+        })
+      if latest != storageIDs {
+        counters.removeValue(forKey: "diskRead"); counters.removeValue(forKey: "diskWrite");
+        storageIDs = latest
+      }
+    }
     var ticks = [UInt64](repeating: 0, count: 256 * 4)
     let count = Int(aerie_cpu(&ticks, 256))
     ticks = Array(ticks.prefix(count * 4))
@@ -241,7 +254,9 @@ final class Collector {
     }
     snapshot.power = power()
     if now - inventoryTime >= 30 {
-      snapshot.volumes = volumes()
+      let inventory = volumes()
+      snapshot.volumes = inventory?.rows ?? []
+      snapshot.mountedVolumePaths = inventory?.paths
       snapshot.wifi = wifi()
       snapshot.power.peripherals = peripherals()
       inventoryTime = now
@@ -320,32 +335,37 @@ final class Collector {
     processTime = now
     return result
   }
-  private func volumes() -> [VolumeData] {
+  private func volumes() -> (rows: [VolumeData], paths: [String])? {
     let keys: Set<URLResourceKey> = [
       .volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
       .volumeAvailableCapacityForImportantUsageKey, .volumeIsRemovableKey, .volumeIsLocalKey,
       .volumeIsReadOnlyKey,
     ]
-    return
-      (FileManager.default.mountedVolumeURLs(
-        includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]) ?? [])
-      .compactMap { url in
-        guard let v = try? url.resourceValues(forKeys: keys), let total = v.volumeTotalCapacity,
-          let free = v.volumeAvailableCapacity, total > 0
-        else { return nil }
-        return VolumeData(
-          name: v.volumeName ?? url.lastPathComponent, path: url.path,
-          total: Double(total), free: Double(free),
-          important: v.volumeAvailableCapacityForImportantUsage.map(Double.init),
-          removable: v.volumeIsRemovable ?? false, local: v.volumeIsLocal ?? true,
-          readOnly: v.volumeIsReadOnly ?? false)
-      }.sorted { $0.path == "/" || ($1.path != "/" && $0.name < $1.name) }
+    guard
+      let urls = FileManager.default.mountedVolumeURLs(
+        includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes])
+    else { return nil }
+    let rows = urls.compactMap { url -> VolumeData? in
+      guard let v = try? url.resourceValues(forKeys: keys), let total = v.volumeTotalCapacity,
+        let free = v.volumeAvailableCapacity, total > 0
+      else { return nil }
+      return VolumeData(
+        name: v.volumeName ?? url.lastPathComponent, path: url.path,
+        total: Double(total), free: Double(free),
+        important: v.volumeAvailableCapacityForImportantUsage.map(Double.init),
+        removable: v.volumeIsRemovable ?? false, local: v.volumeIsLocal ?? true,
+        readOnly: v.volumeIsReadOnly ?? false)
+    }.sorted { $0.path == "/" || ($1.path != "/" && $0.name < $1.name) }
+    return (rows, urls.map(\.path))
   }
   private func power() -> PowerData {
     var power = PowerData()
     if let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
       let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
     {
+      if let source = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() {
+        power.source = source as String
+      }
       for source in sources {
         guard
           let details = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue()

@@ -1,6 +1,13 @@
 import Foundation
 
 public enum RuleComparison: String, Codable { case above, below }
+public enum RuleEdits {
+  public static func replacing(_ existing: ThresholdRule, with proposed: ThresholdRule)
+    -> ThresholdRule
+  {
+    var value = proposed; value.id = existing.id; value.enabled = existing.enabled; return value
+  }
+}
 public struct ThresholdRule: Codable, Equatable, Identifiable {
   public var id = UUID()
   public var metric: String
@@ -30,6 +37,7 @@ public struct RuleEngine {
   private var started: [UUID: Double] = [:]
   private var lastFired: [UUID: Double] = [:]
   private var previousTime: Double?
+  private var definitions: [UUID: ThresholdRule] = [:]
   public init() {}
   public mutating func evaluate(
     rules: [ThresholdRule], values: [String: Double], time: Double,
@@ -42,8 +50,14 @@ public struct RuleEngine {
     let ids = Set(rules.map(\.id))
     started = started.filter { ids.contains($0.key) }
     lastFired = lastFired.filter { ids.contains($0.key) }
+    definitions = definitions.filter { ids.contains($0.key) }
     var fired: [ThresholdRule] = []
     for rule in rules {
+      if let previous = definitions[rule.id], previous != rule {
+        started[rule.id] = nil
+        lastFired[rule.id] = nil
+      }
+      definitions[rule.id] = rule
       guard rule.enabled, rule.valid, let value = values[rule.metric], value.isFinite else {
         started[rule.id] = nil
         continue

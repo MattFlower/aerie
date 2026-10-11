@@ -2,6 +2,15 @@ import XCTest
 @testable import AerieCore
 
 final class SamplingTests: XCTestCase {
+  func testEditingPreservesRuleIdentityAndDisabledStateAndRejectsDuplicates() throws {
+    var rule = ThresholdRule(metric: "cpu", threshold: 90); rule.enabled = false
+    let edit = RuleEdits.replacing(
+      rule, with: ThresholdRule(metric: "memory", threshold: 80, duration: 60))
+    XCTAssertEqual(edit.id, rule.id); XCTAssertFalse(edit.enabled)
+    XCTAssertEqual(edit.metric, "memory"); XCTAssertEqual(edit.duration, 60)
+    var settings = Settings(); settings.rules = [rule, edit]
+    XCTAssertThrowsError(try settings.validated())
+  }
   private func observation(_ pid: Int, start: UInt64 = 1, parent: Int = 0, cpu: UInt64 = 0)
     -> ProcessObservation
   {

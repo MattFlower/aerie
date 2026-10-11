@@ -94,6 +94,8 @@ public struct Settings: Codable, Equatable {
   public var clocks = [WorldClock(name: "UTC", zone: "Etc/UTC")]
   public var weather = WeatherConfiguration()
   public var rules: [ThresholdRule] = []
+  // Optional for decoding configurations saved before change rules existed.
+  public var changeRules: [ChangeRule]?
   public init() {}
   public func validated() throws -> Settings {
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
@@ -101,7 +103,11 @@ public struct Settings: Codable, Equatable {
       Set(menus.map(\.module)).count == menus.count,
       menus.contains(where: \.visible), clockFormat.count <= 80,
       clocks.count <= 20, clocks.allSatisfy({ TimeZone(identifier: $0.zone) != nil }),
-      rules.count <= 50, rules.allSatisfy(\.valid),
+      rules.count <= 50, rules.allSatisfy(\.valid), Set(rules.map(\.id)).count == rules.count,
+      (changeRules ?? []).count <= ChangeKind.allCases.count,
+      (changeRules ?? []).allSatisfy(\.valid),
+      Set((changeRules ?? []).map(\.id)).count == (changeRules ?? []).count,
+      Set((changeRules ?? []).map(\.kind)).count == (changeRules ?? []).count,
       !weather.enabled || weather.valid, !weather.mapsEnabled || weather.mapsValid,
       ["openMeteo", "nws"].contains(weather.provider), weather.mapsProvider == "noaa"
     else { throw SettingsError.invalid }

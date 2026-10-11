@@ -26,7 +26,7 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware.
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
 - Local/world clocks, monthly calendar, optional local calendar events, and approximate lunar phase.
-- Configurable sustained threshold notifications with cooldowns and missing-data/sleep handling.
+- Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.
 - Ten-minute detailed history, one day of minute averages, and one week of hourly averages.
 - Opt-in Open-Meteo current/hourly/daily model forecasts, with attribution and explicit provider/location consent.
 - Separately opted-in native NOAA weather maps: observed radar, satellite bands, tropical tracks, official alert overlays, wind barbs/speed, temperature, precipitation and snow forecasts.

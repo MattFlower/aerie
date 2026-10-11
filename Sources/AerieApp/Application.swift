@@ -12,6 +12,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var snapshot = Snapshot()
   private var history = HistoryStore()
   private var rules = RuleEngine()
+  private var changeRules = ChangeRuleEngine()
   private var dashboard = DashboardController()
   private var popover = NSPopover()
   private var preferences: PreferencesController?
@@ -61,6 +62,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         [weak self] _ in
         self?.collector?.setSuspended(true)
         self?.rules.reset()
+        self?.changeRules.reset()
       })
     observers.append(
       center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
@@ -83,11 +85,20 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   private func receive(_ snapshot: Snapshot) {
     self.snapshot = snapshot
-    history.append(HistoryPoint(date: snapshot.date, values: snapshot.metrics))
+    let metrics = snapshot.metrics
+    history.append(HistoryPoint(date: snapshot.date, values: metrics))
     for rule in rules.evaluate(
-      rules: settings.rules, values: snapshot.metrics, time: ProcessInfo.processInfo.systemUptime)
+      rules: settings.rules, values: metrics, time: ProcessInfo.processInfo.systemUptime)
     {
       notify(rule)
+    }
+    if let configured = settings.changeRules, configured.contains(where: \.enabled) {
+      for event in changeRules.evaluate(
+        rules: configured, values: snapshot.changeStates,
+        time: ProcessInfo.processInfo.systemUptime)
+      {
+        notify(event)
+      }
     }
     updateItems()
     if popover.isShown {
@@ -312,6 +323,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     rebuildItems()
     applyAppearance()
     rules.reset()
+    changeRules.reset()
     if weatherChanged {
       weatherMaps?.close(); weatherMaps = nil
       weatherGeneration += 1
@@ -347,6 +359,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     paused.toggle()
     collector?.setSuspended(paused)
     rules.reset()
+    changeRules.reset()
     updateItems()
   }
   @objc private func activityMonitor() {
@@ -373,6 +386,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         }
       }
     }
+  }
+  private func notify(_ event: ChangeEvent) {
+    let content = UNMutableNotificationContent()
+    content.title = "Aerie · \(event.rule.kind.title)"
+    content.body =
+      event.rule.kind == .volumes
+      ? "The mounted volume inventory changed."
+      : "\(event.previous) → \(event.current)"
+    UNUserNotificationCenter.current().add(
+      UNNotificationRequest(identifier: event.rule.id.uuidString, content: content, trigger: nil))
   }
   private func requestCalendar() {
     let store = eventStore ?? EKEventStore()

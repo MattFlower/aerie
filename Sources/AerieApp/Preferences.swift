@@ -16,6 +16,10 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var menuStyles: [Module: NSPopUpButton] = [:]
   private var menuOrders: [Module: NSPopUpButton] = [:]
   private var clocksField = NSTextView()
+  private let rulesPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+  private let ruleMetrics = [
+    "cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload", "thermal",
+  ]
   private var rulesLabel = NSTextField(wrappingLabelWithString: "")
   private var errorLabel = NSTextField(wrappingLabelWithString: "")
   init(settings: Settings) {
@@ -231,15 +235,36 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     field("ruleThreshold", title: "Threshold", value: "90", y: 212, in: rules)
     field("ruleDuration", title: "Sustain seconds", value: "30", y: 252, in: rules)
     field("ruleCooldown", title: "Cooldown seconds", value: "300", y: 292, in: rules)
-    let add = NSButton(title: "Add Rule", target: self, action: #selector(addRule))
-    add.frame = NSRect(x: 18, y: 337, width: 130, height: 28)
-    rules.addSubview(add)
-    let clear = NSButton(title: "Remove All Rules", target: self, action: #selector(clearRules))
-    clear.frame = NSRect(x: 155, y: 337, width: 170, height: 28)
-    rules.addSubview(clear)
-    rulesLabel.frame = NSRect(x: 18, y: 388, width: 550, height: 320)
-    rules.addSubview(rulesLabel)
+    for (title, action, x, width) in [
+      ("Add", #selector(addRule), 18.0, 80.0),
+      ("Save Selected", #selector(saveRule), 104.0, 130.0),
+      ("Delete", #selector(deleteRule), 240.0, 85.0),
+      ("Enable/Disable", #selector(toggleRule), 330.0, 130.0),
+      ("Clear All", #selector(clearRules), 465.0, 100.0),
+    ] {
+      let button = NSButton(title: title, target: self, action: action)
+      button.frame = NSRect(x: x, y: 337, width: width, height: 28); rules.addSubview(button)
+    }
+    rulesPicker.frame = NSRect(x: 18, y: 380, width: 550, height: 28)
+    rulesPicker.target = self; rulesPicker.action = #selector(selectRule);
+    rules.addSubview(rulesPicker)
+    rulesLabel.frame = NSRect(x: 18, y: 422, width: 550, height: 280); rules.addSubview(rulesLabel)
     refreshRules()
+
+    let changes = tab("Changes", in: tabs)
+    label("Notify when a system state changes", y: 18, in: changes)
+    label(
+      "Each enabled rule establishes a baseline first. Missing data, pausing and sleep reset it. Changes during cooldown are suppressed. Mounted-volume detection refreshes every 30 seconds; other states use the selected system interval. Enable notifications in Permissions, then Apply.",
+      y: 52, in: changes, height: 100)
+    for (index, kind) in ChangeKind.allCases.enumerated() {
+      toggle(
+        "change.\(kind.rawValue)", title: kind.title,
+        value: settings.changeRules?.first(where: { $0.kind == kind })?.enabled ?? false,
+        y: CGFloat(168 + index * 36), in: changes)
+    }
+    field(
+      "changeCooldown", title: "Cooldown seconds (each rule)",
+      value: String(settings.changeRules?.first?.cooldown ?? 300), y: 480, in: changes)
 
     let permissions = tab("Permissions", in: tabs)
     label("Aerie does not request permissions at launch.", y: 18, in: permissions)
@@ -310,6 +335,16 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.weather.name = fields["weatherName"]!.stringValue
     s.weather.latitude = latitude
     s.weather.longitude = longitude
+    guard let changeCooldown = Double(fields["changeCooldown"]!.stringValue),
+      changeCooldown.isFinite, (10...604800).contains(changeCooldown)
+    else { throw SettingsError.invalid }
+    s.changeRules = ChangeKind.allCases.compactMap { kind in
+      let enabled = toggles["change.\(kind.rawValue)"]!.state == .on
+      if var rule = settings.changeRules?.first(where: { $0.kind == kind }) {
+        rule.enabled = enabled; rule.cooldown = changeCooldown; return rule
+      }
+      return enabled ? ChangeRule(kind: kind, cooldown: changeCooldown) : nil
+    }
     let order = settings.menus.map { ($0.module, menuOrders[$0.module]!.indexOfSelectedItem) }
     guard Set(order.map(\.1)).count == order.count else { throw SettingsError.invalid }
     s.menus = order.sorted { $0.1 < $1.1 }.map {
@@ -330,33 +365,68 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
         "Check numeric values, valid time zones, unique menu order, and at least one visible item."
     }
   }
-  @objc private func addRule() {
-    let metrics = [
-      "cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload", "thermal",
-    ]
+  private func ruleFromForm() -> ThresholdRule? {
     guard let threshold = Double(fields["ruleThreshold"]!.stringValue),
       let duration = Double(fields["ruleDuration"]!.stringValue),
       let cooldown = Double(fields["ruleCooldown"]!.stringValue)
     else {
-      errorLabel.stringValue = "Rules require numeric values."
-      return
+      errorLabel.stringValue = "Rules require numeric values."; return nil
     }
     let rule = ThresholdRule(
-      metric: metrics[choices["ruleMetric"]!.indexOfSelectedItem], threshold: threshold,
+      metric: ruleMetrics[choices["ruleMetric"]!.indexOfSelectedItem],
+      threshold: threshold,
       comparison: choices["ruleComparison"]!.indexOfSelectedItem == 0 ? .above : .below,
       duration: duration, cooldown: cooldown)
-    guard rule.valid, settings.rules.count < 50 else {
-      errorLabel.stringValue = "Use a valid threshold, sustain 0–86400s, and cooldown 10–604800s."
-      return
+    guard rule.valid else {
+      errorLabel.stringValue = "Use a valid threshold, sustain 0–86400s, and cooldown 10–604800s.";
+      return nil
     }
-    settings.rules.append(rule)
+    return rule
+  }
+  private var selectedRuleIndex: Int? {
+    let index = rulesPicker.indexOfSelectedItem - 1
+    return settings.rules.indices.contains(index) ? index : nil
+  }
+  @objc private func addRule() {
+    guard settings.rules.count < 50, let rule = ruleFromForm() else { return }
+    settings.rules.append(rule); refreshRules(selected: rule.id)
+  }
+  @objc private func saveRule() {
+    guard let index = selectedRuleIndex, let replacement = ruleFromForm() else { return }
+    let current = settings.rules[index]
+    settings.rules[index] = RuleEdits.replacing(current, with: replacement)
+    refreshRules(selected: current.id)
+  }
+  @objc private func deleteRule() {
+    guard let index = selectedRuleIndex else { return }; settings.rules.remove(at: index);
     refreshRules()
+  }
+  @objc private func toggleRule() {
+    guard let index = selectedRuleIndex else { return }; settings.rules[index].enabled.toggle()
+    refreshRules(selected: settings.rules[index].id)
+  }
+  @objc private func selectRule() {
+    guard let index = selectedRuleIndex else { return }; let rule = settings.rules[index]
+    choices["ruleMetric"]?.selectItem(at: ruleMetrics.firstIndex(of: rule.metric) ?? 0)
+    choices["ruleComparison"]?.selectItem(at: rule.comparison == .above ? 0 : 1)
+    fields["ruleThreshold"]?.stringValue = String(rule.threshold)
+    fields["ruleDuration"]?.stringValue = String(rule.duration)
+    fields["ruleCooldown"]?.stringValue = String(rule.cooldown)
   }
   @objc private func clearRules() {
     settings.rules.removeAll()
     refreshRules()
   }
-  private func refreshRules() {
+  private func refreshRules(selected id: UUID? = nil) {
+    rulesPicker.removeAllItems(); rulesPicker.addItem(withTitle: "New rule")
+    rulesPicker.addItems(
+      withTitles: settings.rules.map {
+        "\($0.enabled ? "On" : "Off") · \($0.metric) \($0.comparison.rawValue) \($0.threshold)"
+      })
+    if let id, let index = settings.rules.firstIndex(where: { $0.id == id }) {
+      rulesPicker.selectItem(at: index + 1)
+    }
+    rulesPicker.isEnabled = !settings.rules.isEmpty
     rulesLabel.stringValue =
       settings.rules.isEmpty
       ? "No rules. Add a rule, then Apply."

@@ -4,6 +4,18 @@ import XCTest
 @testable import AerieApp
 
 final class AppTests: XCTestCase {
+  func testChangeAdapterOmitsUnavailableConnectionPowerAndVolumes() {
+    var snapshot = Snapshot()
+    XCTAssertNil(snapshot.changeStates[.connectivity])
+    XCTAssertNil(snapshot.changeStates[.powerSource]);
+    XCTAssertNil(snapshot.changeStates[.charging])
+    XCTAssertNil(snapshot.changeStates[.volumes])
+    snapshot.connectivity = "Offline"; snapshot.power.source = "AC Power"
+    snapshot.mountedVolumePaths = ["/Synthetic/B", "/Synthetic/A"]
+    XCTAssertEqual(snapshot.changeStates[.connectivity], "Offline")
+    XCTAssertEqual(snapshot.changeStates[.powerSource], "AC Power")
+    XCTAssertEqual(snapshot.changeStates[.volumes], "/Synthetic/A\n/Synthetic/B")
+  }
   func testFailedMemoryReadCannotPublishPreviousMemoryOrTriggerRule() {
     let date = Date(timeIntervalSince1970: 100)
     var previous = MemoryData()

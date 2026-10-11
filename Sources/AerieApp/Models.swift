@@ -80,6 +80,7 @@ struct SensorData {
   var unit: String
 }
 struct PowerData {
+  var source: String?
   var present = false
   var percent: Double?
   var charging = false
@@ -99,6 +100,7 @@ struct Snapshot {
   var gpu = [GPUData]()
   var memory = MemoryData()
   var volumes = [VolumeData]()
+  var mountedVolumePaths: [String]?
   var interfaces = [InterfaceData]()
   var sensors = [SensorData]()
   var power = PowerData()
@@ -132,6 +134,21 @@ struct Snapshot {
     values["upload"] = upload
     values["diskRead"] = diskRead
     values["diskWrite"] = diskWrite
+    return values
+  }
+  var changeStates: [ChangeKind: String] {
+    let zone = TimeZone.autoupdatingCurrent
+    var values: [ChangeKind: String] = [
+      .thermal: thermal, .lowPower: lowPower ? "Enabled" : "Disabled",
+      .daylightSaving: zone.isDaylightSavingTime(for: date) ? "Active" : "Inactive",
+      .timeZone: zone.identifier,
+    ]
+    if connectivity != "Checking" { values[.connectivity] = connectivity }
+    values[.powerSource] = power.source
+    if power.present, power.percent != nil {
+      values[.charging] = power.charging ? "Charging" : "Not charging"
+    }
+    values[.volumes] = mountedVolumePaths.map { $0.sorted().joined(separator: "\n") }
     return values
   }
 }
