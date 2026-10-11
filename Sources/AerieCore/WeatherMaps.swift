@@ -18,7 +18,7 @@ public enum WeatherMapKind: String, CaseIterable {
     case .windSpeed: return "Forecast wind speed"
     case .rain: return "Forecast precipitation"
     case .snow: return "Forecast snow"
-    case .alerts: return "Official alerts"
+    case .alerts: return "Current watches, warnings & advisories"
     }
   }
   public var forecast: Bool { [.temperature, .wind, .windSpeed, .rain, .snow].contains(self) }
@@ -27,6 +27,8 @@ public enum WeatherMapKind: String, CaseIterable {
     case .satellite: return "GOES regional and global mosaics; coverage depends on selected band"
     case .stormTracks:
       return "NHC tropical-cyclone past and forecast tracks; no convective-cell tracks"
+    case .alerts:
+      return "Current US NWS watches, warnings and advisories; no historical or forecast alerts"
     default: return "US coverage; provider data may be absent outside its supported region"
     }
   }
@@ -59,15 +61,27 @@ public enum WeatherMapKind: String, CaseIterable {
     case .windSpeed: key = "wspd"
     case .rain: key = "qpf"
     case .snow: key = "snow"
-    case .alerts: key = "0"
+    case .alerts:
+      // ArcGIS REST IDs and WMS layer names need not agree. Resolve the advertised product.
+      guard
+        let layer = layers.first(where: {
+          let title = $0.title.lowercased();
+          return title.contains("watch") && title.contains("warning")
+        })
+      else { throw MapError.unavailableLayer }
+      return layer
     case .stormTracks:
       let tracks = layers.filter {
         $0.title.contains("Forecast Track") || $0.title.contains("Past Track")
       }
       guard !tracks.isEmpty, tracks.count <= 64 else { throw MapError.unavailableLayer }
+      let commonCRS = tracks.dropFirst().reduce(tracks[0].crs) { $0.intersection($1.crs) }
+      guard commonCRS.contains("CRS:84") || commonCRS.contains("EPSG:4326") else {
+        throw MapError.unavailableLayer
+      }
       return WMSLayer(
         name: tracks.map(\.name).joined(separator: ","), title: "NHC past/forecast tracks",
-        crs: tracks[0].crs)
+        crs: commonCRS)
     }
     guard let layer = layers.first(where: { $0.name == key || $0.name.hasSuffix(":" + key) }) else {
       throw MapError.unavailableLayer
@@ -98,13 +112,15 @@ public struct WMSLayer: Equatable {
   public var title: String
   public var crs: Set<String>
   public var times: [Date]
+  public var timeEnabled: Bool
   public var abstract = ""
   public var styles: [String]
   public init(
     name: String, title: String, crs: Set<String> = ["EPSG:4326"], times: [Date] = [],
-    styles: [String] = []
+    styles: [String] = [], timeEnabled: Bool? = nil
   ) {
-    self.name = name; self.title = title; self.crs = crs; self.times = times; self.styles = styles;
+    self.name = name; self.title = title; self.crs = crs; self.times = times; self.styles = styles
+    self.timeEnabled = timeEnabled ?? !times.isEmpty
   }
   public func visibleTimes(kind: WeatherMapKind, now: Date) -> [Date] {
     let relevant = times.filter {
@@ -113,6 +129,11 @@ public struct WMSLayer: Equatable {
         : $0 <= now.addingTimeInterval(300) && $0 >= now.addingTimeInterval(-43200)
     }
     return Array((kind.forecast ? relevant.prefix(256) : relevant.suffix(256)))
+  }
+  public func timeline(kind: WeatherMapKind, now: Date) -> MapTimeline {
+    guard timeEnabled else { return .timeless }
+    let frames = visibleTimes(kind: kind, now: now)
+    return frames.isEmpty ? .unavailable(latestAdvertised: times.max()) : .frames(frames)
   }
 }
 
@@ -143,6 +164,10 @@ public enum WMS {
   ) throws -> URL {
     guard bounds.valid, (64...1024).contains(size), !layer.name.isEmpty, layer.name.count < 4096
     else { throw MapError.invalidResponse }
+    // A time-enabled product must never silently request an undated service default.
+    guard !layer.timeEnabled || (time != nil && layer.times.contains(time!)) else {
+      throw MapError.unavailableLayer
+    }
     let crs = layer.crs.contains("CRS:84") ? "CRS:84" : "EPSG:4326"
     guard layer.crs.contains(crs) else { throw MapError.unavailableLayer }
     // WMS 1.3 EPSG:4326 uses latitude/longitude order; CRS:84 uses longitude/latitude.
@@ -196,7 +221,9 @@ private final class CapabilitiesParser: NSObject, XMLParserDelegate {
     if name == "Layer" {
       let parent = stack.last
       stack.append(
-        WMSLayer(name: "", title: "", crs: parent?.crs ?? [], times: parent?.times ?? []))
+        WMSLayer(
+          name: "", title: "", crs: parent?.crs ?? [], times: parent?.times ?? [],
+          styles: parent?.styles ?? [], timeEnabled: parent?.timeEnabled ?? false))
     }
     if name == "Dimension" || name == "Extent" { dimension = attributes["name"] }
   }
@@ -221,12 +248,9 @@ private final class CapabilitiesParser: NSObject, XMLParserDelegate {
       stack[index].crs.formUnion(value.split(whereSeparator: \.isWhitespace).map(String.init))
     }
     if (name == "Dimension" || name == "Extent"), dimension == "time" {
-      let fractional = ISO8601DateFormatter();
-      fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-      let plain = ISO8601DateFormatter()
-      stack[index].times = value.split(separator: ",").prefix(10000).compactMap {
-        fractional.date(from: String($0)) ?? plain.date(from: String($0))
-      }.sorted()
+      stack[index].timeEnabled = true
+      guard let times = WMSTimeDimension.parse(value) else { parser.abortParsing(); return }
+      stack[index].times = times
       dimension = nil
     }
     if name == "Layer", let layer = stack.popLast(), !layer.name.isEmpty { layers.append(layer) }

@@ -12,7 +12,9 @@ enum MapIntegration {
       do {
         let data = try await client.data(WMS.capabilities(kind.endpoint))
         let layers = try WMS.parse(data); let layer = try kind.preferred(layers)
-        let times = layer.visibleTimes(kind: kind, now: Date())
+        let timeline = layer.timeline(kind: kind, now: Date())
+        guard timeline.available else { throw MapError.unavailableLayer }
+        let times = timeline.times
         let time = kind.forecast ? times.first : times.last
         let url = try WMS.image(endpoint: kind.endpoint, layer: layer, bounds: bounds, time: time)
         let raster = try MapRaster.decode(await client.data(url))
@@ -26,7 +28,9 @@ enum MapIntegration {
         if !legendValid { passed = false }
         results.append([
           "layer": kind.rawValue, "validRaster": true, "legendValid": legendValid,
-          "advertisedTimes": times.count, "decodedCost": raster.cost,
+          "advertisedTimes": times.count, "decodedCost": raster.cost, "serviceLayer": layer.name,
+          "serviceTitle": layer.title,
+          "timeEnabled": layer.timeEnabled,
         ])
       } catch {
         passed = false
