@@ -49,9 +49,11 @@ public enum CounterRate {
 public struct HistoryPoint: Codable {
   public let date: Date
   public let values: [String: Double]
-  public init(date: Date, values: [String: Double]) {
+  public let sampleCounts: [String: Int]?
+  public init(date: Date, values: [String: Double], sampleCounts: [String: Int]? = nil) {
     self.date = date
     self.values = values
+    self.sampleCounts = sampleCounts
   }
 }
 
@@ -60,6 +62,7 @@ public struct HistoryStore {
   public private(set) var recent = RingBuffer<HistoryPoint>(capacity: 600)
   public private(set) var minutes = RingBuffer<HistoryPoint>(capacity: 1440)
   public private(set) var hours = RingBuffer<HistoryPoint>(capacity: 168)
+  private var lastDate: Date?
   private var minuteBucket: Int?
   private var hourBucket: Int?
   private var minuteSums: [String: Double] = [:]
@@ -80,7 +83,9 @@ public struct HistoryStore {
       var result = RingBuffer<HistoryPoint>(capacity: ring.capacity)
       for point in ring.values {
         result.append(
-          HistoryPoint(date: point.date, values: point.values.filter { !keys.contains($0.key) }))
+          HistoryPoint(
+            date: point.date, values: point.values.filter { !keys.contains($0.key) },
+            sampleCounts: point.sampleCounts?.filter { !keys.contains($0.key) }))
       }
       return result
     }
@@ -90,8 +95,20 @@ public struct HistoryStore {
       hourSums.removeValue(forKey: key); hourCounts.removeValue(forKey: key)
     }
   }
-  public mutating func append(_ point: HistoryPoint) {
-    let minute = Int(point.date.timeIntervalSince1970 / 60)
+  public mutating func append(_ reading: HistoryPoint) {
+    let timestamp = reading.date.timeIntervalSince1970
+    guard timestamp.isFinite, abs(timestamp) < 1e12 else { return }
+    if let lastDate, reading.date <= lastDate {
+      recent = RingBuffer<HistoryPoint>(capacity: recent.capacity)
+      minutes = RingBuffer<HistoryPoint>(capacity: 1440);
+      hours = RingBuffer<HistoryPoint>(capacity: 168)
+      minuteBucket = nil; hourBucket = nil
+      minuteSums.removeAll(); minuteCounts.removeAll(); hourSums.removeAll(); hourCounts.removeAll()
+    }
+    let values = reading.values.filter { $0.value.isFinite }
+    let point = HistoryPoint(date: reading.date, values: values)
+    lastDate = reading.date
+    let minute = Int(floor(point.date.timeIntervalSince1970 / 60))
     let hour = minute / 60
     if let old = minuteBucket, old != minute {
       minutes.append(
@@ -99,7 +116,7 @@ public struct HistoryStore {
           date: Date(timeIntervalSince1970: Double(old * 60)),
           values: minuteSums.mapValues { $0 }.reduce(into: [:]) { result, pair in
             result[pair.key] = pair.value / Double(minuteCounts[pair.key] ?? 1)
-          }))
+          }, sampleCounts: minuteCounts))
       minuteSums.removeAll(keepingCapacity: true)
       minuteCounts.removeAll(keepingCapacity: true)
     }
@@ -109,7 +126,7 @@ public struct HistoryStore {
           date: Date(timeIntervalSince1970: Double(old * 3600)),
           values: hourSums.reduce(into: [:]) { result, pair in
             result[pair.key] = pair.value / Double(hourCounts[pair.key] ?? 1)
-          }))
+          }, sampleCounts: hourCounts))
       hourSums.removeAll(keepingCapacity: true)
       hourCounts.removeAll(keepingCapacity: true)
     }

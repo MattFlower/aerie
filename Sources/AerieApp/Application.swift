@@ -3,6 +3,7 @@ import AppKit
 import EventKit
 import ServiceManagement
 import UserNotifications
+import UniformTypeIdentifiers
 
 final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
   private let defaults = UserDefaults.standard
@@ -49,6 +50,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.delegate = self
     dashboard.onSettings = { [weak self] in self?.showSettings() }
     dashboard.onMaps = { [weak self] in self?.showMaps() }
+    dashboard.onExportHistory = { [weak self] in self?.exportHistory(window: $0) }
     dashboard.onModule = { [weak self] module in
       self?.collector?.setVisibleModule(module)
       self?.updateCalendar()
@@ -140,6 +142,25 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
           print(text)
         }
         NSApp.terminate(nil)
+      }
+    }
+  }
+  private func exportHistory(window: Int) {
+    let data = HistoryCSV.data(
+      points: history.points(window: window),
+      resolutionSeconds: window == 0 ? settings.interval : window == 1 ? 60 : 3600,
+      aggregateScope: settings.networkSelection.description)
+    popover.performClose(nil)
+    let panel = NSSavePanel(); panel.allowedContentTypes = [.commaSeparatedText]
+    panel.nameFieldStringValue = "Aerie-history.csv"
+    panel.message =
+      "Export retained numeric system history. Dates, readings and selected interface names stay in the file you choose. Missing readings are blank; aggregate sample counts describe observed coverage."
+    NSApp.activate(ignoringOtherApps: true)
+    panel.begin { result in
+      guard result == .OK, let url = panel.url else { return }
+      do { try data.write(to: url, options: .atomic) } catch {
+        let alert = NSAlert(); alert.messageText = "History export failed"
+        alert.informativeText = "The selected file could not be written."; alert.runModal()
       }
     }
   }

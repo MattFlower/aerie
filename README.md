@@ -44,3 +44,5 @@ Notifications, calendar events, and launch-at-login are requested only through e
 [Architecture](docs/ARCHITECTURE.md) describes the collectors and planned Linux boundary. [Performance protocol](docs/PERFORMANCE.md) explains physical-footprint, CPU, and wakeup measurements. Raw machine measurements and screenshots should remain private.
 
 GitHub Actions builds, tests, and lints on a standard public macOS runner. It does not upload artifacts or use Actions caches. The workflow skips private repositories so a later visibility change cannot silently consume a private-runner allowance. No paid runners or spending changes are configured.
+
+History charts use elapsed timestamps and leave missing or long sampling gaps visible. Export the retained time range as local CSV with explicit units, UTC dates, aggregate source scope and observed sample counts. Export does not transmit data or start background archiving.

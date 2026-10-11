@@ -16,7 +16,7 @@ Updated 2026-10-11. A check marks implementation, not complete hardware coverage
 | Weather maps | On-demand native radar/satellite animation, NHC tropical tracks, official alert overlay, forecast wind barbs/speed/temperature/6-hour precipitation/snow; provider legends/times/coverage, bounded current point-alert message details, 12-frame decoded-cost cache | Real UI and animation QA, active peaks and repeated post-close reclamation; convective-cell tracks, richer per-polygon alert inspection; acceptance of regional US product coverage |
 | Rules | Sustained thresholds, individual edit/delete/enable controls, cooldown, missing-data/sleep reset; connectivity/power/charging/Low Power Mode/thermal/volume/DST/time-zone changes | Notification delivery permission validation; per-sensor state changes; richer rule conditions |
 | Menu/configuration | Independent/combined, text/graph/compact, ordering/visibility, theme, units, spacing, refresh, import/export | Stacked values, custom colors, global shortcuts, richer combined composition, reset/migration and selection state |
-| History | Fixed capacity detailed/minute/hourly series and click-to-inspect | Persistent bounded archives, export, zoom/selection, gap rendering and sample aggregation QA |
+| History | Fixed capacity detailed/minute/hourly series, timestamp-based gap-aware charts, click-to-inspect, observed aggregate sample counts and local CSV export | Persistent bounded archives, zoom/selection, real export and chart UI QA |
 | Delivery | Local ad-hoc app packaging, public CI | Notarization is outside the current authorized scope; Intel and minimum-OS CI coverage |
 
 ## Required acceptance

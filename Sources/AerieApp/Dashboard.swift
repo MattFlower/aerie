@@ -30,6 +30,8 @@ final class DashboardView: NSView {
   var rows: [DashboardRow] = []
   var points: [HistoryPoint] = []
   var selectedPoint: HistoryPoint?
+  var expectedInterval = 1.0
+  private let chartFormatter = DateFormatter()
   override var isFlipped: Bool { true }
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -40,6 +42,9 @@ final class DashboardView: NSView {
   func update(rows: [DashboardRow], points: [HistoryPoint]) {
     self.rows = rows
     self.points = points
+    if let selectedPoint, !points.contains(where: { $0.date == selectedPoint.date }) {
+      self.selectedPoint = nil
+    }
     frame.size.height = rows.reduce(16) { $0 + $1.height }
     needsDisplay = true
     var y: CGFloat = 8
@@ -72,6 +77,7 @@ final class DashboardView: NSView {
   override func draw(_ dirtyRect: NSRect) {
     NSColor.windowBackgroundColor.setFill()
     bounds.fill()
+    chartFormatter.dateStyle = .short; chartFormatter.timeStyle = .medium
     var y: CGFloat = 8
     for row in rows {
       let rect = NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height)
@@ -106,12 +112,23 @@ final class DashboardView: NSView {
           font: .systemFont(ofSize: 11, weight: .medium), color: .secondaryLabelColor)
         let graph = NSRect(x: 14, y: y + 31, width: bounds.width - 28, height: 52)
         let maximum = fixedMaximum ?? max(1, values.compactMap { $0 }.max() ?? 1)
-        drawSparkline(values, in: graph, color: color, maximum: maximum)
+        drawHistoryPlot(
+          HistoryPlot.samples(points, metric: key, expectedInterval: expectedInterval), in: graph,
+          color: color, maximum: maximum)
+        if let first = points.first, let last = points.last {
+          for (date, x, alignment) in [
+            (first.date, CGFloat(14), NSTextAlignment.left),
+            (last.date, bounds.width / 2, NSTextAlignment.right),
+          ] {
+            drawText(
+              chartFormatter.string(from: date),
+              rect: NSRect(x: x, y: y + 86, width: bounds.width / 2 - 14, height: 12),
+              font: .systemFont(ofSize: 9), color: .secondaryLabelColor, alignment: alignment)
+          }
+        }
         if let selected = selectedPoint, let value = selected.values[key] {
-          let formatter = DateFormatter()
-          formatter.timeStyle = .medium
           drawText(
-            "\(formatter.string(from: selected.date))  \(String(format: "%.2f", value))",
+            "\(chartFormatter.string(from: selected.date))  \(String(format: "%.2f", value))",
             rect: NSRect(x: 180, y: y + 6, width: bounds.width - 194, height: 18),
             font: .systemFont(ofSize: 10), color: color, alignment: .right)
         } else if let latest = values.last ?? nil {
@@ -147,7 +164,14 @@ final class DashboardView: NSView {
     guard !points.isEmpty else { return }
     let point = convert(event.locationInWindow, from: nil)
     let fraction = max(0, min(1, (point.x - 14) / (bounds.width - 28)))
-    selectedPoint = points[Int((fraction * Double(points.count - 1)).rounded())]
+    var y: CGFloat = 8
+    let clickedChart = rows.contains { row in
+      defer { y += row.height }
+      if case .chart = row { return point.y >= y + 31 && point.y <= y + 83 }
+      return false
+    }
+    guard clickedChart else { return }
+    selectedPoint = HistoryPlot.nearest(points, fraction: Double(fraction))
     needsDisplay = true
   }
 }
@@ -194,6 +218,25 @@ func drawSparkline(_ values: [Double?], in rect: NSRect, color: NSColor, maximum
   path.stroke()
 }
 
+func drawHistoryPlot(
+  _ samples: [HistoryPlotSample], in rect: NSRect, color: NSColor, maximum: Double
+) {
+  drawSparkline([], in: rect, color: color, maximum: maximum)
+  let path = NSBezierPath(); path.lineWidth = 1.7
+  for sample in samples {
+    guard let value = sample.value else { continue }
+    let point = NSPoint(
+      x: rect.minX + rect.width * sample.fraction,
+      y: rect.maxY - rect.height * max(0, min(1, value / maximum)))
+    if sample.startsSegment { path.move(to: point) } else { path.line(to: point) }
+    if sample.startsSegment {
+      color.setFill()
+      NSBezierPath(ovalIn: NSRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2)).fill()
+    }
+  }
+  color.setStroke(); path.stroke()
+}
+
 final class DashboardController: NSViewController {
   let canvas = DashboardView(frame: NSRect(x: 0, y: 0, width: 416, height: 600))
   let modules = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -201,6 +244,7 @@ final class DashboardController: NSViewController {
   let stateLabel = NSTextField(labelWithString: "Sampling")
   var onSettings: (() -> Void)?
   var onMaps: (() -> Void)?
+  var onExportHistory: ((Int) -> Void)?
   private let mapsButton = NSButton(title: "Maps…", target: nil, action: nil)
   var onModule: ((Module) -> Void)?
   var module = Module.overview
@@ -241,7 +285,11 @@ final class DashboardController: NSViewController {
     stateLabel.font = .systemFont(ofSize: 10)
     stateLabel.textColor = .secondaryLabelColor
     stateLabel.alignment = .right
-    stateLabel.frame = NSRect(x: 236, y: 16, width: 164, height: 16)
+    let export = NSButton(title: "Export…", target: self, action: #selector(exportHistory))
+    export.frame = NSRect(x: 236, y: 9, width: 75, height: 28)
+    export.toolTip = "Export retained system series for this time range as CSV"
+    view.addSubview(export)
+    stateLabel.frame = NSRect(x: 313, y: 16, width: 87, height: 16)
     view.addSubview(stateLabel)
   }
   @objc private func selectModule() {
@@ -255,6 +303,7 @@ final class DashboardController: NSViewController {
   }
   @objc private func openSettings() { onSettings?() }
   @objc private func openMaps() { onMaps?() }
+  @objc private func exportHistory() { onExportHistory?(windowPicker.indexOfSelectedItem) }
   @objc private func changeWindow() {
     canvas.selectedPoint = nil
     refresh()
@@ -273,6 +322,9 @@ final class DashboardController: NSViewController {
       age > settings.interval * 3
       ? "Stale · \(Int(age))s" : "Live · \(settings.interval.formatted())s"
     let rows = makeRows()
+    canvas.expectedInterval =
+      windowPicker.indexOfSelectedItem == 0
+      ? settings.interval : windowPicker.indexOfSelectedItem == 1 ? 60 : 3600
     canvas.update(rows: rows, points: history.points(window: windowPicker.indexOfSelectedItem))
   }
   private func bytes(_ value: Double) -> String {
