@@ -62,7 +62,7 @@ public struct WeatherConfiguration: Codable, Equatable {
   }
   public var mapsValid: Bool { hasLocation && mapsEnabled && mapsProvider == "noaa" }
   public var valid: Bool {
-    enabled && hasLocation && provider == "openMeteo"
+    enabled && hasLocation && ["openMeteo", "nws"].contains(provider)
   }
   public var hasLocation: Bool {
     !name.trimmingCharacters(in: .whitespaces).isEmpty && latitude.isFinite
@@ -115,7 +115,7 @@ public struct Settings: Codable, Equatable {
       Set((changeRules ?? []).map(\.id)).count == (changeRules ?? []).count,
       Set((changeRules ?? []).map(\.kind)).count == (changeRules ?? []).count,
       !weather.enabled || weather.valid, !weather.mapsEnabled || weather.mapsValid,
-      weather.provider == "openMeteo", weather.mapsProvider == "noaa"
+      ["openMeteo", "nws"].contains(weather.provider), weather.mapsProvider == "noaa"
     else { throw SettingsError.invalid }
     return self
   }

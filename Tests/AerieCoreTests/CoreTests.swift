@@ -137,7 +137,7 @@ final class CoreTests: XCTestCase {
     var configuration = WeatherConfiguration()
     configuration.enabled = true; configuration.name = "Synthetic city"
     configuration.latitude = 10; configuration.longitude = 20
-    for provider in ["nws", "unknown"] {
+    for provider in ["unimplemented", "unknown"] {
       configuration.provider = provider
       XCTAssertFalse(configuration.valid)
       XCTAssertThrowsError(try OpenMeteoProvider.requestURL(configuration))

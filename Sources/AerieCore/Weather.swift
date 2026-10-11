@@ -2,14 +2,18 @@ import Foundation
 
 public struct WeatherHour: Equatable {
   public var date: Date
-  public var temperature: Double
+  public var temperature: Double?
   public var precipitation: Double?
   public var code: Int
-  public init(date: Date, temperature: Double, precipitation: Double?, code: Int) {
+  public var condition: String?
+  public init(
+    date: Date, temperature: Double?, precipitation: Double?, code: Int, condition: String? = nil
+  ) {
     self.date = date
     self.temperature = temperature
     self.precipitation = precipitation
     self.code = code
+    self.condition = condition
   }
 }
 public struct WeatherDay: Equatable {
@@ -69,6 +73,13 @@ public struct WeatherReport {
   public var hours: [WeatherHour]
   public var days: [WeatherDay]
   public var alerts: [String]
+  public var condition: String? = nil
+  public var observationTime: Date? = nil
+  public var observationStation: String? = nil
+  public var forecastUpdated: Date? = nil
+  public var periods: [WeatherPeriod] = []
+  public var alertReport: WeatherAlertReport? = nil
+  public var notes: [String] = []
 }
 public enum WeatherError: Error {
   case invalidConfiguration, invalidResponse
@@ -132,17 +143,9 @@ public struct OpenMeteoProvider: WeatherProvider {
   }
   public func fetch(configuration: WeatherConfiguration) async throws -> WeatherReport {
     let url = try Self.requestURL(configuration)
-    let sessionConfiguration = URLSessionConfiguration.ephemeral
-    sessionConfiguration.timeoutIntervalForRequest = 20
-    sessionConfiguration.timeoutIntervalForResource = 30
-    sessionConfiguration.urlCache = nil
-    let session = URLSession(configuration: sessionConfiguration)
-    defer { session.invalidateAndCancel() }
-    let (data, response) = try await session.data(from: url)
-    guard let http = response as? HTTPURLResponse else { throw WeatherError.invalidResponse }
-    guard http.statusCode == 200 else { throw WeatherError.http(http.statusCode) }
-    guard data.count <= 2_000_000 else { throw WeatherError.payloadTooLarge }
-    return try Self.decode(data)
+    let client = ForecastHTTPClient(service: .openMeteo)
+    defer { client.close() }
+    return try Self.decode(await client.data(url))
   }
   public static func decode(_ data: Data, fetched: Date = Date()) throws -> WeatherReport {
     let payload = try JSONDecoder().decode(Payload.self, from: data)

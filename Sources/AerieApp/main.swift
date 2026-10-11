@@ -1,6 +1,9 @@
 import AppKit
 
-if CommandLine.arguments.contains("--map-integration-fixture") {
+if CommandLine.arguments.contains("--nws-integration-fixture") {
+  Task { exit(await ForecastIntegration.run()) }
+  RunLoop.main.run()
+} else if CommandLine.arguments.contains("--map-integration-fixture") {
   Task { @MainActor in exit(await MapIntegration.run()) }
   RunLoop.main.run()
 } else {

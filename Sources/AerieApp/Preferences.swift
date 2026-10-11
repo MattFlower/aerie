@@ -190,34 +190,39 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       y: 310, in: network, height: 100)
 
     let weather = tab("Weather", in: tabs)
-    label("Optional Open-Meteo weather", y: 18, in: weather)
+    weather.frame.size.height = 840
+    label("Optional weather", y: 18, in: weather)
+    choice(
+      "weatherProvider", title: "Forecast provider",
+      values: ["Open-Meteo (global models)", "NWS (US land forecasts/stations)"],
+      selected: settings.weather.provider == "nws" ? 1 : 0, y: 48, in: weather)
     label(
-      "The free hosted service is for personal/noncommercial use. Requests send your network IP and manual coordinates rounded to two decimal places. The provider may retain coordinate-bearing troubleshooting logs for up to 90 days. No device location or city search is sent.",
-      y: 52, in: weather, height: 100)
+      "Requests send your network IP and manual coordinates rounded to two decimal places to the selected provider. Open-Meteo is personal/noncommercial and may retain troubleshooting logs up to 90 days. NWS offers free US land forecasts, nearby station observations and point alerts; coverage and freshness vary. No device location or city search is used.",
+      y: 93, in: weather, height: 100)
     let terms = NSButton(title: "Read Provider Terms…", target: self, action: #selector(openTerms))
-    terms.frame = NSRect(x: 18, y: 165, width: 210, height: 28)
+    terms.frame = NSRect(x: 18, y: 205, width: 210, height: 28)
     weather.addSubview(terms)
     field(
-      "weatherName", title: "Location display name", value: settings.weather.name, y: 212,
+      "weatherName", title: "Location display name", value: settings.weather.name, y: 252,
       in: weather)
     field(
-      "latitude", title: "Latitude (−90…90)", value: String(settings.weather.latitude), y: 254,
+      "latitude", title: "Latitude (−90…90)", value: String(settings.weather.latitude), y: 294,
       in: weather)
     field(
-      "longitude", title: "Longitude (−180…180)", value: String(settings.weather.longitude), y: 296,
+      "longitude", title: "Longitude (−180…180)", value: String(settings.weather.longitude), y: 336,
       in: weather)
     toggle(
-      "weather", title: "Enable personal weather and send this location to Open-Meteo",
-      value: settings.weather.enabled, y: 343, in: weather)
+      "weather", title: "Enable weather and send this location to the selected provider",
+      value: settings.weather.enabled, y: 383, in: weather)
     label(
-      "Applying an enabled weather configuration sends a forecast request. Forecasts refresh every 15 minutes. Requests are cached in memory, are cancelled when disabled, and never run in tests or CI. Open-Meteo data is CC BY 4.0; attribution appears in the menu.",
-      y: 389, in: weather, height: 100)
+      "Applying enabled weather sends requests to the selected provider. Refresh is 15 minutes, including NWS station/point-alert data; it is not real-time warning delivery. Values retain observation/forecast times. Requests and data stay ephemeral and cancel when disabled. Public tests/CI use synthetic data. Attribution appears in the menu.",
+      y: 429, in: weather, height: 100)
     toggle(
       "maps", title: "Enable NOAA/NWS maps for this manual location",
-      value: settings.weather.mapsEnabled, y: 505, in: weather)
+      value: settings.weather.mapsEnabled, y: 585, in: weather)
     label(
       "Map provider: NOAA/NWS. Opening Maps sends the selected map area and your IP to NOAA services. Alert details also send the rounded map-center point. Maps load only on demand; forecast consent above is separate. NOAA boundaries are used; no device location is requested.",
-      y: 546, in: weather, height: 96)
+      y: 626, in: weather, height: 96)
 
     let time = tab("Time", in: tabs)
     field("clockFormat", title: "Date format", value: settings.clockFormat, y: 18, in: time)
@@ -321,7 +326,10 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     content.addSubview(errorLabel)
   }
   @objc private func openTerms() {
-    NSWorkspace.shared.open(URL(string: "https://open-meteo.com/en/terms")!)
+    NSWorkspace.shared.open(
+      URL(
+        string: choices["weatherProvider"]?.indexOfSelectedItem == 1
+          ? "https://www.weather.gov/disclaimer" : "https://open-meteo.com/en/terms")!)
   }
   @objc private func openDashboard() { onDashboard?() }
   @objc private func notifications() { onNotifications?() }
@@ -360,7 +368,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       return WorldClock(name: parts[0], zone: parts[1])
     }
     s.weather.enabled = toggles["weather"]!.state == .on
-    s.weather.provider = "openMeteo"
+    s.weather.provider = choices["weatherProvider"]!.indexOfSelectedItem == 1 ? "nws" : "openMeteo"
     s.weather.mapsEnabled = toggles["maps"]!.state == .on
     s.weather.mapsProvider = "noaa"
     s.weather.name = fields["weatherName"]!.stringValue

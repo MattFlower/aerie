@@ -28,14 +28,14 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Local/world clocks, selectable monthly calendar with navigation and week numbers, optional selected-day/upcoming local event details, and approximate lunar phase.
 - Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.
 - Ten-minute detailed history, one day of minute averages, and one week of hourly averages.
-- Opt-in Open-Meteo current/hourly/daily model forecasts, with attribution and explicit provider/location consent.
+- Opt-in Open-Meteo current/hourly/daily model forecasts or US NWS station observations, hourly/named-period forecasts and current point-alert details, with explicit provider/location consent.
 - Separately opted-in native NOAA weather maps: observed radar, satellite bands, tropical tracks, official alert overlays, wind barbs/speed, temperature, precipitation and snow forecasts, plus current point-alert messages with distinct sent/effective/onset/expiry/end times.
 
 Some statistics require hardware or permissions that are unavailable to a normal user process. Aerie shows unavailable states and does not install an elevated helper. Regional weather coverage, per-polygon alert inspection, visual validation and other open requirements are tracked in the capability checklist.
 
 ## Privacy and weather
 
-System readings stay local. Forecasts and maps are off by default; Aerie does not use device location, IP geolocation, or automatic city search. Enabling weather sends your chosen coordinates (rounded to two decimal places) and network IP to Open-Meteo. Map consent is separate and sends the selected map extent and IP to NOAA/NWS services while the map is visible. Opening alert details also sends its rounded center point to NWS. Read [weather sources and terms](docs/WEATHER.md) before opting in. The free hosted API is for personal/noncommercial use; an open-source application license does not remove that restriction.
+System readings stay local. Forecasts and maps are off by default; Aerie does not use device location, IP geolocation, or automatic city search. Enabling forecasts sends your chosen coordinates (rounded to two decimal places) and network IP only to the selected provider. Map consent is separate and sends the selected map extent and IP to NOAA/NWS services while the map is visible. Opening map alert details also sends its rounded center point to NWS. Read [weather sources and terms](docs/WEATHER.md) before opting in. Open-Meteo's free hosted API is for personal/noncommercial use; an open-source application license does not remove that restriction. NWS coverage is principally US land forecasts and advertised observation stations.
 
 Notifications, calendar events, and launch-at-login are requested only through explicit Settings actions. Exported settings remove weather location. Public tests contain synthetic fixtures and do not make weather requests.
 

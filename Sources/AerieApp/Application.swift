@@ -28,6 +28,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var weatherFetchTime = Date.distantPast
   private var weatherStatus = "Weather is off"
   private var weatherMaps: WeatherMapWindowController?
+  private var weatherDetails: WeatherDetailWindow?
   private var paused = false
   private var selfCheckSamples = 0
   private var observers: [NSObjectProtocol] = []
@@ -66,6 +67,30 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       self?.selectedCalendarDate = Date(); self?.updateCalendar()
     }
     dashboard.canvas.onAction = { [weak self] identifier in
+      if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-alert:"),
+        let index = Int(identifier.dropFirst(14)), let report = self.dashboard.weather?.alertReport,
+        report.alerts.indices.contains(index)
+      {
+        self.showWeatherDetail(
+          title: report.alerts[index].event,
+          message: "Current point alerts fetched: \(report.fetched.formatted())\n\n"
+            + AlertPresentation.message(report.alerts[index]));
+        return
+      }
+      if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-period:"),
+        let index = Int(identifier.dropFirst(15)), let report = self.dashboard.weather,
+        report.periods.indices.contains(index)
+      {
+        let period = report.periods[index]
+        let formatter = DateFormatter(); formatter.timeZone = report.timeContext.instantZone
+        formatter.dateStyle = .medium; formatter.timeStyle = .short
+        let temperature =
+          period.temperature.map { Format.temperature($0, unit: self.settings.temperature) }
+          ?? "Unavailable"
+        let text =
+          "Valid: \(formatter.string(from: period.start)) – \(formatter.string(from: period.end))\nForecast-period temperature: \(temperature)\nWind: \(period.wind)\nPrecipitation probability: \(period.precipitation.map { String(format: "%.0f%%", $0) } ?? "Unavailable")\n\n\(period.condition)\n\n\(period.detail)\n\nSource: \(report.source) · fetched \(report.fetched.formatted())"
+        self.showWeatherDetail(title: period.name, message: text); return
+      }
       guard let self, let detail = self.calendarDetails[identifier],
         EKEventStore.authorizationStatus(for: .event) == .fullAccess
       else { return }
@@ -135,6 +160,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     clearCalendar()
     weatherTask?.cancel()
     weatherMaps?.releaseResources(); weatherMaps = nil
+    weatherDetails?.close(); weatherDetails = nil
     collector = nil
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
@@ -472,6 +498,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     rules.reset()
     changeRules.reset()
     if weatherChanged {
+      weatherDetails?.close(); weatherDetails = nil
       weatherMaps?.close(); weatherMaps = nil
       weatherGeneration += 1
       weatherTask?.cancel()
@@ -494,6 +521,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       controller.onClose = { [weak self] in self?.weatherMaps = nil }
       controller.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
     } catch { notice("Enable NOAA maps and choose a manual location in Weather Settings.") }
+  }
+  private func showWeatherDetail(title: String, message: String) {
+    weatherDetails?.close()
+    let controller = WeatherDetailWindow(title: title, message: message)
+    controller.onClose = { [weak self] in self?.weatherDetails = nil }
+    weatherDetails = controller; controller.showWindow(nil)
+    NSApp.activate(ignoringOtherApps: true)
   }
   private func applyAppearance() {
     switch settings.theme {
@@ -666,7 +700,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     weatherStatus = "Fetching forecast"
     weatherTask = Task { @MainActor [weak self] in
       do {
-        let report = try await OpenMeteoProvider().fetch(configuration: configuration)
+        let report: WeatherReport
+        if configuration.provider == "nws" {
+          report = try await NWSProvider().fetch(configuration: configuration)
+        } else {
+          report = try await OpenMeteoProvider().fetch(configuration: configuration)
+        }
         guard !Task.isCancelled else { return }
         guard let self, self.weatherGeneration == generation else { return }
         self.weatherReport = report

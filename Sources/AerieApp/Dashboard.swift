@@ -766,8 +766,19 @@ final class DashboardController: NSViewController {
         DashboardRow.heading(settings.weather.name), DashboardRow.note(weatherStatus),
       ]
       guard let w = weather else { return rows }
+      let f = DateFormatter()
+      f.dateFormat = "EEE d MMM HH:mm z"
+      f.timeZone = w.timeContext.instantZone
+      if let station = w.observationStation { rows.append(.metric("Observation station", station)) }
+      if let time = w.observationTime {
+        rows.append(.metric("Observation time", f.string(from: time)))
+      }
+      if let time = w.forecastUpdated {
+        rows.append(.metric("Forecast updated", f.string(from: time)))
+      }
+      for note in w.notes { rows.append(.note(note)) }
       rows += [
-        DashboardRow.metric("Conditions", WeatherCondition.describe(w.code)),
+        DashboardRow.metric("Conditions", w.condition ?? WeatherCondition.describe(w.code)),
         DashboardRow.metric(
           "Temperature",
           w.temperature.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable"),
@@ -789,18 +800,28 @@ final class DashboardController: NSViewController {
         DashboardRow.note(w.timeContext.description),
         DashboardRow.heading("Next 24 hours"),
       ]
-      let f = DateFormatter()
       f.dateFormat = "EEE HH:mm"
-      f.timeZone = w.timeContext.instantZone
       for h in w.hours.filter({ $0.date >= Date().addingTimeInterval(-3600) }).prefix(24) {
         rows += [
           DashboardRow.metric(
             f.string(from: h.date),
-            "\(Format.temperature(h.temperature, unit: settings.temperature))  \(h.precipitation.map { String(format: "%.0f%% rain", $0) } ?? "")"
+            "\(h.temperature.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable")  \(h.precipitation.map { String(format: "%.0f%% rain", $0) } ?? "")"
           )
         ]
+        if let condition = h.condition, !condition.isEmpty { rows.append(.note(condition)) }
       }
-      rows += [DashboardRow.heading("Daily forecast")]
+      if !w.periods.isEmpty {
+        rows.append(.heading("Named forecast periods"))
+        for (index, period) in w.periods.enumerated() {
+          rows.append(
+            .action(
+              period.name,
+              period.temperature.map { Format.temperature($0, unit: settings.temperature) }
+                ?? "Temperature unavailable", "weather-period:\(index)"))
+          rows.append(.note(period.condition + (period.wind.isEmpty ? "" : " · " + period.wind)))
+        }
+      }
+      if !w.days.isEmpty { rows += [DashboardRow.heading("Daily forecast")] }
       f.dateFormat = "EEE d MMM"
       f.timeZone = w.timeContext.dailyZone
       for d in w.days {
@@ -822,10 +843,31 @@ final class DashboardController: NSViewController {
           ]
         }
       }
+      if let alerts = w.alertReport {
+        rows.append(.heading("Current alerts at the manual point"))
+        f.dateFormat = "EEE d MMM HH:mm z"
+        f.timeZone = w.timeContext.instantZone
+        rows.append(
+          .note(
+            "Fetched " + f.string(from: alerts.fetched)
+              + ". Alert validity is separate from forecast-period times."))
+        if alerts.alerts.isEmpty {
+          rows.append(.note("No active point alerts returned at fetch time."))
+        }
+        for (index, alert) in alerts.alerts.enumerated() {
+          rows.append(.action(alert.event, alert.severity, "weather-alert:\(index)"))
+        }
+        if alerts.moreAvailable {
+          rows.append(
+            .note("Additional provider results exist; this view is bounded to 100 messages."))
+        }
+      }
       rows += [
         DashboardRow.heading("Source"),
         DashboardRow.note(
-          "Weather data: \(w.source). Open-Meteo data is CC BY 4.0. https://open-meteo.com/ · Model-derived forecasts. Official severe alerts and radar are not available from this provider."
+          w.source == "NWS"
+            ? "Weather data: NWS · https://www.weather.gov/ · Station observations and issued forecasts. Public-domain source data; Aerie is not endorsed by NOAA/NWS. Coverage and delivery vary."
+            : "Weather data: Open-Meteo · CC BY 4.0 · https://open-meteo.com/ · Model-derived forecasts. Official severe alerts are not supplied by this forecast provider."
         ),
       ]
       return rows
