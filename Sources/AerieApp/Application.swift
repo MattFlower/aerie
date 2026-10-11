@@ -61,6 +61,19 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     self.collector = collector
     collector.onSample = { [weak self] in self?.receive($0) }
     collector.configure(settings)
+    if CommandLine.arguments.contains("--process-network-self-check") {
+      collector.setVisibleModule(.network)
+    }
+    if CommandLine.arguments.contains("--network-demand-cycles") {
+      for start in [3.0, 68.0, 133.0] {
+        DispatchQueue.main.asyncAfter(deadline: .now() + start) { [weak collector] in
+          collector?.setVisibleModule(.network)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + start + 45) { [weak collector] in
+          collector?.setVisibleModule(nil)
+        }
+      }
+    }
     let center = NSWorkspace.shared.notificationCenter
     observers.append(
       center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) {
@@ -81,6 +94,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     {
       defaults.set(true, forKey: "hasShownWelcome"); showSettings()
     }
+  }
+  func applicationDidHide(_ notification: Notification) {
+    popover.performClose(nil); collector?.setVisibleModule(nil)
   }
   func applicationWillTerminate(_ notification: Notification) {
     weatherTask?.cancel()
@@ -116,6 +132,27 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       dashboard.refresh()
     }
     updateWeather()
+    if CommandLine.arguments.contains("--process-network-self-check") {
+      selfCheckSamples += 1
+      if selfCheckSamples == 12 {
+        collector?.setVisibleModule(nil)
+        let output: [String: Any] = [
+          "scenario": "headless logical network demand; no actual open panel",
+          "processRows": snapshot.networkProcesses.count,
+          "liveRates": snapshot.networkProcesses.filter { $0.download != nil && $0.upload != nil }
+            .count,
+          "status": snapshot.processNetworkStatus, "systemInterval": settings.interval,
+        ]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+          if let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+          {
+            print(text)
+          }
+          NSApp.terminate(nil)
+        }
+      }
+    }
     if CommandLine.arguments.contains("--self-check") {
       selfCheckSamples += 1
       if selfCheckSamples >= 3 {
@@ -221,6 +258,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   func popoverDidClose(_ notification: Notification) {
     collector?.setVisibleModule(nil); dashboard.snapshot.processes.removeAll();
+    dashboard.snapshot.networkProcesses.removeAll();
     dashboard.history = HistoryStore(interval: settings.interval);
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
   }

@@ -535,9 +535,22 @@ final class DashboardController: NSViewController {
           [DashboardRow.heading("Wi-Fi")]
           + s.wifi.sorted { $0.key < $1.key }.map { DashboardRow.metric($0.key, $0.value) }
       }
+      rows.append(.heading("Process traffic"))
+      rows.append(.note(s.processNetworkStatus))
+      rows += s.networkProcesses.sorted {
+        (($0.download ?? 0) + ($0.upload ?? 0)) > (($1.download ?? 0) + ($1.upload ?? 0))
+      }.prefix(settings.processCount).map {
+        .metric(
+          "\($0.name) · \($0.pid)",
+          "↓ \(rate($0.download, domain: .network))  ↑ \(rate($0.upload, domain: .network))")
+      }
+      rows.append(
+        .note(
+          "Process totals cover OS-reported TCP/UDP activity across interfaces, including loopback; they use independent process-start baselines and do not follow the aggregate interface filter. Protected, missing or reset readings have unavailable rates. The app owns one OS logger only while this panel is visible."
+        ))
       rows.append(
         DashboardRow.note(
-          "Virtual tunnels may count the same traffic again. Choose aggregate interfaces in Network Settings; all interfaces remain sampled and displayed. Observed sessions rebase after unavailable/reset/disappearing counters. Public IP lookup is off. Per-process traffic collection remains unimplemented."
+          "Virtual tunnels may count the same traffic again. Choose aggregate interfaces in Network Settings; all interfaces remain sampled and displayed. Observed sessions rebase after unavailable/reset/disappearing counters. Public IP lookup is off."
         ))
       return rows
     case .sensors:

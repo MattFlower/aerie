@@ -294,3 +294,35 @@ int aerie_smc_keys(char *keys, int capacity) {
     }
     return count;
 }
+
+// An app-owned temporary terminal lets the OS logger flush each CSV update.
+#include <util.h>
+#include <termios.h>
+#include <fcntl.h>
+
+#include <sys/wait.h>
+#include <signal.h>
+// forkpty establishes the child's isolated controlling terminal before exec.
+// Only async-signal-safe operations run in the child; no Cocoa code is entered.
+int aerie_network_spawn(const char *executable, const char *argument, int seconds, int *master, int *pid) {
+    if (!master || !pid || !executable || seconds < 1 || seconds > 60) return EINVAL;
+    *master = *pid = -1;
+    char interval[16]; snprintf(interval, sizeof(interval), "%d", seconds);
+    char *logger_args[] = {(char *)executable, "-P", "-L", "0", "-n", "-x", "-s", interval, "-J", "bytes_in,bytes_out", NULL};
+    char *fixture_args[] = {(char *)executable, (char *)argument, NULL};
+    char *environment[] = {"PATH=/usr/bin:/bin", "LC_ALL=C", NULL};
+    pid_t child = forkpty(master, NULL, NULL, NULL);
+    if (child < 0) return errno;
+    if (child == 0) {
+        sigset_t mask; sigemptyset(&mask); sigprocmask(SIG_SETMASK, &mask, NULL);
+        signal(SIGHUP, SIG_DFL); signal(SIGTERM, SIG_DFL); signal(SIGPIPE, SIG_DFL);
+        int null = open("/dev/null", O_WRONLY);
+        if (null >= 0) { dup2(null, STDERR_FILENO); if (null != STDERR_FILENO) close(null); }
+        execve(executable, argument ? fixture_args : logger_args, environment);
+        _exit(127);
+    }
+    if (fcntl(*master, F_SETFL, O_NONBLOCK) < 0 || fcntl(*master, F_SETFD, FD_CLOEXEC) < 0) {
+        int error = errno; close(*master); kill(child, SIGKILL); waitpid(child, NULL, 0); *master = -1; return error;
+    }
+    *pid = child; return 0;
+}

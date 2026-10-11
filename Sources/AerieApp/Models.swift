@@ -111,6 +111,8 @@ struct Snapshot {
   var sensors = [SensorData]()
   var power = PowerData()
   var processes = [ProcessData]()
+  var networkProcesses = [ProcessNetworkReading]()
+  var processNetworkStatus = "Process traffic begins when this panel opens."
   var diskRead: Double?
   var diskWrite: Double?
   var wifi: [String: String] = [:]

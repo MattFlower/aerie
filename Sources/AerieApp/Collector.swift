@@ -49,6 +49,8 @@ final class Collector {
   private var previousCPU: [UInt64] = []
   private var counters: [String: CounterSample] = [:]
   private var networkSession = NetworkSessionTracker()
+  private lazy var processNetwork = ProcessNetworkReader(queue: queue)
+  private var networkPanelVisible = false
   private var previousProcesses: [Int32: AerieProcess] = [:]
   private var processTime: Double?
   private var sensorSources:
@@ -115,6 +117,7 @@ final class Collector {
     pathMonitor.start(queue: queue)
   }
   deinit {
+    processNetwork.stop()
     pathMonitor.cancel()
     aerie_smc_close()
     for accelerator in accelerators { IOObjectRelease(accelerator) }
@@ -123,6 +126,8 @@ final class Collector {
   func configure(_ settings: Settings) {
     queue.async { [self] in
       self.settings = settings
+      self.processNetwork.configure(
+        visible: self.networkPanelVisible && !self.suspended, interval: settings.interval)
       schedule.configure(interval: settings.interval) { [weak self] in self?.sample() }
     }
   }
@@ -131,6 +136,10 @@ final class Collector {
       let value = module.map { ProcessDemand.required(module: $0, visible: true) } ?? false
       self.detailed = value;
       self.sensorPanelVisible = module == .sensors
+      self.networkPanelVisible = module == .network
+      self.processNetwork.configure(
+        visible: self.networkPanelVisible && !self.suspended, interval: self.settings.interval)
+      if !self.networkPanelVisible { self.cache.networkProcesses.removeAll() }
       if !value {
         self.cache.processes.removeAll(); self.previousProcesses.removeAll(); self.processTime = nil
       }
@@ -139,6 +148,8 @@ final class Collector {
   func setSuspended(_ value: Bool) {
     queue.async {
       self.suspended = value
+      self.processNetwork.configure(
+        visible: self.networkPanelVisible && !value, interval: self.settings.interval)
       if !value {
         self.counters.removeAll()
         self.previousCPU.removeAll()
@@ -161,6 +172,9 @@ final class Collector {
     let now = ProcessInfo.processInfo.systemUptime
     var snapshot = cache
     snapshot.date = Date()
+    let processTraffic = processNetwork.current(time: now)
+    snapshot.networkProcesses = processTraffic.rows;
+    snapshot.processNetworkStatus = processTraffic.status
     if now - inventoryTime >= 30 {
       for item in accelerators { IOObjectRelease(item) }; accelerators = services("IOAccelerator")
       for item in disks { IOObjectRelease(item) }; disks = services("IOBlockStorageDriver")

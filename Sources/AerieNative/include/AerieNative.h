@@ -40,4 +40,5 @@ int aerie_smc_read(const char *key, AerieSensor *sensor);
 int aerie_smc_source(const char *key, AerieSensorSource *source);
 int aerie_smc_value(AerieSensorSource source, double *value);
 void aerie_smc_close(void);
+int aerie_network_spawn(const char *executable, const char *argument, int seconds, int *master, int *pid);
 #endif

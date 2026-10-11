@@ -46,3 +46,5 @@ Notifications, calendar events, and launch-at-login are requested only through e
 GitHub Actions builds, tests, and lints on a standard public macOS runner. It does not upload artifacts or use Actions caches. The workflow skips private repositories so a later visibility change cannot silently consume a private-runner allowance. No paid runners or spending changes are configured.
 
 History charts use elapsed timestamps and leave missing or long sampling gaps visible. Export the retained time range as local CSV with explicit units, UTC dates, aggregate source scope and observed sample counts. Export does not transmit data or start background archiving.
+
+Per-process TCP/UDP traffic uses one macOS-provided `nettop` process while the network panel is visible. No elevated helper is installed. Its independent summary scope includes loopback and does not follow the aggregate interface filter. Process-start identities, bounded CSV state and missing/reset baselines prevent attributing a previous process’s traffic to a reused PID.
