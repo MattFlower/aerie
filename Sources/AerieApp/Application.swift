@@ -212,8 +212,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         self.weatherFetchTime = .distantPast
         if self.popover.isShown { self.updateCalendar() }
       })
-    if !CommandLine.arguments.contains("--self-check"),
-      !CommandLine.arguments.contains("--background"), !defaults.bool(forKey: "hasShownWelcome")
+    if !LaunchPresentation.silent(
+      arguments: CommandLine.arguments, event: NSAppleEventManager.shared().currentAppleEvent)
     {
       defaults.set(true, forKey: "hasShownWelcome"); showSettings()
     }
