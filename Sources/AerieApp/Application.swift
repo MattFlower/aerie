@@ -60,6 +60,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         self.collector?.setSuspended(self.paused)
         self.weatherFetchTime = .distantPast
       })
+    if !CommandLine.arguments.contains("--self-check"), !defaults.bool(forKey: "hasShownWelcome") {
+      defaults.set(true, forKey: "hasShownWelcome"); showSettings()
+    }
   }
   func applicationWillTerminate(_ notification: Notification) {
     weatherTask?.cancel()
@@ -156,7 +159,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     popover.contentViewController?.view.window?.makeKey()
   }
-  func popoverDidClose(_ notification: Notification) { collector?.setDetailed(false) }
+  func popoverDidClose(_ notification: Notification) {
+    collector?.setDetailed(false); dashboard.snapshot.processes.removeAll();
+    dashboard.history = HistoryStore(interval: settings.interval);
+    dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
+  }
   private func updateItems() {
     for (configuration, item) in items {
       guard let button = item.button else { continue }
@@ -256,6 +263,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.performClose(nil)
     preferences = PreferencesController(settings: settings)
     preferences?.onApply = { [weak self] in self?.apply($0) }
+    preferences?.onClose = { [weak self] in self?.preferences = nil }
+    preferences?.onDashboard = { [weak self] in
+      guard let self, let button = self.items.first?.1.button else { return };
+      self.preferences?.close(); self.clickedStatus(button)
+    }
     preferences?.onNotifications = { [weak self] in self?.requestNotifications() }
     preferences?.onCalendar = { [weak self] in self?.requestCalendar() }
     preferences?.onLogin = { [weak self] in self?.requestLogin() }

@@ -80,7 +80,11 @@ final class Collector {
           || (key.hasPrefix("F") && key.hasSuffix("Ac"))
         {
           var sensor = AerieSensor()
-          if aerie_smc_read(key, &sensor) == 0, sensor.value.isFinite { smcKeys.append(key) }
+          if aerie_smc_read(key, &sensor) == 0, sensor.value.isFinite,
+            !text(sensor.type).hasPrefix("ui")
+          {
+            smcKeys.append(key)
+          }
         }
       }
       if smcKeys.isEmpty {
@@ -112,7 +116,14 @@ final class Collector {
       timer.resume()
     }
   }
-  func setDetailed(_ value: Bool) { queue.async { self.detailed = value } }
+  func setDetailed(_ value: Bool) {
+    queue.async {
+      self.detailed = value;
+      if !value {
+        self.cache.processes.removeAll(); self.previousProcesses.removeAll(); self.processTime = nil
+      }
+    }
+  }
   func setSuspended(_ value: Bool) {
     queue.async {
       self.suspended = value

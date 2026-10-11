@@ -1,9 +1,11 @@
 import AerieCore
 import AppKit
 
-final class PreferencesController: NSWindowController {
+final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var settings: Settings
   var onApply: ((Settings) -> Void)?
+  var onClose: (() -> Void)?
+  var onDashboard: (() -> Void)?
   var onNotifications: (() -> Void)?
   var onCalendar: (() -> Void)?
   var onLogin: (() -> Void)?
@@ -24,10 +26,12 @@ final class PreferencesController: NSWindowController {
     window.title = "Aerie Settings"
     window.isReleasedWhenClosed = false
     super.init(window: window)
+    window.delegate = self
     build()
     window.center()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  func windowWillClose(_ notification: Notification) { onClose?() }
   private func tab(_ title: String, in tabs: NSTabView) -> NSView {
     let item = NSTabViewItem(identifier: title)
     item.label = title
@@ -121,12 +125,17 @@ final class PreferencesController: NSWindowController {
       "Exports remove weather location and disable weather. Imports keep weather off until you opt in again.",
       y: 511, in: general, height: 45)
 
+    let dashboard = NSButton(
+      title: "Open Dashboard", target: self, action: #selector(openDashboard))
+    dashboard.frame = NSRect(x: 18, y: 580, width: 170, height: 28); general.addSubview(dashboard)
     let menus = tab("Menus", in: tabs)
     toggle(
       "combined", title: "Use one combined menu-bar item", value: settings.combined, y: 14,
       in: menus)
     label("Visible items", y: 60, in: menus)
-    label("Style                                Order", y: 60, in: menus)
+    let columnLabels = NSTextField(labelWithString: "Style                               Order")
+    columnLabels.frame = NSRect(x: 194, y: 60, width: 350, height: 22);
+    menus.addSubview(columnLabels)
     for (index, menu) in settings.menus.enumerated() {
       let y = CGFloat(96 + index * 38)
       let toggle = NSButton(checkboxWithTitle: menu.module.title, target: nil, action: nil)
@@ -258,6 +267,7 @@ final class PreferencesController: NSWindowController {
   @objc private func openTerms() {
     NSWorkspace.shared.open(URL(string: "https://open-meteo.com/en/terms")!)
   }
+  @objc private func openDashboard() { onDashboard?() }
   @objc private func notifications() { onNotifications?() }
   @objc private func calendar() { onCalendar?() }
   @objc private func login() { onLogin?() }

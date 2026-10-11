@@ -120,13 +120,17 @@ int aerie_processes(AerieProcess *out, int capacity) {
 }
 
 // Read-only SMC transport. Firmware keys are capabilities, not a stable OS API.
-typedef struct { uint16_t version; uint16_t length; uint32_t cpu; uint32_t flags; } SMCLimit;
+typedef struct { uint16_t version; uint16_t length; uint32_t cpu; uint32_t gpu; uint32_t memory; } SMCLimit;
 typedef struct { uint32_t size, type; uint8_t attributes; } SMCKeyInfo;
 typedef struct {
     uint32_t key; uint8_t version[6]; SMCLimit limit; SMCKeyInfo info;
     uint8_t result, status, command; uint32_t index; uint8_t bytes[32];
 } SMCData;
+_Static_assert(sizeof(SMCData) == 80, "Unexpected SMC transport layout");
+_Static_assert(offsetof(SMCData, bytes) == 48, "Unexpected SMC payload offset");
 static io_connect_t smc = IO_OBJECT_NULL;
+static struct { uint32_t key; SMCKeyInfo info; } smc_info_cache[4096];
+static int smc_info_count = 0;
 static uint32_t fourcc(const char *text) {
     return (uint32_t)(uint8_t)text[0] << 24 | (uint32_t)(uint8_t)text[1] << 16 |
            (uint32_t)(uint8_t)text[2] << 8 | (uint8_t)text[3];
@@ -147,12 +151,23 @@ int aerie_smc_open(void) {
     kern_return_t r = IOServiceOpen(service, mach_task_self(), 0, &smc); IOObjectRelease(service);
     return r == KERN_SUCCESS ? 0 : (int)r;
 }
-void aerie_smc_close(void) { if (smc) IOServiceClose(smc); smc = IO_OBJECT_NULL; }
+void aerie_smc_close(void) { if (smc) IOServiceClose(smc); smc = IO_OBJECT_NULL; smc_info_count = 0; }
 int aerie_smc_read(const char *key, AerieSensor *sensor) {
     if (!key || strlen(key) != 4 || !sensor) return -1;
     SMCData in = {0}, out = {0}; in.key = fourcc(key); in.command = 9;
-    if (smc_call(&in, &out) != 0 || out.info.size > 32 || !out.info.size) return -1;
-    in.info = out.info; in.command = 5;
+    int cached = 0;
+    for (int i = 0; i < smc_info_count; i++) if (smc_info_cache[i].key == in.key) {
+        in.info = smc_info_cache[i].info; cached = 1; break;
+    }
+    if (!cached) {
+        if (smc_call(&in, &out) != 0 || out.info.size > 32 || !out.info.size) return -1;
+        in.info = out.info;
+        if (smc_info_count < 4096) {
+            smc_info_cache[smc_info_count].key = in.key;
+            smc_info_cache[smc_info_count++].info = in.info;
+        }
+    }
+    in.command = 5;
     if (smc_call(&in, &out) != 0) return -1;
     memset(sensor, 0, sizeof(*sensor)); memcpy(sensor->key, key, 4); unfourcc(in.info.type, sensor->type);
     if (in.info.type == fourcc("sp78")) {
@@ -161,6 +176,11 @@ int aerie_smc_read(const char *key, AerieSensor *sensor) {
         sensor->value = ((out.bytes[0] << 8) | out.bytes[1]) / 4.0;
     } else if (in.info.type == fourcc("flt ")) {
         float f; memcpy(&f, out.bytes, sizeof(f)); sensor->value = f;
+    } else if ((sensor->type[0] == 'f' || sensor->type[0] == 's') && sensor->type[1] == 'p' && in.info.size == 2) {
+        char c = sensor->type[3]; int fractional = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+        if (fractional < 0) return -1;
+        uint16_t raw = (out.bytes[0] << 8) | out.bytes[1];
+        sensor->value = (sensor->type[0] == 's' ? (int16_t)raw : (int)raw) / (double)(1U << fractional);
     } else if (in.info.type == fourcc("ui8 ")) sensor->value = out.bytes[0];
     else if (in.info.type == fourcc("ui16")) sensor->value = (out.bytes[0] << 8) | out.bytes[1];
     else if (in.info.type == fourcc("ui32")) sensor->value = fourcc((const char *)out.bytes);
