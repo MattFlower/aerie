@@ -24,7 +24,7 @@ Updated 2026-10-11. A check marks implementation, not complete hardware coverage
 - Every feature must be implemented, or have an explicit hardware/OS/permission constraint agreed for acceptance. Merely putting an unfinished feature in this table does not satisfy the requirement.
 - Collector values must agree with accessible OS evidence and synthetic accounting tests. Unavailable, stale, and zero must remain distinguishable.
 - Real menus/settings must be validated visually and with accessibility; imported settings must reject invalid data.
-- All application and helper background/idle physical footprints must remain within the privately established comparison budget with comparable configuration and intervals. Active menus, settings, and maps may use reasonable temporary headroom, with measured peaks, prompt post-close settling, and repeated open/close checks for retained caches or leaks. Feature omissions do not establish a passing result.
+- All application and helper background/idle physical footprints must remain within the agreed background memory budget with comparable configuration and intervals. Active menus, settings, and maps may use reasonable temporary headroom, with measured peaks, prompt post-close settling, and repeated open/close checks for retained caches or leaks. Feature omissions do not establish a passing result.
 - CPU, interrupt wakeups, and measurement limitations must be reported, with no disruptive load generator.
 - Final commits must pass build, meaningful synthetic tests, lint, UI checks, and available performance checks. Public CI must stay within free standard-runner entitlement.
 - Final acceptance is required before completion or repository privatization.

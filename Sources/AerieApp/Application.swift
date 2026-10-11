@@ -263,6 +263,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   @objc private func showSettings() {
     popover.performClose(nil)
+    if let preferences {
+      preferences.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
+    }
     preferences = PreferencesController(settings: settings)
     preferences?.onApply = { [weak self] in self?.apply($0) }
     preferences?.onClose = { [weak self] in self?.preferences = nil }

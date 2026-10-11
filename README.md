@@ -2,7 +2,7 @@
 
 Aerie is an original native macOS menu-bar system monitor built with Swift, AppKit, Mach, libproc, and IOKit. It runs in one process, samples through a shared scheduler, and retains bounded history.
 
-**Development preview:** the application is usable, but the full feature and performance acceptance checklist is still open. See [capabilities and remaining work](docs/CAPABILITIES.md).
+**Development preview:** the application is runnable, but the full feature and performance acceptance checklist is still open. See [capabilities and remaining work](docs/CAPABILITIES.md).
 
 ## Build and run
 

@@ -405,14 +405,19 @@ final class DashboardController: NSViewController {
           ),
         ]
       }
-      return rows + [DashboardRow.heading("Top process I/O")]
-        + top(
-          { ($0.read ?? 0) + ($0.write ?? 0) > ($1.read ?? 0) + ($1.write ?? 0) },
-          value: { "R \(rate($0.read))  W \(rate($0.write))" }) + [
-          DashboardRow.note(
-            "Disk rates are physical-device totals; process I/O uses OS accounting. Volume health and temperature depend on an accessible drive telemetry interface and are not yet collected."
-          )
-        ]
+      rows.append(.heading("Top process I/O"))
+      let ioRows = top(
+        { left, right in
+          let leftBytes = (left.read ?? 0) + (left.write ?? 0)
+          let rightBytes = (right.read ?? 0) + (right.write ?? 0)
+          return leftBytes > rightBytes
+        }, value: { process in "R \(rate(process.read))  W \(rate(process.write))" })
+      rows.append(contentsOf: ioRows)
+      rows.append(
+        .note(
+          "Disk rates are physical-device totals; process I/O uses OS accounting. Volume health and temperature depend on an accessible drive telemetry interface and are not yet collected."
+        ))
+      return rows
     case .network:
       var rows: [DashboardRow] = [
         DashboardRow.heading("Traffic"), DashboardRow.metric("Connectivity", s.connectivity),
