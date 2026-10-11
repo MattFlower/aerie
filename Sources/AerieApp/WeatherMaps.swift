@@ -163,7 +163,23 @@ struct MapRaster {
   }
 }
 
-final class MapLegendView: NSImageView { override var isFlipped: Bool { true } }
+final class MapLegendView: NSView {
+  override var isFlipped: Bool { true }
+  var image: NSImage? { didSet { needsDisplay = true } }
+  var horizontal = false
+  var imageRect: NSRect {
+    guard let size = image?.size, size.width > 0, size.height > 0 else { return .zero }
+    let scale = horizontal ? min(1, min(bounds.width / size.width, bounds.height / size.height)) : 1
+    let width = size.width * scale, height = size.height * scale
+    return NSRect(
+      x: horizontal ? (bounds.width - width) / 2 : 0, y: 0, width: width, height: height)
+  }
+  override func draw(_ dirtyRect: NSRect) {
+    image?.draw(
+      in: imageRect, from: .zero, operation: .sourceOver, fraction: 1,
+      respectFlipped: true, hints: nil)
+  }
+}
 
 final class MapRasterView: NSView {
   override var isFlipped: Bool { true }
@@ -282,10 +298,12 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     let legendScroll = NSScrollView(frame: NSRect(x: 545, y: 353, width: 145, height: 327))
     legendScroll.documentView = legend; legendScroll.hasVerticalScroller = true
     legendScroll.autohidesScrollers = true; legendScroll.drawsBackground = false
-    view.addSubview(legendScroll); legend.imageScaling = .scaleNone;
-    legend.imageAlignment = .alignTop
+    legendScroll.hasHorizontalScroller = true
+    view.addSubview(legendScroll)
+    legend.setAccessibilityElement(true); legend.setAccessibilityRole(.image)
     legend.setAccessibilityLabel("NOAA/NWS provider legend")
-    wideLegend.imageScaling = .scaleProportionallyDown
+    wideLegend.horizontal = true
+    wideLegend.setAccessibilityElement(true); wideLegend.setAccessibilityRole(.image)
     wideLegend.setAccessibilityLabel("NOAA/NWS horizontal provider legend")
     view.addSubview(wideLegend)
     legendStatus.frame = NSRect(x: 16, y: 133, width: 510, height: 20)
@@ -486,7 +504,9 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
             } else {
               controller.legend.image = raster.image
               controller.legend.setFrameSize(
-                NSSize(width: 145, height: max(395, raster.image.size.height)))
+                NSSize(
+                  width: max(145, raster.image.size.width),
+                  height: max(395, raster.image.size.height)))
             }
             controller.legendStatus.isHidden = true
           }

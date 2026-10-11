@@ -115,12 +115,16 @@ public struct WMSLayer: Equatable {
   public var timeEnabled: Bool
   public var abstract = ""
   public var styles: [String]
+  public var legendRequestWidth: Int?
+  public var legendRequestHeight: Int?
   public init(
     name: String, title: String, crs: Set<String> = ["EPSG:4326"], times: [Date] = [],
-    styles: [String] = [], timeEnabled: Bool? = nil
+    styles: [String] = [], timeEnabled: Bool? = nil, legendRequestWidth: Int? = nil,
+    legendRequestHeight: Int? = nil
   ) {
     self.name = name; self.title = title; self.crs = crs; self.times = times; self.styles = styles
     self.timeEnabled = timeEnabled ?? !times.isEmpty
+    self.legendRequestWidth = legendRequestWidth; self.legendRequestHeight = legendRequestHeight
   }
   public func visibleTimes(kind: WeatherMapKind, now: Date) -> [Date] {
     let relevant = times.filter {
@@ -198,13 +202,16 @@ public enum WMS {
     return try request(endpoint, values)
   }
   public static func legend(endpoint: URL, layer: WMSLayer) throws -> URL {
-    try request(
+    let width = layer.legendRequestWidth ?? 20, height = layer.legendRequestHeight ?? 20
+    guard (1...1024).contains(width), (1...2048).contains(height), width * height <= 1_048_576
+    else { throw MapError.invalidMetadata }
+    return try request(
       endpoint,
       [
         ("SERVICE", "WMS"), ("VERSION", "1.3.0"), ("REQUEST", "GetLegendGraphic"),
         ("LAYER", layer.name.split(separator: ",").first.map(String.init) ?? layer.name),
         ("STYLE", layer.styles.first ?? ""), ("LEGEND_OPTIONS", "forceLabels:on"),
-        ("FORMAT", "image/png"), ("WIDTH", "20"), ("HEIGHT", "20"),
+        ("FORMAT", "image/png"), ("WIDTH", String(width)), ("HEIGHT", String(height)),
       ])
   }
   public static func parse(_ data: Data) throws -> [WMSLayer] {
@@ -235,9 +242,31 @@ private final class CapabilitiesParser: NSObject, XMLParserDelegate {
       stack.append(
         WMSLayer(
           name: "", title: "", crs: parent?.crs ?? [], times: parent?.times ?? [],
-          styles: parent?.styles ?? [], timeEnabled: parent?.timeEnabled ?? false))
+          styles: parent?.styles ?? [], timeEnabled: parent?.timeEnabled ?? false,
+          legendRequestWidth: parent?.legendRequestWidth,
+          legendRequestHeight: parent?.legendRequestHeight))
     }
     if name == "Dimension" || name == "Extent" { dimension = attributes["name"] }
+    if name == "OnlineResource", elements.dropLast().last == "LegendURL", !stack.isEmpty,
+      stack[stack.count - 1].styles.count == 1,
+      let href = attributes.first(where: { $0.key.split(separator: ":").last == "href" })?.value,
+      let items = URLComponents(string: href)?.queryItems
+    {
+      // LegendURL attributes describe the final image. Request WIDTH/HEIGHT can instead
+      // describe each symbol. Copy only those bounded numeric hints, never its URL.
+      for key in ["width", "height"] {
+        let values = items.filter { $0.name.lowercased() == key }
+        guard values.count <= 1 else { parser.abortParsing(); return }
+        if let item = values.first {
+          guard let value = item.value.flatMap(Int.init) else { parser.abortParsing(); return }
+          if key == "width" {
+            stack[stack.count - 1].legendRequestWidth = value
+          } else {
+            stack[stack.count - 1].legendRequestHeight = value
+          }
+        }
+      }
+    }
   }
   func parser(_ parser: XMLParser, foundCharacters string: String) {
     guard !texts.isEmpty else { return }

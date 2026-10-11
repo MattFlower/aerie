@@ -19,19 +19,24 @@ enum MapIntegration {
         let url = try WMS.image(endpoint: kind.endpoint, layer: layer, bounds: bounds, time: time)
         let raster = try MapRaster.decode(await client.data(url))
         var legendValid = false
+        var legendError: String?
         do {
           let legendURL = try WMS.legend(endpoint: kind.endpoint, layer: layer)
-          if let legend = try? await client.data(legendURL) {
-            legendValid = (try? MapRaster.decode(legend, requireVisibleContent: true)) != nil
-          }
+          let legend = try await client.data(legendURL)
+          _ = try MapRaster.decode(legend, requireVisibleContent: true)
+          legendValid = true
+        } catch {
+          legendError = String(describing: error)
         }
         if !legendValid { passed = false }
-        results.append([
+        var result: [String: Any] = [
           "layer": kind.rawValue, "validRaster": true, "legendValid": legendValid,
           "advertisedTimes": times.count, "decodedCost": raster.cost, "serviceLayer": layer.name,
           "serviceTitle": layer.title,
           "timeEnabled": layer.timeEnabled,
-        ])
+        ]
+        if let legendError { result["legendError"] = legendError }
+        results.append(result)
       } catch {
         passed = false
         results.append([

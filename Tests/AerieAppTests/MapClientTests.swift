@@ -1,4 +1,5 @@
 import AerieCore
+import AppKit
 import Foundation
 import ImageIO
 import XCTest
@@ -27,6 +28,49 @@ private final class SyntheticMapProtocol: URLProtocol {
   override func stopLoading() { Self.stopped?.fulfill() }
 }
 final class MapClientTests: XCTestCase {
+  @MainActor func testLegendDrawsBothEndsOfSyntheticHorizontalRampWithoutWindow() throws {
+    var pixels = [UInt8](repeating: 0, count: 500 * 30 * 4)
+    for y in 0..<30 {
+      for x in 0..<500 {
+        let offset = (y * 500 + x) * 4
+        pixels[offset + (x < 250 ? 0 : 2)] = 255; pixels[offset + 3] = 255
+      }
+    }
+    let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
+    let raster = try XCTUnwrap(
+      CGImage(
+        width: 500, height: 30, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 2000,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+    let image = NSImage(cgImage: raster, size: NSSize(width: 500, height: 30))
+    let view = MapLegendView(frame: NSRect(x: 0, y: 0, width: 512, height: 40))
+    view.horizontal = true; view.image = image
+    let output = try XCTUnwrap(
+      NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: 512, pixelsHigh: 40, bitsPerSample: 8,
+        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+        bytesPerRow: 0, bitsPerPixel: 0))
+    NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: output)
+    view.draw(view.bounds)
+    let left = try XCTUnwrap(output.colorAt(x: 10, y: 20)?.usingColorSpace(.deviceRGB))
+    let right = try XCTUnwrap(output.colorAt(x: 500, y: 20)?.usingColorSpace(.deviceRGB))
+    XCTAssertGreaterThan(left.redComponent, 0.9); XCTAssertLessThan(left.blueComponent, 0.1)
+    XCTAssertGreaterThan(right.blueComponent, 0.9); XCTAssertLessThan(right.redComponent, 0.1)
+    XCTAssertNil(view.window)
+  }
+  @MainActor func testLegendPlacementRetainsWholeHorizontalRampAndVerticalTop() {
+    let view = MapLegendView(frame: NSRect(x: 0, y: 0, width: 512, height: 40))
+    view.horizontal = true; view.image = NSImage(size: NSSize(width: 500, height: 30))
+    XCTAssertEqual(view.imageRect, NSRect(x: 6, y: 0, width: 500, height: 30))
+    view.image = NSImage(size: NSSize(width: 1024, height: 80))
+    XCTAssertEqual(view.imageRect, NSRect(x: 0, y: 0, width: 512, height: 40))
+    view.horizontal = false; view.image = NSImage(size: NSSize(width: 20, height: 800))
+    view.setFrameSize(NSSize(width: 145, height: 800))
+    XCTAssertEqual(view.imageRect, NSRect(x: 0, y: 0, width: 20, height: 800))
+    view.image = nil; XCTAssertEqual(view.imageRect, .zero)
+  }
   func testAccessoryRasterRejectsBlankPNGWhileEmptyDataLayersRemainValid() throws {
     func png(_ pixels: [UInt8]) throws -> Data {
       let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))

@@ -16,7 +16,10 @@ final class MapTests: XCTestCase {
     let xml = """
       <WMS_Capabilities><Capability><Layer><CRS>EPSG:4326</CRS>
       <Layer><Name>synthetic</Name><Title>Synthetic imagery</Title>
-      <Style><Name>synthetic-reflectivity</Name></Style></Layer></Layer></Capability></WMS_Capabilities>
+      <Style><Name>synthetic-reflectivity</Name><LegendURL width="500" height="30">
+      <OnlineResource href="https://example.invalid/legend?width=500&amp;height=30"/>
+      </LegendURL></Style>
+      </Layer></Layer></Capability></WMS_Capabilities>
       """
     let layer = try XCTUnwrap(WMS.parse(Data(xml.utf8)).first)
     let url = try WMS.legend(endpoint: WeatherMapKind.radar.endpoint, layer: layer)
@@ -27,6 +30,7 @@ final class MapTests: XCTestCase {
         })
     XCTAssertEqual(query["STYLE"], "synthetic-reflectivity")
     XCTAssertEqual(query["LEGEND_OPTIONS"], "forceLabels:on")
+    XCTAssertEqual(query["WIDTH"], "500"); XCTAssertEqual(query["HEIGHT"], "30")
     let image = try WMS.image(
       endpoint: WeatherMapKind.radar.endpoint, layer: layer,
       bounds: .centered(latitude: 40, longitude: -100, span: 16), time: nil)
@@ -36,6 +40,35 @@ final class MapTests: XCTestCase {
           ($0.name, $0.value ?? "")
         })
     XCTAssertEqual(imageQuery["STYLES"], query["STYLE"])
+    var invalid = layer; invalid.legendRequestWidth = 1025
+    XCTAssertThrowsError(try WMS.legend(endpoint: WeatherMapKind.radar.endpoint, layer: invalid))
+  }
+  func testLegendRequestSymbolDimensionsAreIndependentOfFinalImageSize() throws {
+    let xml = """
+      <WMS_Capabilities><Capability><Layer><CRS>EPSG:4326</CRS>
+      <Layer><Name>synthetic</Name><Title>Synthetic forecast</Title>
+      <Style><Name>synthetic-primary</Name><LegendURL width="46" height="1142">
+      <OnlineResource href="http://example.invalid/legend?WIDTH=20&amp;height=20&amp;style=untrusted"/>
+      </LegendURL></Style>
+      <Style><Name>synthetic-secondary</Name><LegendURL width="99" height="99">
+      <OnlineResource href="https://example.invalid/legend?width=99&amp;height=99"/>
+      </LegendURL></Style></Layer></Layer></Capability></WMS_Capabilities>
+      """
+    let layer = try XCTUnwrap(WMS.parse(Data(xml.utf8)).first)
+    let url = try WMS.legend(endpoint: WeatherMapKind.temperature.endpoint, layer: layer)
+    XCTAssertEqual(url.host, WeatherMapKind.temperature.endpoint.host)
+    XCTAssertEqual(url.scheme, "https")
+    let query = Dictionary(
+      uniqueKeysWithValues:
+        try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems).map {
+          ($0.name, $0.value ?? "")
+        })
+    XCTAssertEqual(query["WIDTH"], "20"); XCTAssertEqual(query["HEIGHT"], "20")
+    XCTAssertEqual(query["STYLE"], "synthetic-primary")
+    for invalid in ["width=20&amp;WIDTH=99", "width=not-a-number"] {
+      XCTAssertThrowsError(
+        try WMS.parse(Data(xml.replacingOccurrences(of: "WIDTH=20", with: invalid).utf8)))
+    }
   }
   func testConsentIsIndependentAndOldSettingsKeepMapsOff() throws {
     var configuration = WeatherConfiguration()
