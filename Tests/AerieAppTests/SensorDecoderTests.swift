@@ -29,12 +29,17 @@ final class SensorDecoderTests: XCTestCase {
     XCTAssertNil(decode("flt ", [0, 0, 0xc0, 0x7f]))
     XCTAssertNil(decode("flt ", [0, 0, 0]))
   }
-  func testFriendlyFirmwareRoleNamesNeverEstablishVerifiedHardwareMapping() {
-    XCTAssertEqual(Collector.sensorLabel("TST0"), "TST0")
-    XCTAssertTrue(Collector.sensorLabel("TC0D").contains("unverified role"))
-    XCTAssertTrue(Collector.sensorLabel("PG0C").contains("unverified role"))
-    XCTAssertTrue(Collector.sensorLabel("TA0P").contains("unverified role"))
-    XCTAssertEqual(Collector.sensorLabel("F0Ac"), "Fan 1")
+  func testUnknownHardwareNamesOnlyMeasurementKindAndKeepsStableRawIdentity() {
+    XCTAssertEqual(Collector.sensorLabel("TST0"), "Temperature sensor")
+    XCTAssertEqual(Collector.sensorLabel("TC0D"), "Temperature sensor")
+    XCTAssertEqual(Collector.sensorLabel("PG0C", unit: "W"), "Power sensor")
+    XCTAssertEqual(Collector.sensorLabel("F0Ac", unit: "rpm"), "Fan speed sensor")
+    XCTAssertEqual(Collector.sensorLabel("TC0D", platform: .intel), "CPU diode")
+    let reading = SensorData(
+      key: "TST0", label: Collector.sensorLabel("TST0"), value: nil, unit: "°C", state: .unavailable
+    )
+    XCTAssertEqual(reading.title(names: nil), "Temperature sensor [TST0]")
+    XCTAssertEqual(reading.key, "TST0")
   }
   func testOnlyDeclaredSupportedNumericFamiliesAcquireExistingUnits() {
     var source = AerieSensorSource(); source.type = type("sp78"); source.size = 2

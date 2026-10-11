@@ -86,7 +86,7 @@ final class WiFiAccessTests: XCTestCase {
       let controller = PreferencesController(settings: Settings())
       defer { controller.close() }
       let tabs = try XCTUnwrap(
-        controller.window?.contentView?.subviews.compactMap { $0 as? NSTabView }.first)
+        try preferenceTabs(controller))
       @MainActor func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants($0) }
       }

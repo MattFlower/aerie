@@ -91,6 +91,9 @@ public struct WeatherReport {
   public var days: [WeatherDay]
   public var alerts: [String]
   public var condition: String? = nil
+  /// Provider-reported daylight for the current condition; absence is not daytime.
+  public var isDay: Bool? = nil
+  public var glyph: WeatherGlyph? = nil
   public var observationTime: Date? = nil
   public var observationStation: String? = nil
   public var forecastUpdated: Date? = nil
@@ -144,7 +147,7 @@ public struct OpenMeteoProvider: WeatherProvider {
       URLQueryItem(
         name: "current",
         value:
-          "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+          "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,is_day,cloud_cover,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
       ),
       URLQueryItem(
         name: "hourly",
@@ -231,7 +234,7 @@ public struct OpenMeteoProvider: WeatherProvider {
             precipitation: value(d.precipitation_probability_max)))
       }
     }
-    return WeatherReport(
+    var report = WeatherReport(
       source: "Open-Meteo", attributionURL: "https://open-meteo.com/", fetched: fetched,
       timeContext: WeatherTimeContext(
         identifier: payload.timezone, offsetSeconds: payload.utc_offset_seconds),
@@ -239,6 +242,8 @@ public struct OpenMeteoProvider: WeatherProvider {
       wind: c.wind_speed_10m, gusts: c.wind_gusts_10m, direction: c.wind_direction_10m,
       pressure: c.surface_pressure, cloud: c.cloud_cover, code: c.weather_code,
       hours: hours, days: days, alerts: [])
+    report.isDay = c.is_day.flatMap { $0 == 0 ? false : $0 == 1 ? true : nil }
+    return report
   }
   private struct Payload: Decodable {
     var timezone: String?
@@ -257,6 +262,7 @@ public struct OpenMeteoProvider: WeatherProvider {
     var surface_pressure: Double?
     var cloud_cover: Double?
     var weather_code: Int?
+    var is_day: Int?
   }
   private struct Hourly: Decodable {
     var time: [Double]

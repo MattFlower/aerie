@@ -8,12 +8,15 @@ final class NetworkSelectionTests: XCTestCase {
     XCTAssertFalse(selected.includes(name: "utun1", active: true));
     XCTAssertFalse(selected.includes(name: "en0", active: false))
     XCTAssertTrue(NetworkSelection().includes(name: "utun1", active: true))
-    for names in [[], ["en0", "en0"], [""], ["invalid/name"], [String(repeating: "a", count: 32)]] {
+    let none = NetworkSelection(names: [])
+    XCTAssertTrue(none.valid); XCTAssertFalse(none.includes(name: "en0", active: true))
+    XCTAssertEqual(none.description, "No interfaces selected")
+    for names in [["en0", "en0"], [""], ["invalid/name"], [String(repeating: "a", count: 32)]] {
       XCTAssertFalse(NetworkSelection(names: names).valid)
     }
     var settings = Settings(); settings.networkInterfaces = ["en0"]
     XCTAssertNoThrow(try settings.validated()); settings.networkInterfaces = [];
-    XCTAssertThrowsError(try settings.validated())
+    XCTAssertNoThrow(try settings.validated())
   }
   func testSessionStartsAtZeroInsteadOfCreditingPrelaunchCumulativeTraffic() {
     var tracker = NetworkSessionTracker(); let date = Date(timeIntervalSince1970: 100)

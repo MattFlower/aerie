@@ -10,7 +10,7 @@ final class SensorPreferencesTests: XCTestCase {
       let controller = PreferencesController(settings: Settings())
       defer { controller.close() }
       let content = try XCTUnwrap(controller.window?.contentView)
-      let tabs = try XCTUnwrap(content.subviews.compactMap { $0 as? NSTabView }.first)
+      let tabs = try XCTUnwrap(try preferenceTabs(controller))
       @MainActor func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants($0) }
       }
@@ -23,15 +23,16 @@ final class SensorPreferencesTests: XCTestCase {
         try XCTUnwrap(
           controls.compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == label })
       }
-      let metric = try popup("Metric"), key = try field("Sensor firmware key (4 chars)")
+      let metric = try popup("Notify me when"), key = try field("Sensor code (4 characters)")
       let unit = try popup("Sensor native unit")
       XCTAssertFalse(key.isEnabled); XCTAssertFalse(unit.isEnabled)
       metric.selectItem(withTitle: "Individual sensor")
       _ = metric.sendAction(metric.action, to: metric.target)
       XCTAssertTrue(key.isEnabled); XCTAssertTrue(unit.isEnabled)
       key.stringValue = "F0Ac"; unit.selectItem(withTitle: "rpm")
-      try field("Threshold").stringValue = "2000"
-      let add = try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first { $0.title == "Add" })
+      try field("Limit").stringValue = "2000"
+      let add = try XCTUnwrap(
+        controls.compactMap { $0 as? NSButton }.first { $0.title == "Add to Draft" })
       add.performClick(nil)
       let names = try XCTUnwrap(
         controls.compactMap { $0 as? NSTextView }.first {
@@ -40,13 +41,15 @@ final class SensorPreferencesTests: XCTestCase {
       names.string = "F0Ac | Exhaust fan"
       let addressConsent = try XCTUnwrap(
         controls.compactMap { $0 as? NSButton }.first {
-          $0.title == "Allow public IP lookup through ipify"
+          $0.title == "Look up external IP address through api.ipify.org"
         })
       XCTAssertEqual(addressConsent.state, .off); addressConsent.state = .on
       var applied: Settings?
       controller.onApply = { applied = $0 }
       let apply = try XCTUnwrap(
-        content.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Apply" })
+        try preferenceControls(controller).compactMap { $0 as? NSButton }.first {
+          $0.title == "Apply"
+        })
       apply.performClick(nil)
       XCTAssertEqual(applied?.publicAddress, true)
       let first = try XCTUnwrap(applied?.rules.first)
@@ -55,9 +58,9 @@ final class SensorPreferencesTests: XCTestCase {
       let toggle = try XCTUnwrap(
         controls.compactMap { $0 as? NSButton }.first { $0.title == "Enable/Disable" })
       toggle.performClick(nil)
-      try field("Threshold").stringValue = "3000"
+      try field("Limit").stringValue = "3000"
       let save = try XCTUnwrap(
-        controls.compactMap { $0 as? NSButton }.first { $0.title == "Save Selected" })
+        controls.compactMap { $0 as? NSButton }.first { $0.title == "Update Draft" })
       save.performClick(nil); apply.performClick(nil)
       XCTAssertEqual(applied?.rules.first?.id, first.id)
       XCTAssertEqual(applied?.rules.first?.enabled, false)

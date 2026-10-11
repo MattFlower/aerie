@@ -17,6 +17,9 @@ public enum Module: String, CaseIterable, Codable {
     }
   }
 }
+public enum MenuLabelPlacement: String, Codable, CaseIterable {
+  case automatic, none, inline, vertical, icon
+}
 public enum DisplayStyle: String, CaseIterable, Codable { case text, graph, compact, stacked }
 public enum Theme: String, CaseIterable, Codable { case system, light, dark }
 public enum TemperatureUnit: String, Codable { case celsius, fahrenheit }
@@ -25,13 +28,16 @@ public struct MenuConfiguration: Codable, Equatable {
   public var visible: Bool
   public var style: DisplayStyle
   public var colorHex: String?
+  public var labelPlacement: MenuLabelPlacement?
   public init(
-    module: Module, visible: Bool = true, style: DisplayStyle = .text, colorHex: String? = nil
+    module: Module, visible: Bool = true, style: DisplayStyle = .text, colorHex: String? = nil,
+    labelPlacement: MenuLabelPlacement? = nil
   ) {
     self.module = module
     self.visible = visible
     self.style = style
     self.colorHex = colorHex
+    self.labelPlacement = labelPlacement
   }
 }
 public struct WorldClock: Codable, Equatable {
@@ -84,14 +90,28 @@ public struct Settings: Codable, Equatable {
   public var menus = [
     MenuConfiguration(module: .overview), MenuConfiguration(module: .cpu),
     MenuConfiguration(module: .memory), MenuConfiguration(module: .storage),
-    MenuConfiguration(module: .network), MenuConfiguration(module: .sensors),
+    MenuConfiguration(module: .network, style: .stacked), MenuConfiguration(module: .sensors),
     MenuConfiguration(module: .power), MenuConfiguration(module: .weather),
     MenuConfiguration(module: .time, visible: false),
     MenuConfiguration(module: .gpu, visible: false),
   ]
+  public var visibleMenus: [MenuConfiguration] {
+    let result = menus.filter { $0.visible && ($0.module != .weather || weather.hasLocation) }
+    return result.isEmpty ? [MenuConfiguration(module: .overview, style: .compact)] : result
+  }
+  public var visibleCombinedModules: [Module] {
+    let modules = effectiveCombinedModules.filter { $0 != .weather || weather.hasLocation }
+    return modules.isEmpty ? [.overview] : modules
+  }
   public var persistentHistory: Bool?
   public var effectivePersistentHistory: Bool { persistentHistory ?? false }
   public var shortcuts: [KeyboardShortcut]?
+  public var groupedMenus: Bool?
+  public var effectiveGroupedMenus: Bool { groupedMenus ?? false }
+  public var menuPadding: Int?
+  public var menuGap: Int?
+  public var effectiveMenuPadding: Int { menuPadding ?? (compactSpacing ? 1 : 4) }
+  public var effectiveMenuGap: Int { menuGap ?? (compactSpacing ? 2 : 6) }
   public var combined = false
   public var combinedModules: [Module]?
   public var effectiveCombinedModules: [Module] { combinedModules ?? [.cpu, .memory] }
@@ -105,12 +125,12 @@ public struct Settings: Codable, Equatable {
   public var effectivePublicAddress: Bool { publicAddress ?? false }
   public var networkInterfaces: [String]?
   public var networkSelection: NetworkSelection { NetworkSelection(names: networkInterfaces) }
-  public var compactSpacing = false
+  public var compactSpacing = true
   // Optional for old configurations. Full sampling remains the default until explicitly changed.
   public var sensorSampling: SensorSamplingMode?
   public var sensorNames: [String: String]?
   public var effectiveSensorSampling: SensorSamplingMode { sensorSampling ?? .all }
-  public var clockFormat = "EEE d MMM HH:mm"
+  public var clockFormat = ""
   public var weekStartsMonday = true
   public var showWeekNumbers = true
   public var eventCalendars: [String]?
@@ -128,7 +148,7 @@ public struct Settings: Codable, Equatable {
   public var rules: [ThresholdRule] = []
   // Optional for decoding configurations saved before change rules existed.
   public var changeRules: [ChangeRule]?
-  public init() {}
+  public init() { groupedMenus = true }
   public func validated() throws -> Settings {
     guard effectiveCalendarOptions.valid, EventCalendarSelection.valid(eventCalendars) else {
       throw SettingsError.invalid
@@ -141,6 +161,7 @@ public struct Settings: Codable, Equatable {
       menus.count <= Module.allCases.count,
       Set(menus.map(\.module)).count == menus.count,
       combined || menus.contains(where: \.visible), clockFormat.count <= 80,
+      (0...12).contains(effectiveMenuPadding), (0...12).contains(effectiveMenuGap),
       menus.allSatisfy({ MenuColor.valid($0.colorHex) }),
       (1...6).contains(effectiveCombinedModules.count),
       !effectiveCombinedModules.contains(.overview),

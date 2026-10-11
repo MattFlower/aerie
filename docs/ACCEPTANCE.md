@@ -19,6 +19,12 @@ Aerie remains a development preview. Synthetic tests establish specific software
 
 These are not all permission failures. Source mapping, missing product behavior and hardware coverage remain engineering work. Linux is a later platform direction and is outside this macOS release checklist.
 
+## Native usability validation
+
+The sidebar, explicit location choices, sensor names, interface picker, date example, readable notifications, grouped menu labels/spacing, fixed duplex columns and gauges have synthetic coverage. Before acceptance validate all nine pages at minimum/default/enlarged window sizes, light/dark/increased contrast, keyboard focus and accessibility. Review imports, unapplied changes, invalid input, missing interfaces/sensors, unavailable/stale weather, custom/automatic clock transitions, module hit targets and retained content after close. Real service/permission tests remain separate from offline rendering.
+
+City/ZIP search transmits the query and network IP to Apple. Use My Mac Location may request an OS grant and a one-shot device point; do not exercise either in automated live validation without explicit approval for that action. Manual or synthetic point selection can validate draft behavior without a new transmission or grant. Choosing a point must not silently enable any external source.
+
 ## Inputs and optional-source consent
 
 - An unlocked desktop is required for real UI checks.

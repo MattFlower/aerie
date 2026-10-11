@@ -123,11 +123,11 @@ final class ProcessGroupingAppTests: XCTestCase {
       @MainActor func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants($0) }
       }
-      let tabs = try XCTUnwrap(content.subviews.compactMap { $0 as? NSTabView }.first)
+      let tabs = try XCTUnwrap(try preferenceTabs(preferences))
       let views = tabs.tabViewItems.compactMap(\.view).flatMap { descendants($0) }
       let toggle = try XCTUnwrap(
         views.compactMap { $0 as? NSButton }.first {
-          $0.title == "Combine application and executable processes"
+          $0.title == "Combine processes belonging to the same application"
         })
       XCTAssertEqual(toggle.state, .off); toggle.state = .on
       let sort = try XCTUnwrap(
@@ -137,8 +137,12 @@ final class ProcessGroupingAppTests: XCTestCase {
       sort.selectItem(withTitle: "Memory")
       var settings: Settings?
       preferences.onApply = { settings = $0 }
-      try XCTUnwrap(content.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Apply" })
-        .performClick(nil)
+      try XCTUnwrap(
+        try preferenceControls(preferences).compactMap { $0 as? NSButton }.first {
+          $0.title == "Apply"
+        }
+      )
+      .performClick(nil)
       let applied = try XCTUnwrap(settings)
       XCTAssertTrue(applied.effectiveCombineProcesses);
       XCTAssertEqual(applied.processSorts?[.cpu], .memory)

@@ -31,6 +31,7 @@ public struct NWSObservation {
   public let date: Date
   public let temperature, apparent, humidity, wind, gusts, direction, pressure: Double?
   public let condition: String?
+  public var icon: WeatherIconMetadata? = nil
   public func isFresh(at now: Date) -> Bool {
     (-300...5400).contains(now.timeIntervalSince(date))
   }
@@ -153,7 +154,7 @@ public enum NWSWeather {
     guard let timestamp = date(p["timestamp"] as? String) else {
       throw WeatherError.invalidResponse
     }
-    return NWSObservation(
+    var observation = NWSObservation(
       date: timestamp, temperature: quantity(p["temperature"], kind: "temperature"),
       apparent: quantity(p["windChill"], kind: "temperature")
         ?? quantity(p["heatIndex"], kind: "temperature"),
@@ -162,6 +163,8 @@ public enum NWSWeather {
       direction: quantity(p["windDirection"], kind: "direction"),
       pressure: quantity(p["barometricPressure"], kind: "pressure"),
       condition: (p["textDescription"] as? String).map { String($0.prefix(256)) })
+    observation.icon = WeatherIconMetadata.nws(p["icon"] as? String)
+    return observation
   }
   public static func forecast(_ data: Data, limit: Int) throws -> (
     periods: [WeatherPeriod], updated: Date?
@@ -269,6 +272,7 @@ public struct NWSProvider: WeatherProvider {
         report.gusts = observation.gusts
         report.direction = observation.direction; report.pressure = observation.pressure;
         report.condition = observation.condition
+        report.glyph = observation.icon?.glyph; report.isDay = observation.icon?.isDay
       } else {
         report.notes.append("No fresh observation from the nearest three advertised stations.")
       }

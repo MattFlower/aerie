@@ -1,7 +1,9 @@
 import AerieCore
 import AppKit
 
-final class PreferencesController: NSWindowController, NSWindowDelegate {
+final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate,
+  NSTextViewDelegate
+{
   private var settings: Settings
   var onApply: ((Settings) -> Void)?
   var onProfileReview: ((SettingsProfile) -> Bool)?
@@ -19,6 +21,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var menuStyles: [Module: NSPopUpButton] = [:]
   private var menuOrders: [Module: NSPopUpButton] = [:]
   private var menuColors: [Module: NSTextField] = [:]
+  private var menuLabels: [Module: NSPopUpButton] = [:]
   private var clocksField = NSTextView()
   private var shortcutsField = NSTextView()
   private var sensorNamesField = NSTextView()
@@ -31,514 +34,759 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     "diskRead", "diskWrite", "sensor",
   ]
   private var rulesLabel = NSTextField(wrappingLabelWithString: "")
+  private var notificationExample = NSTextField(wrappingLabelWithString: "")
+  private var notificationUnits = NSTextField(labelWithString: "")
+  private var notificationAdvanced: SettingsForm?
+  private var sensorRuleChoices: [SensorData] = []
+  private var localTimeZoneLabel = NSTextField(wrappingLabelWithString: "")
   private var errorLabel = NSTextField(wrappingLabelWithString: "")
-  init(settings: Settings) {
+  init(
+    settings: Settings, interfaces: [InterfaceData] = [], sensors: [SensorData] = [],
+    interfaceDescriptions: [String: InterfaceDescription] = [:]
+  ) {
     self.settings = settings
+    interfaceDescriptionsStore = interfaceDescriptions
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 650, height: 650),
-      styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+      contentRect: NSRect(x: 0, y: 0, width: 880, height: 680),
+      styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
+    )
     window.title = "Aerie Settings"
     window.isReleasedWhenClosed = false
     super.init(window: window)
     window.delegate = self
+    window.minSize = NSSize(width: 840, height: 560)
+    interfaceInventory = Array(interfaces.prefix(256));
+    sensorInventory = Array(sensors.prefix(4096))
     build()
+    for name in [
+      Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange,
+      NSLocale.currentLocaleDidChangeNotification,
+    ] {
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(systemClockChanged), name: name, object: nil)
+    }
     window.center()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   func windowWillClose(_ notification: Notification) {
+    NotificationCenter.default.removeObserver(self)
+    locationSession.cancel(); locationChoices.removeAll()
     calendarPicker?.close(); calendarPicker = nil
     if let window { MenuPanel.releaseContent(of: window) }
+    sidebar = nil; tabs = nil
+    fields.removeAll(); toggles.removeAll(); choices.removeAll(); interfaceButtons.removeAll()
+    menuToggles.removeAll(); menuStyles.removeAll(); menuOrders.removeAll(); menuColors.removeAll();
+    menuLabels.removeAll(); notificationAdvanced = nil; sensorRuleChoices.removeAll()
+    sensorInventory.removeAll(); interfaceInventory.removeAll(); locationChoices.removeAll()
     onClose?()
   }
   func validateCalendarAccess() { calendarPicker?.validateAccess() }
-  private func tab(_ title: String, in tabs: NSTabView) -> NSView {
-    let item = NSTabViewItem(identifier: title)
-    item.label = title
-    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 610, height: 505))
-    scroll.hasVerticalScroller = true
-    scroll.autohidesScrollers = true
-    scroll.drawsBackground = false
-    let body = FlippedView(frame: NSRect(x: 0, y: 0, width: 600, height: 730))
-    scroll.documentView = body
-    item.view = scroll
-    tabs.addTabViewItem(item)
-    return body
+  private var tabs: NSTabView?
+  private var sidebar: SettingsSidebar?
+  private var dateExample = NSTextField(wrappingLabelWithString: "")
+  private var draftLabel = NSTextField(labelWithString: "")
+  private var interfaceButtons: [String: NSButton] = [:]
+  private var interfaceInventory: [InterfaceData] = []
+  private var interfaceDescriptionsStore: [String: InterfaceDescription] = [:]
+  private var sensorInventory: [SensorData] = []
+  var locationSession = LocationLookupSession()
+  private var locationChoices: [LocationChoice] = []
+  private var locationStatus = NSTextField(wrappingLabelWithString: "")
+  private var locationPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+  private func field(_ id: String, title: String, value: String, in form: SettingsForm) {
+    let text = NSTextField(string: value); text.delegate = self
+    text.setAccessibilityLabel(title); fields[id] = text; form.row(title, control: text)
   }
-  private func label(_ title: String, y: CGFloat, in view: NSView, height: CGFloat = 22) {
-    let label = NSTextField(wrappingLabelWithString: title)
-    label.font = .systemFont(ofSize: 12)
-    label.frame = NSRect(x: 18, y: y, width: 560, height: height)
-    view.addSubview(label)
-  }
-  private func field(_ id: String, title: String, value: String, y: CGFloat, in view: NSView) {
-    label(title, y: y + 5, in: view)
-    let text = NSTextField(string: value)
-    text.frame = NSRect(x: 275, y: y, width: 290, height: 26)
-    text.setAccessibilityLabel(title)
-    view.addSubview(text)
-    fields[id] = text
-  }
-  private func toggle(_ id: String, title: String, value: Bool, y: CGFloat, in view: NSView) {
-    let button = NSButton(checkboxWithTitle: title, target: nil, action: nil)
-    button.state = value ? .on : .off
-    button.frame = NSRect(x: 18, y: y, width: 555, height: 26)
-    view.addSubview(button)
-    toggles[id] = button
+  private func toggle(_ id: String, title: String, value: Bool, in form: SettingsForm) {
+    let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(draftChanged))
+    button.state = value ? .on : .off; toggles[id] = button; form.append(button)
   }
   private func choice(
-    _ id: String, title: String, values: [String], selected: Int, y: CGFloat, in view: NSView
+    _ id: String, title: String, values: [String], selected: Int, in form: SettingsForm
   ) {
-    label(title, y: y + 5, in: view)
-    let popup = NSPopUpButton(frame: NSRect(x: 275, y: y, width: 290, height: 28), pullsDown: false)
-    popup.addItems(withTitles: values)
-    popup.selectItem(at: selected)
-    popup.setAccessibilityLabel(title)
-    view.addSubview(popup)
-    choices[id] = popup
+    let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+    popup.addItems(withTitles: values); popup.selectItem(at: selected)
+    popup.target = self; popup.action = #selector(draftChanged)
+    popup.setAccessibilityLabel(title); choices[id] = popup; form.row(title, control: popup)
+  }
+  private func button(_ title: String, _ action: Selector) -> NSButton {
+    NSButton(title: title, target: self, action: action)
+  }
+  private func form(_ section: SettingsSection, detail: String, tabs: NSTabView) -> SettingsForm {
+    let form = SettingsForm(title: section.rawValue, detail: detail)
+    let scroll = NSScrollView(); scroll.hasVerticalScroller = true
+    scroll.autohidesScrollers = true; scroll.drawsBackground = false; scroll.documentView = form
+    form.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+    let item = NSTabViewItem(identifier: section.rawValue); item.label = section.rawValue;
+    item.view = scroll
+    tabs.addTabViewItem(item); return form
+  }
+  func selectSection(_ section: SettingsSection) {
+    tabs?.selectTabViewItem(withIdentifier: section.rawValue)
+    if let index = SettingsSection.allCases.firstIndex(of: section) {
+      sidebar?.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+    }
   }
   private func build() {
-    guard let content = window?.contentView else { return }
-    let tabs = NSTabView(frame: NSRect(x: 15, y: 100, width: 620, height: 535))
-    content.addSubview(tabs)
-    let general = tab("General", in: tabs)
-    label(
-      "One native sampler, bounded history, and no installed privileged helper.", y: 16,
-      in: general, height: 40)
+    let split = NSSplitViewController()
+    let navigation = SettingsSidebar(); sidebar = navigation
+    let sideItem = NSSplitViewItem(sidebarWithViewController: navigation)
+    sideItem.minimumThickness = 180; sideItem.maximumThickness = 220
+    split.addSplitViewItem(sideItem)
+    let detail = NSViewController(); detail.view = NSView()
+    let tabs = NSTabView(); self.tabs = tabs; tabs.tabViewType = .noTabsNoBorder
+    tabs.translatesAutoresizingMaskIntoConstraints = false; detail.view.addSubview(tabs)
+    let footer = NSStackView(); footer.orientation = .horizontal; footer.alignment = .centerY;
+    footer.spacing = 8
+    footer.translatesAutoresizingMaskIntoConstraints = false; detail.view.addSubview(footer)
+    draftLabel.font = .systemFont(ofSize: 12); draftLabel.textColor = .secondaryLabelColor
+    let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let close = button("Close", #selector(closeWindow))
+    let apply = button("Apply", #selector(applySettings)); apply.keyEquivalent = "\r"
+    for view in [draftLabel, spacer, close, apply] { footer.addArrangedSubview(view) }
+    errorLabel = NSTextField(wrappingLabelWithString: "")
+    errorLabel.font = .systemFont(ofSize: 12); errorLabel.textColor = .systemRed
+    errorLabel.translatesAutoresizingMaskIntoConstraints = false; detail.view.addSubview(errorLabel)
+    NSLayoutConstraint.activate([
+      tabs.leadingAnchor.constraint(equalTo: detail.view.leadingAnchor),
+      tabs.trailingAnchor.constraint(equalTo: detail.view.trailingAnchor),
+      tabs.topAnchor.constraint(equalTo: detail.view.topAnchor),
+      tabs.bottomAnchor.constraint(equalTo: errorLabel.topAnchor, constant: -8),
+      errorLabel.leadingAnchor.constraint(equalTo: detail.view.leadingAnchor, constant: 24),
+      errorLabel.trailingAnchor.constraint(equalTo: detail.view.trailingAnchor, constant: -24),
+      errorLabel.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -10),
+      footer.leadingAnchor.constraint(equalTo: detail.view.leadingAnchor, constant: 24),
+      footer.trailingAnchor.constraint(equalTo: detail.view.trailingAnchor, constant: -24),
+      footer.bottomAnchor.constraint(equalTo: detail.view.bottomAnchor, constant: -18),
+    ])
+    split.addSplitViewItem(NSSplitViewItem(viewController: detail))
+    window?.contentViewController = split
+    navigation.onSelect = { [weak self] section in
+      self?.tabs?.selectTabViewItem(withIdentifier: section.rawValue)
+    }
+    buildGeneral(
+      form(
+        .general, detail: "Choose how Aerie collects and presents your Mac's activity.", tabs: tabs)
+    )
+    buildMenus(form(.menus, detail: "Keep the information you use close at hand.", tabs: tabs))
+    buildNetwork(
+      form(
+        .network,
+        detail: "Choose the interfaces used for bandwidth, history and speed notifications.",
+        tabs: tabs))
+    buildWeather(
+      form(
+        .weather, detail: "Choose a location, then decide which weather services to enable.",
+        tabs: tabs))
+    buildTime(
+      form(
+        .time, detail: "Local time, world clocks, calendars and daylight in one place.", tabs: tabs)
+    )
+    buildSensors(
+      form(
+        .sensors, detail: "Readable hardware readings with stable sensor identities.", tabs: tabs))
+    buildNotifications(
+      form(
+        .notifications,
+        detail: "Be notified when a value crosses a limit or your Mac's state changes.", tabs: tabs)
+    )
+    buildShortcuts(form(.shortcuts, detail: "Open Aerie from the keyboard.", tabs: tabs))
+    buildPermissions(
+      form(
+        .permissions,
+        detail: "Choose access for the features you want. Aerie requests no permissions at launch.",
+        tabs: tabs))
+    updateDateExample(); draftLabel.stringValue = "Changes take effect when you Apply."
+  }
+  private func buildGeneral(_ page: SettingsForm) {
+    page.section("Collection")
     choice(
-      "interval", title: "System refresh interval",
+      "interval", title: "Refresh every",
       values: ["0.5 seconds", "1 second", "2 seconds", "3 seconds", "5 seconds"],
-      selected: [0.5, 1, 2, 3, 5].firstIndex(of: settings.interval) ?? 1, y: 62, in: general)
-    choice(
-      "theme", title: "Appearance", values: ["System", "Light", "Dark"],
-      selected: Theme.allCases.firstIndex(of: settings.theme) ?? 0, y: 104, in: general)
-    choice(
-      "temperature", title: "Temperature", values: ["Celsius", "Fahrenheit"],
-      selected: settings.temperature == .celsius ? 0 : 1, y: 146, in: general)
-    field(
-      "processCount", title: "Top process count (1–20)", value: String(settings.processCount),
-      y: 188, in: general)
-    toggle(
-      "normalizedCPU", title: "Process CPU uses 0–100% of the whole machine",
-      value: settings.normalizedProcessCPU, y: 232, in: general)
-    toggle(
-      "binary", title: "Use binary byte units (KiB, MiB, GiB)", value: settings.binaryBytes, y: 266,
-      in: general)
-    toggle(
-      "bits", title: "Display network bandwidth in bits per second", value: settings.networkBits,
-      y: 300, in: general)
-    toggle(
-      "spacing", title: "Compact menu-bar spacing", value: settings.compactSpacing, y: 334,
-      in: general)
-    label(
-      "Process details are collected only while CPU, memory, storage or power panels need them. Pausing and system sleep cancel the sampling timer. Timer tolerance is 100 ms; the chosen interval is never silently reduced.",
-      y: 378, in: general, height: 70)
-    let export = NSButton(
-      title: "Export Settings…", target: self, action: #selector(exportSettings))
-    export.frame = NSRect(x: 18, y: 468, width: 170, height: 28)
-    general.addSubview(export)
-    let importButton = NSButton(
-      title: "Import Settings…", target: self, action: #selector(importSettings))
-    importButton.frame = NSRect(x: 195, y: 468, width: 170, height: 28)
-    general.addSubview(importButton)
-    let restore = NSButton(
-      title: "Restore Defaults…", target: self, action: #selector(restoreDefaults))
-    restore.frame = NSRect(x: 372, y: 468, width: 193, height: 28)
-    general.addSubview(restore)
-    label(
-      "Format 1 profiles: import and defaults are reviewed and staged before Apply. Locations and calendar choices are cleared; current numeric archive preference is preserved.",
-      y: 511, in: general, height: 45)
-
-    let dashboard = NSButton(
-      title: "Open Dashboard", target: self, action: #selector(openDashboard))
-    dashboard.frame = NSRect(x: 18, y: 580, width: 170, height: 28); general.addSubview(dashboard)
+      selected: [0.5, 1, 2, 3, 5].firstIndex(of: settings.interval) ?? 1, in: page)
     choice(
       "sensors", title: "Hardware sensor sampling",
       values: ["All supported sensors", "Other families on demand"],
-      selected: settings.effectiveSensorSampling == .all ? 0 : 1, y: 621, in: general)
-    label(
-      "Full sampling is the default. On demand keeps every temperature and enabled individual-rule sensor at the chosen interval; other readings wait for the Sensors panel. Inventory stays complete; deferred readings remain unavailable.",
-      y: 661, in: general, height: 92)
+      selected: settings.effectiveSensorSampling == .all ? 0 : 1, in: page)
+    page.note(
+      "Full sampling reads every supported sensor at your chosen interval. On demand keeps temperatures and notification sensors current while other families wait for the Sensors menu."
+    )
+    field(
+      "processCount", title: "Top process count (1–20)", value: String(settings.processCount),
+      in: page)
     toggle(
-      "persistentHistory", title: "Keep numeric history between launches",
-      value: settings.effectivePersistentHistory, y: 765, in: general)
-    label(
-      "Local archive: 2 MB maximum, saved once per minute and on normal exit. Turning this off deletes the archive. No process, calendar, weather or sensor names are saved.",
-      y: 805, in: general, height: 62)
+      "normalizedCPU", title: "Show process CPU as a percentage of the whole Mac",
+      value: settings.normalizedProcessCPU, in: page)
     toggle(
-      "combineProcesses", title: "Combine application and executable processes",
-      value: settings.effectiveCombineProcesses, y: 880, in: general)
-    label(
-      "Combining uses application-bundle or executable identity. Unknown identities stay separate; partial rates remain unavailable. Process sorting can be chosen independently for each panel.",
-      y: 920, in: general, height: 70)
-    for (index, module) in ProcessSort.modules.enumerated() {
+      "combineProcesses", title: "Combine processes belonging to the same application",
+      value: settings.effectiveCombineProcesses, in: page)
+    for module in ProcessSort.modules {
       let options = ProcessSort.options(for: module)
       choice(
         "processSort.\(module.rawValue)", title: module.title + " process sorting",
         values: options.map(\.title),
         selected: options.firstIndex(of: settings.processSorts?[module] ?? .automatic) ?? 0,
-        y: CGFloat(1000 + index * 42), in: general)
+        in: page)
     }
-    general.setFrameSize(NSSize(width: 600, height: 1240))
-    let menus = tab("Menus", in: tabs)
+    page.section("Units and appearance")
+    choice(
+      "theme", title: "Appearance", values: ["System", "Light", "Dark"],
+      selected: Theme.allCases.firstIndex(of: settings.theme) ?? 0, in: page)
+    choice(
+      "temperature", title: "Temperature", values: ["Celsius", "Fahrenheit"],
+      selected: settings.temperature == .celsius ? 0 : 1, in: page)
     toggle(
-      "combined", title: "Use one combined menu-bar item", value: settings.combined, y: 14,
-      in: menus)
-    label("Visible items", y: 60, in: menus)
-    let columnLabels = NSTextField(
-      labelWithString: "Style                               Order              Color")
-    columnLabels.frame = NSRect(x: 194, y: 60, width: 400, height: 22);
-    menus.addSubview(columnLabels)
+      "binary", title: "Use binary byte units (KiB, MiB, GiB)", value: settings.binaryBytes,
+      in: page)
+    toggle(
+      "bits", title: "Show network speeds in bits per second", value: settings.networkBits, in: page
+    )
+    page.section("History and settings")
+    toggle(
+      "persistentHistory", title: "Keep numeric history between launches",
+      value: settings.effectivePersistentHistory, in: page)
+    page.note(
+      "The local numeric archive is limited to 2 MB. Turning this off deletes it. Process, sensor, calendar and weather names are never archived."
+    )
+    page.buttons([
+      button("Export Settings…", #selector(exportSettings)),
+      button("Import Settings…", #selector(importSettings)),
+      button("Restore Defaults…", #selector(restoreDefaults)),
+    ])
+    page.note(
+      "Imports and defaults are reviewed before they enter this draft. Apply commits the draft; Close discards unapplied changes. Exported profiles exclude locations and calendar selections."
+    )
+    page.buttons([button("Open Dashboard", #selector(openDashboard))])
+  }
+  private func buildMenus(_ page: SettingsForm) {
+    page.section("Layout")
+    choice(
+      "menuLayout", title: "Menu-bar layout",
+      values: ["Grouped modules", "Separate items", "Combined dashboard"],
+      selected: settings.combined ? 2 : settings.effectiveGroupedMenus ? 0 : 1, in: page)
+    choices["menuLayout"]?.action = #selector(menuLayoutChanged)
+    choice(
+      "menuPadding", title: "Padding inside each module", values: (0...12).map { "\($0) points" },
+      selected: settings.effectiveMenuPadding, in: page)
+    choice(
+      "menuGap", title: "Gap between grouped modules", values: (0...12).map { "\($0) points" },
+      selected: settings.effectiveMenuGap, in: page)
+    toggle(
+      "spacing", title: "Compact spacing in combined dashboard", value: settings.compactSpacing,
+      in: page)
+    menuLayoutChanged()
+    page.note(
+      "A grouped display controls Aerie's own gaps. Separate items follow macOS placement. Other applications and system spacing are unchanged."
+    )
+    page.section("Visible modules")
+    page.note(
+      "Each row sets visibility, display style, order, label position and optional RGB color.")
     for (index, menu) in settings.menus.enumerated() {
-      let y = CGFloat(96 + index * 38)
-      let toggle = NSButton(checkboxWithTitle: menu.module.title, target: nil, action: nil)
-      toggle.frame = NSRect(x: 18, y: y, width: 150, height: 28)
-      toggle.state = menu.visible ? .on : .off
-      menus.addSubview(toggle)
-      menuToggles[menu.module] = toggle
-      let style = NSPopUpButton(
-        frame: NSRect(x: 190, y: y, width: 180, height: 28), pullsDown: false)
+      let toggle = NSButton(
+        checkboxWithTitle: menu.module.title, target: self, action: #selector(draftChanged))
+      toggle.state = menu.visible ? .on : .off; menuToggles[menu.module] = toggle
+      let style = NSPopUpButton(frame: .zero, pullsDown: false)
       style.addItems(withTitles: ["Text", "Graph", "Compact", "Stacked"])
       style.selectItem(at: DisplayStyle.allCases.firstIndex(of: menu.style) ?? 0)
-      style.setAccessibilityLabel(menu.module.title + " display style")
-      menus.addSubview(style)
+      style.setAccessibilityLabel(menu.module.title + " display style");
       menuStyles[menu.module] = style
-      let order = NSPopUpButton(
-        frame: NSRect(x: 395, y: y, width: 135, height: 28), pullsDown: false)
-      order.addItems(withTitles: (1...settings.menus.count).map(String.init))
+      let order = NSPopUpButton(frame: .zero, pullsDown: false)
+      order.addItems(withTitles: (1...settings.menus.count).map(String.init));
       order.selectItem(at: index)
-      order.setAccessibilityLabel(menu.module.title + " menu order")
-      menus.addSubview(order)
+      order.setAccessibilityLabel(menu.module.title + " menu order");
       menuOrders[menu.module] = order
-      let color = NSTextField(string: menu.colorHex ?? "")
-      color.placeholderString = "Auto"; color.frame = NSRect(x: 538, y: y, width: 60, height: 26)
+      let color = NSTextField(string: menu.colorHex ?? ""); color.placeholderString = "Auto"
       color.setAccessibilityLabel(
-        menu.module.title + " color, hexadecimal RGB or empty for automatic")
-      menus.addSubview(color); menuColors[menu.module] = color
+        menu.module.title + " color, hexadecimal RGB or empty for automatic");
+      menuColors[menu.module] = color
+      style.target = self; style.action = #selector(draftChanged); order.target = self;
+      order.action = #selector(draftChanged); color.delegate = self
+      let label = NSPopUpButton(frame: .zero, pullsDown: false)
+      label.addItems(withTitles: ["Automatic", "No label", "Inline", "Vertical", "Icon"])
+      label.selectItem(
+        at: MenuLabelPlacement.allCases.firstIndex(of: menu.labelPlacement ?? .automatic) ?? 0)
+      label.setAccessibilityLabel(menu.module.title + " label position"); label.target = self;
+      label.action = #selector(draftChanged)
+      menuLabels[menu.module] = label
+      label.widthAnchor.constraint(equalToConstant: 100).isActive = true
+      let row = NSStackView(views: [toggle, style, order, label, color]);
+      row.orientation = .horizontal;
+      row.spacing = 8
+      toggle.widthAnchor.constraint(equalToConstant: 92).isActive = true
+      style.widthAnchor.constraint(equalToConstant: 100).isActive = true
+      order.widthAnchor.constraint(equalToConstant: 48).isActive = true
+      color.widthAnchor.constraint(equalToConstant: 76).isActive = true
+      page.append(row, fullWidth: false)
     }
-    label(
-      "Assign each item a different order. You can also Command-drag visible items in the macOS menu bar. Hiding an item does not remove its data from the combined dashboard.",
-      y: 492, in: menus, height: 60)
+    page.note(
+      "Order numbers must be unique. Unconfigured weather stays hidden; a configured location keeps its item while data is stale or unavailable."
+    )
+    page.section("Combined dashboard")
     field(
       "combinedModules", title: "Combined items (names, ordered)",
-      value: settings.effectiveCombinedModules.map(\.title).joined(separator: ","), y: 565,
-      in: menus)
+      value: settings.effectiveCombinedModules.map(\.title).joined(separator: ","), in: page)
     choice(
       "combinedStyle", title: "Combined display", values: ["Text", "Compact", "Stacked"],
       selected: [DisplayStyle.text, .compact, .stacked].firstIndex(
-        of: settings.combinedStyle ?? .text) ?? 0, y: 607, in: menus)
+        of: settings.combinedStyle ?? .text) ?? 0, in: page)
     field(
       "combinedColor", title: "Combined color (#RRGGBB or empty)",
-      value: settings.combinedColorHex ?? "", y: 649, in: menus)
-    label(
-      "Choose 1–6 unique names: CPU, GPU, Memory, Storage, Network, Sensors, Power, Time, Weather. Empty colors follow macOS appearance; custom colors need sufficient contrast. Stacked items show two lines. Hidden items are still sampled.",
-      y: 690, in: menus, height: 82)
-    menus.setFrameSize(NSSize(width: 600, height: 792))
-
-    let shortcuts = tab("Shortcuts", in: tabs)
-    label(
-      "Global shortcuts are off until you add a combination and Apply. Enter one item per line, using its menu name or Settings, followed by | and the combination.",
-      y: 16, in: shortcuts, height: 62)
-    label(
-      "Example: CPU | Command+Option+C\nSettings | Command+Control+A", y: 88, in: shortcuts,
-      height: 48)
-    shortcutsField.string = (settings.shortcuts ?? []).map {
-      $0.targetTitle + " | " + $0.combination
-    }.joined(separator: "\n")
-    shortcutsField.isRichText = false;
-    shortcutsField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-    shortcutsField.setAccessibilityLabel("Global shortcut combinations")
-    let shortcutScroll = NSScrollView(frame: NSRect(x: 18, y: 151, width: 550, height: 275))
-    shortcutScroll.hasVerticalScroller = true; shortcutScroll.documentView = shortcutsField
-    shortcutsField.frame = NSRect(x: 0, y: 0, width: 550, height: 275);
-    shortcuts.addSubview(shortcutScroll)
-    label(
-      "Choose unique combinations containing Command or Control, with optional Option/Shift and a letter, digit, Space or F1–F20. Character keys resolve through the current keyboard layout. OS-reserved keys, conflicts, secure input or an unavailable layout can prevent registration; Aerie reports those failures. Clear all lines to release every shortcut.",
-      y: 445, in: shortcuts, height: 116)
-
-    let sensors = tab("Sensors", in: tabs)
-    label("Local sensor names", y: 18, in: sensors)
-    label(
-      "Use the four-character firmware key shown in Sensors, then | and your name. Example: T001 | Enclosure probe",
-      y: 55, in: sensors, height: 55)
-    sensorNamesField.string = (settings.sensorNames ?? [:]).sorted { $0.key < $1.key }.map {
-      $0.key + " | " + $0.value
-    }.joined(separator: "\n")
-    sensorNamesField.isRichText = false
-    sensorNamesField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-    sensorNamesField.setAccessibilityLabel("Local sensor names by firmware key")
-    let sensorScroll = NSScrollView(frame: NSRect(x: 18, y: 130, width: 550, height: 300))
-    sensorScroll.hasVerticalScroller = true; sensorScroll.documentView = sensorNamesField
-    sensorNamesField.frame = NSRect(x: 0, y: 0, width: 550, height: 300)
-    sensors.addSubview(sensorScroll)
-    label(
-      "Names are local aliases; firmware keys stay visible. A name does not verify a sensor's hardware role. Missing keys remain saved for reconnection. Use Rules to alert on a specific key and its native unit. Clear a line to restore its original name, then Apply.",
-      y: 453, in: sensors, height: 104)
-
-    let network = tab("Network", in: tabs)
-    label(
-      "Interface collection stays complete. Choose which active interfaces feed aggregate bandwidth, history and download/upload rules.",
-      y: 18, in: network, height: 60)
+      value: settings.combinedColorHex ?? "", in: page)
+    page.note(
+      "Choose 1–6 module names. Automatic colors follow macOS. Hiding a menu item does not stop collection or remove its dashboard."
+    )
+  }
+  private func buildNetwork(_ page: SettingsForm) {
+    page.section("Bandwidth sources")
     toggle(
       "networkAll", title: "Aggregate all active interfaces",
-      value: settings.networkInterfaces == nil, y: 92, in: network)
-    field(
-      "networkNames", title: "Selected interface names",
-      value: settings.networkInterfaces?.joined(separator: ", ") ?? "", y: 136, in: network)
-    label(
-      "Enter comma-separated names from the Network dashboard, for example en0. Virtual tunnels can duplicate physical-interface traffic; select one side when you want to avoid summing the same traffic twice. Inactive or missing selected interfaces do not contribute. All interfaces are still read at the chosen interval and remain visible.",
-      y: 185, in: network, height: 110)
-    label(
-      "Changing aggregate selection clears only the download/upload history series and resets rule sustain state, so old scope cannot be presented as the new scope. Other histories remain. Per-interface session totals start at first observation and rebase on counter resets, source changes, interface disappearance or a failed read.",
-      y: 310, in: network, height: 100)
+      value: settings.networkInterfaces == nil, in: page)
+    toggles["networkAll"]?.action = #selector(networkScopeChanged)
+    let descriptions = interfaceDescriptionsStore
+    let missing = (settings.networkInterfaces ?? []).filter { name in
+      !interfaceInventory.contains { $0.name == name }
+    }
+    for entry in interfaceInventory.sorted(by: { $0.name < $1.name }) {
+      let selected = settings.networkInterfaces?.contains(entry.name) ?? false
+      let button = NSButton(
+        checkboxWithTitle: InterfaceCatalog.title(
+          identifier: entry.name, active: entry.active, description: descriptions[entry.name]),
+        target: self,
+        action: #selector(draftChanged))
+      button.state = selected ? .on : .off; interfaceButtons[entry.name] = button;
+      page.append(button)
+    }
+    for name in missing {
+      let button = NSButton(
+        checkboxWithTitle: name + " · Not currently available", target: self,
+        action: #selector(draftChanged))
+      button.state = .on; interfaceButtons[name] = button; page.append(button)
+    }
+    if interfaceButtons.isEmpty {
+      page.note(
+        "No interfaces are present in the current sample. A saved selection remains available when its interface returns."
+      )
+    }
+    page.note(
+      "Turn All off to select interfaces. An empty selection means None. Virtual tunnels can duplicate physical traffic; select one side to avoid counting it twice. Every interface is still collected at the original interval."
+    )
+    networkScopeChanged()
+    page.section("External address")
     toggle(
-      "publicAddress", title: "Allow public IP lookup through ipify",
-      value: settings.effectivePublicAddress, y: 436, in: network)
-    label(
-      "When enabled, ipify sees your network address and returns the HTTP route's IPv4 or IPv6. VPN/proxy/NAT can affect that address. Refresh is five minutes; disabling, pause and sleep cancel requests. No location lookup, credentials or address history is used.",
-      y: 478, in: network, height: 100)
-    let addressTerms = NSButton(
-      title: "Read ipify Service Details…", target: self, action: #selector(openAddressTerms))
-    addressTerms.frame = NSRect(x: 18, y: 597, width: 245, height: 28);
-    network.addSubview(addressTerms)
-
-    let weather = tab("Weather", in: tabs)
-    weather.frame.size.height = 885
-    weather.frame.size.height = 840
-    label("Optional weather", y: 18, in: weather)
+      "publicAddress", title: "Look up external IP address through api.ipify.org",
+      value: settings.effectivePublicAddress, in: page)
+    page.note(
+      "This optional lookup sends your network IP to api.ipify.org every five minutes. Reply data stays in memory. It is separate from local interface monitoring."
+    )
+    page.buttons([button("Read Address Service Terms…", #selector(openAddressTerms))])
+  }
+  private func buildWeather(_ page: SettingsForm) {
+    page.section("Location")
+    field("locationQuery", title: "City or ZIP / postal code", value: "", in: page)
+    page.buttons([
+      button("Find Location", #selector(findLocation)),
+      button("Use My Mac Location", #selector(useMacLocation)),
+    ])
+    page.note(
+      "Find sends your search and network IP to Apple's geocoding service. Use My Mac Location requests one location through macOS and may ask for permission. Neither action enables weather or maps."
+    )
+    locationPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    locationPicker.addItem(withTitle: "Choose a location")
+    locationPicker.target = self; locationPicker.action = #selector(chooseLocation)
+    locationPicker.setAccessibilityLabel("Location search results")
+    locationPicker.isHidden = true; page.append(locationPicker)
+    locationStatus = NSTextField(wrappingLabelWithString: "Choose a location to get started.")
+    locationStatus.textColor = .secondaryLabelColor; locationStatus.font = .systemFont(ofSize: 12)
+    page.append(locationStatus)
+    toggle(
+      "reuseDaylightLocation", title: "Use the chosen location for offline daylight too",
+      value: true, in: page)
+    field("weatherName", title: "Location display name", value: settings.weather.name, in: page)
+    page.section("Coordinates")
+    page.note("These are filled by the location chooser. You can also enter a point manually.")
+    field(
+      "latitude", title: "Latitude (−90…90)", value: String(settings.weather.latitude), in: page)
+    field(
+      "longitude", title: "Longitude (−180…180)", value: String(settings.weather.longitude),
+      in: page)
+    page.section("Forecasts")
     choice(
       "weatherProvider", title: "Forecast provider",
       values: ["Open-Meteo (global models)", "NWS (US land forecasts/stations)"],
-      selected: settings.weather.provider == "nws" ? 1 : 0, y: 48, in: weather)
-    label(
-      "Requests send your network IP and manual coordinates rounded to two decimal places to the selected provider. Open-Meteo is personal/noncommercial and may retain troubleshooting logs up to 90 days. NWS offers free US land forecasts, nearby station observations and point alerts; coverage and freshness vary. No device location or city search is used.",
-      y: 93, in: weather, height: 100)
-    let terms = NSButton(title: "Read Provider Terms…", target: self, action: #selector(openTerms))
-    terms.frame = NSRect(x: 18, y: 205, width: 210, height: 28)
-    weather.addSubview(terms)
-    field(
-      "weatherName", title: "Location display name", value: settings.weather.name, y: 252,
-      in: weather)
-    field(
-      "latitude", title: "Latitude (−90…90)", value: String(settings.weather.latitude), y: 294,
-      in: weather)
-    field(
-      "longitude", title: "Longitude (−180…180)", value: String(settings.weather.longitude), y: 336,
-      in: weather)
+      selected: settings.weather.provider == "nws" ? 1 : 0, in: page)
+    page.note(
+      "Enabling forecasts sends your network IP and rounded coordinates to the selected provider. Open-Meteo permits personal, noncommercial use and may retain troubleshooting logs for up to 90 days. NWS provides US land forecasts, station observations and point alerts."
+    )
+    page.buttons([button("Read Provider Terms…", #selector(openTerms))])
     toggle(
       "weather", title: "Enable weather and send this location to the selected provider",
-      value: settings.weather.enabled, y: 383, in: weather)
-    label(
-      "Applying enabled weather sends requests to the selected provider. Refresh is 15 minutes, including NWS station/point-alert data; it is not real-time warning delivery. Values retain observation/forecast times. Requests and data stay ephemeral and cancel when disabled. Public tests/CI use synthetic data. Attribution appears in the menu.",
-      y: 429, in: weather, height: 100)
-    toggle(
-      "maps", title: "Enable NOAA/NWS maps for this manual location",
-      value: settings.weather.mapsEnabled, y: 585, in: weather)
-    label(
-      "Map provider: NOAA/NWS. Opening Maps sends the selected map area and your IP to NOAA services. Alert details also send the rounded map-center point. Maps load only on demand; forecast consent above is separate. NOAA boundaries are used; no device location is requested.",
-      y: 626, in: weather, height: 96)
-
+      value: settings.weather.enabled, in: page)
     choice(
       "hourlyForecastHours", title: "Hourly forecast rows", values: ["24", "48", "72", "168"],
       selected: [24, 48, 72, 168].firstIndex(of: settings.effectiveHourlyForecastHours) ?? 0,
-      y: 748, in: weather)
-    label(
-      "Hourly details use the current cached report and make no extra requests. Provider fields can be unavailable; precipitation probability and amount are distinct. More rows change only the open-panel presentation, not fetch cadence.",
-      y: 790, in: weather, height: 70)
-
-    let time = tab("Time", in: tabs)
-    field("clockFormat", title: "Date format", value: settings.clockFormat, y: 18, in: time)
-    time.frame.size.height = 970
-    let calendarOptions = settings.effectiveCalendarOptions
+      in: page)
+    page.note(
+      "Forecasts refresh every 15 minutes. Cached details show source and observation times; they are not real-time warning delivery. Choosing a location alone does not enable forecasts."
+    )
+    page.section("Maps")
+    toggle(
+      "maps", title: "Enable NOAA/NWS maps for this location", value: settings.weather.mapsEnabled,
+      in: page)
+    page.note(
+      "Opening Maps sends the chosen map area and your IP to NOAA services. Point alert details also send the rounded center point. Map consent is separate from forecast consent, and maps load only while open."
+    )
+  }
+  private func buildTime(_ page: SettingsForm) {
+    page.section("Menu-bar date and time")
+    localTimeZoneLabel = NSTextField(
+      wrappingLabelWithString: "Time zone: " + TimeZone.autoupdatingCurrent.identifier
+        + " · Follows Mac automatically")
+    localTimeZoneLabel.font = .systemFont(ofSize: 12);
+    localTimeZoneLabel.textColor = .secondaryLabelColor
+    page.append(localTimeZoneLabel)
+    choice(
+      "clockMode", title: "Date and time format", values: ["Follow Mac settings", "Custom format"],
+      selected: settings.clockFormat.isEmpty ? 0 : 1, in: page)
+    choices["clockMode"]?.action = #selector(dateFormatChanged)
+    field("clockFormat", title: "Date format", value: settings.clockFormat, in: page)
+    dateExample.font = .systemFont(ofSize: 16, weight: .medium);
+    dateExample.setAccessibilityLabel("Date format example")
+    page.append(dateExample)
+    page.note(
+      "Automatic format follows the Mac's locale and 12/24-hour preference. The local clock follows the Mac's time zone. Custom formats use date-pattern syntax; the example updates as you type."
+    )
+    let options = settings.effectiveCalendarOptions
     choice(
       "firstWeekday", title: "First weekday",
       values: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
-      selected: calendarOptions.firstWeekday - 1, y: 65, in: time)
-    toggle(
-      "weeks", title: "Show calendar week numbers", value: settings.showWeekNumbers, y: 99, in: time
-    )
-    label("World clocks: one Name | IANA time zone per line", y: 147, in: time)
-    label(
-      "Examples: UTC | Etc/UTC and \"Home | office\" | Etc/UTC. Quoted names support escapes such as \\n for a line break.",
-      y: 177, in: time, height: 34)
-    let clockScroll = NSScrollView(frame: NSRect(x: 18, y: 216, width: 545, height: 195))
-    clockScroll.hasVerticalScroller = true
-    clockScroll.borderType = .bezelBorder
-    clocksField = NSTextView(frame: clockScroll.bounds)
-    clocksField.isRichText = false
-    clocksField.font = .systemFont(ofSize: 13)
-    clocksField.isAutomaticQuoteSubstitutionEnabled = false
-    clocksField.isAutomaticDashSubstitutionEnabled = false
-    clocksField.isAutomaticTextReplacementEnabled = false
+      selected: options.firstWeekday - 1, in: page)
+    choice(
+      "calendarSystem", title: "Calendar system", values: CalendarSystem.allCases.map(\.title),
+      selected: CalendarSystem.allCases.firstIndex(of: options.system) ?? 0, in: page)
+    toggle("weeks", title: "Show calendar week numbers", value: settings.showWeekNumbers, in: page)
+    choice(
+      "weekNumbers", title: "Week number convention", values: WeekNumberStyle.allCases.map(\.title),
+      selected: WeekNumberStyle.allCases.firstIndex(of: options.weekNumbers) ?? 0, in: page)
+    page.section("World clocks")
+    clocksField = NSTextView(); clocksField.delegate = self;
     clocksField.string = (try? WorldClockForm.text(settings.clocks)) ?? ""
-    clocksField.setAccessibilityLabel("World clocks")
-    clockScroll.documentView = clocksField
-    time.addSubview(clockScroll)
-    label(
-      "Calendar events remain local. Access is requested only through the Permissions tab. Lunar phase is an offline approximation. Offline daylight uses a separate manual point and makes no network requests.",
-      y: 434, in: time, height: 70)
-    let calendars = NSButton(
-      title: "Choose Event Calendars…", target: self,
-      action: #selector(chooseEventCalendars))
-    calendars.frame = NSRect(x: 18, y: 519, width: 240, height: 28); time.addSubview(calendars)
-    calendarSelectionLabel.frame = NSRect(x: 18, y: 559, width: 550, height: 48)
-    calendarSelectionLabel.font = .systemFont(ofSize: 12); time.addSubview(calendarSelectionLabel)
-    updateCalendarSelectionLabel()
+    clocksField.isAutomaticQuoteSubstitutionEnabled = false;
+    clocksField.isAutomaticDashSubstitutionEnabled = false;
+    clocksField.isAutomaticTextReplacementEnabled = false
+    clocksField.setAccessibilityLabel("World clocks"); page.editor(clocksField, height: 150)
+    page.note(
+      "One Name | IANA time zone per line. Quote names that contain a pipe. Example: Home | Europe/London."
+    )
     choice(
       "worldClockStyle", title: "World clock style", values: WorldClockStyle.allCases.map(\.title),
       selected: WorldClockStyle.allCases.firstIndex(of: settings.worldClockStyle ?? .compact) ?? 0,
-      y: 620, in: time)
+      in: page)
     choice(
       "worldClockOrder", title: "World clock ordering",
       values: WorldClockOrder.allCases.map(\.title),
       selected: WorldClockOrder.allCases.firstIndex(of: settings.worldClockOrder ?? .manual) ?? 0,
-      y: 660, in: time)
-    choice(
-      "calendarSystem", title: "Calendar system", values: CalendarSystem.allCases.map(\.title),
-      selected: CalendarSystem.allCases.firstIndex(of: calendarOptions.system) ?? 0, y: 700,
-      in: time)
-    choice(
-      "weekNumbers", title: "Week number convention", values: WeekNumberStyle.allCases.map(\.title),
-      selected: WeekNumberStyle.allCases.firstIndex(of: calendarOptions.weekNumbers) ?? 0, y: 740,
-      in: time)
+      in: page)
+    page.section("Calendar events")
+    page.buttons([button("Choose Event Calendars…", #selector(chooseEventCalendars))])
+    updateCalendarSelectionLabel(); page.append(calendarSelectionLabel)
     field(
-      "upcomingDays", title: "Upcoming event days (1–31)",
-      value: String(calendarOptions.upcomingDays), y: 780, in: time)
-    label(
-      "Manual order follows the world-clock lines above. Clock styles share the existing system tick. ISO week numbers label each calendar row by its Thursday; selected-calendar weeks use that calendar's rules. Event dates use calendar arithmetic across daylight saving changes; these controls request no event access.",
-      y: 825, in: time, height: 100)
-
-    let daylight = tab("Daylight", in: tabs)
+      "upcomingDays", title: "Upcoming event days (1–31)", value: String(options.upcomingDays),
+      in: page)
+    page.section("Daylight")
     let point = settings.daylight ?? DaylightConfiguration()
     toggle(
-      "daylightEnabled", title: "Enable offline sunrise, sunset and twilight estimates",
-      value: point.enabled, y: 18, in: daylight)
-    field("daylightName", title: "Manual point name", value: point.name, y: 68, in: daylight)
+      "daylightEnabled", title: "Show offline sunrise, sunset and twilight estimates",
+      value: point.enabled, in: page)
+    field("daylightName", title: "Daylight location", value: point.name, in: page)
+    field("daylightLatitude", title: "Daylight latitude", value: String(point.latitude), in: page)
     field(
-      "daylightLatitude", title: "Latitude (north positive)", value: String(point.latitude), y: 110,
-      in: daylight)
-    field(
-      "daylightLongitude", title: "Longitude (east positive)", value: String(point.longitude),
-      y: 152, in: daylight)
-    field("daylightZone", title: "IANA time zone", value: point.zone, y: 194, in: daylight)
-    label(
-      "Coordinates stay in local settings and are never sent by this feature. Enter the point and its time zone yourself; no device location, IP lookup or permission request is used. Weather and map consent remain separate. Turning this option off removes the saved daylight point; settings export also removes it.",
-      y: 246, in: daylight, height: 106)
-    label(
-      "The Time panel shows the point's current local day, solar noon, daylight duration and civil/nautical/astronomical boundaries. These are approximate standard-horizon calculations for 1901–2099; terrain, refraction and polar conditions affect observed times. They do not enable weather or read calendars.",
-      y: 374, in: daylight, height: 106)
-
-    let rules = tab("Rules", in: tabs)
-    rules.frame.size.height = 1150
-    label("Sustained threshold notifications", y: 18, in: rules)
-    label(
-      "Missing values and sleep gaps reset the sustain timer. Notifications have a cooldown and require your permission. The rule engine keeps evaluating while menus are closed.",
-      y: 50, in: rules, height: 70)
+      "daylightLongitude", title: "Daylight longitude", value: String(point.longitude), in: page)
+    field("daylightZone", title: "Daylight time zone", value: point.zone, in: page)
+    page.note(
+      "Daylight calculations stay on your Mac and do not enable weather, maps or calendar access. Solar and lunar estimates are approximate."
+    )
+  }
+  private func buildSensors(_ page: SettingsForm) {
+    page.section("Sensor names")
+    page.note(
+      "Names come from hardware-specific mappings. A community label does not prove a physical core or component identity; the original code stays available in details. Unknown sensors remain labeled honestly."
+    )
+    if !sensorInventory.isEmpty {
+      let list = SensorNameList(sensors: sensorInventory, names: settings.sensorNames ?? [:])
+      list.onNameChanged = { [weak self] key, alias in
+        guard let self else { return false }
+        do {
+          var names = try SensorIdentity.parseNames(self.sensorNamesField.string) ?? [:]
+          names[key] = alias
+          guard SensorIdentity.valid(names: names) else { throw SettingsError.invalid }
+          self.sensorNamesField.string = names.sorted { $0.key < $1.key }.map {
+            $0.key + " | " + $0.value
+          }.joined(separator: "\n")
+          self.draftChanged(); return true
+        } catch {
+          self.errorLabel.stringValue = "Check saved aliases before editing a sensor name."
+          return false
+        }
+      }
+      page.append(list)
+      page.note(
+        "Edit a name directly in the list; clear it to restore the supplied name. Readings reflect the sample when Settings opened."
+      )
+    } else {
+      page.note("No readable sensors are present in this sample. Saved names are preserved.")
+    }
+    page.section("Saved aliases")
+    sensorNamesField = NSTextView(); sensorNamesField.delegate = self
+    sensorNamesField.string = (settings.sensorNames ?? [:]).sorted { $0.key < $1.key }.map {
+      $0.key + " | " + $0.value
+    }.joined(separator: "\n")
+    sensorNamesField.setAccessibilityLabel("Local sensor names by firmware key");
+    page.editor(sensorNamesField, height: 220)
+    page.note(
+      "Optional aliases: code | name, one per line. Clear an alias to use the supplied name. Saved aliases remain when a sensor is missing; aliases do not change its measurement or unit."
+    )
+  }
+  private func buildNotifications(_ page: SettingsForm) {
+    page.section("Value notifications")
+    page.note(
+      "Choose a value, a limit and how long it must stay there. Missing readings, pause and sleep restart that waiting period. Notifications require permission and continue while menus are closed."
+    )
     choice(
-      "ruleMetric", title: "Metric",
-      values: [
-        "CPU %", "GPU %", "Memory used %", "Battery %", "Maximum temperature °C",
-        "First volume free GiB", "Download bytes/s", "Upload bytes/s", "Thermal severity 0–3",
-        "Storage read bytes/s", "Storage write bytes/s", "Individual sensor",
-      ], selected: 0, y: 132, in: rules)
-    choices["ruleMetric"]?.target = self
+      "ruleMetric", title: "Notify me when",
+      values: ruleMetrics.map {
+        $0 == "sensor" ? "Individual sensor" : NotificationPresentation.title($0)
+      }, selected: 0, in: page)
     choices["ruleMetric"]?.action = #selector(ruleMetricChanged)
-    field("ruleSensorKey", title: "Sensor firmware key (4 chars)", value: "", y: 172, in: rules)
-    choice(
-      "ruleSensorUnit", title: "Sensor native unit", values: SensorIdentity.units, selected: 0,
-      y: 212, in: rules)
-    ruleMetricChanged()
     choice(
       "ruleComparison", title: "Condition", values: RuleComparison.allCases.map(\.title),
-      selected: 0, y: 252,
-      in: rules)
-    choices["ruleComparison"]?.target = self;
+      selected: 0, in: page)
     choices["ruleComparison"]?.action = #selector(ruleComparisonChanged)
-    field("ruleThreshold", title: "Threshold", value: "90", y: 292, in: rules)
-    field("ruleDuration", title: "Sustain seconds", value: "30", y: 332, in: rules)
-    field("ruleCooldown", title: "Cooldown seconds", value: "300", y: 372, in: rules)
-    for (title, action, x, width) in [
-      ("Add", #selector(addRule), 18.0, 80.0),
-      ("Save Selected", #selector(saveRule), 104.0, 130.0),
-      ("Delete", #selector(deleteRule), 240.0, 85.0),
-      ("Enable/Disable", #selector(toggleRule), 330.0, 130.0),
-      ("Clear All", #selector(clearRules), 465.0, 100.0),
-    ] {
-      let button = NSButton(title: title, target: self, action: action)
-      button.frame = NSRect(x: x, y: 417, width: width, height: 28); rules.addSubview(button)
-    }
-    rulesPicker.frame = NSRect(x: 18, y: 460, width: 550, height: 28)
-    rulesPicker.target = self; rulesPicker.action = #selector(selectRule);
-    rules.addSubview(rulesPicker)
-    label(
-      "Sensor thresholds use native units, including °C when display units are °F. A missing key or different unit does not fire. Rules keep their keys live in on-demand mode and do not add history series.",
-      y: 500, in: rules, height: 73)
-    field("ruleUpper", title: "Upper bound (ranges only)", value: "100", y: 588, in: rules)
-    field("ruleHysteresis", title: "Recovery band (native units)", value: "0", y: 630, in: rules)
+    field("ruleThreshold", title: "Limit", value: "90", in: page)
+    field("ruleDuration", title: "Stays this way for (seconds)", value: "30", in: page)
+    field("ruleCooldown", title: "Wait between notifications (seconds)", value: "300", in: page)
+    sensorRuleChoices = sensorInventory.sorted { $0.label < $1.label }
+    choice(
+      "ruleSensorChoice", title: "Choose a sensor",
+      values: ["Choose a sensor"]
+        + sensorRuleChoices.map { $0.title(names: settings.sensorNames) + " (" + $0.unit + ")" },
+      selected: 0, in: page)
+    choices["ruleSensorChoice"]?.action = #selector(sensorRuleChanged)
+    let advanced = SettingsForm(
+      title: "Advanced options",
+      detail: "Range limits, sensor identity, recovery and repeat behavior.")
+    notificationAdvanced = advanced
     toggle(
-      "ruleRepeat", title: "Repeat while active after each cooldown", value: true, y: 672, in: rules
+      "notificationAdvanced", title: "Show advanced notification options", value: false, in: page)
+    toggles["notificationAdvanced"]?.action = #selector(toggleNotificationAdvanced)
+    field("ruleSensorKey", title: "Sensor code (4 characters)", value: "", in: advanced)
+    choice(
+      "ruleSensorUnit", title: "Sensor native unit", values: SensorIdentity.units, selected: 0,
+      in: advanced)
+    field("ruleUpper", title: "Upper bound (ranges only)", value: "100", in: advanced)
+    field("ruleHysteresis", title: "Recovery margin", value: "0", in: advanced)
+    toggle(
+      "ruleRepeat", title: "Repeat while active after each cooldown", value: true, in: advanced)
+    advanced.isHidden = true; page.append(advanced)
+    notificationUnits.font = .systemFont(ofSize: 12);
+    notificationUnits.textColor = .secondaryLabelColor
+    page.append(notificationUnits)
+    notificationExample.font = .systemFont(ofSize: 14, weight: .medium)
+    notificationExample.setAccessibilityLabel("Notification example");
+    page.append(notificationExample)
+    page.note(
+      "Cooldown is the minimum time between notifications. Recovery margin prevents repeated alerts around a boundary. Turn repeats off for one notification until the condition clears."
     )
-    ruleComparisonChanged()
-    rulesLabel.frame = NSRect(x: 18, y: 724, width: 550, height: 280); rules.addSubview(rulesLabel)
-    label(
-      "A recovery band extends an already-active condition; it never starts one. Outside-range bands must be at most half the range width. Turn repeats off for one notification per active episode. Missing data, edits, pause or sleep reset the episode; cooldown remains separate.",
-      y: 1018, in: rules, height: 100)
-    refreshRules()
-
-    let changes = tab("Changes", in: tabs)
-    label("Notify when a system state changes", y: 18, in: changes)
-    label(
-      "Each enabled rule establishes a baseline first. Missing data, pausing and sleep reset it. Changes during cooldown are suppressed. Mounted-volume detection refreshes every 30 seconds; other states use the selected system interval. Enable notifications in Permissions, then Apply.",
-      y: 52, in: changes, height: 100)
-    let cooldownHeader = NSTextField(labelWithString: "Cooldown seconds")
-    cooldownHeader.font = .systemFont(ofSize: 12)
-    cooldownHeader.frame = NSRect(x: 425, y: 145, width: 150, height: 22)
-    changes.addSubview(cooldownHeader)
-    for (index, kind) in ChangeKind.allCases.enumerated() {
-      let y = CGFloat(176 + index * 40)
+    page.buttons([
+      button("Add to Draft", #selector(addRule)), button("Update Draft", #selector(saveRule)),
+      button("Remove", #selector(deleteRule)), button("Enable/Disable", #selector(toggleRule)),
+      button("Clear All", #selector(clearRules)),
+    ])
+    rulesPicker.setAccessibilityLabel("Saved value notifications")
+    rulesPicker.target = self; rulesPicker.action = #selector(selectRule); page.append(rulesPicker)
+    rulesLabel = NSTextField(wrappingLabelWithString: ""); page.append(rulesLabel)
+    ruleMetricChanged(); ruleComparisonChanged(); refreshRules()
+    page.note("Add or update a notification in the draft, then Apply to activate it.")
+    page.section("State changes")
+    page.note(
+      "Choose which changes notify you. Each switch has its own minimum time between notifications. Aerie establishes a baseline before notifying; mounted volumes refresh every 30 seconds."
+    )
+    for kind in ChangeKind.allCases {
       toggle(
         "change.\(kind.rawValue)", title: kind.title,
-        value: settings.changeRules?.first(where: { $0.kind == kind })?.enabled ?? false,
-        y: y, in: changes)
-      toggles["change.\(kind.rawValue)"]?.frame.size.width = 390
-      let cooldown = NSTextField(
-        string: String(settings.changeRules?.first(where: { $0.kind == kind })?.cooldown ?? 300))
-      cooldown.frame = NSRect(x: 425, y: y, width: 140, height: 26)
-      cooldown.setAccessibilityLabel(kind.title + " cooldown seconds (10–604800)")
-      changes.addSubview(cooldown); fields["changeCooldown.\(kind.rawValue)"] = cooldown
+        value: settings.changeRules?.first(where: { $0.kind == kind })?.enabled ?? false, in: page)
+      field(
+        "changeCooldown.\(kind.rawValue)", title: kind.title + " cooldown seconds (10–604800)",
+        value: String(settings.changeRules?.first(where: { $0.kind == kind })?.cooldown ?? 300),
+        in: page)
     }
-    label(
-      "Each rule keeps its own cooldown (10–604800 seconds). Editing one leaves the others unchanged.",
-      y: 515, in: changes, height: 45)
-
-    let permissions = tab("Permissions", in: tabs)
-    label("Aerie does not request permissions at launch.", y: 18, in: permissions)
-    label(
-      "Use these controls only when you want the corresponding feature. No elevated helper, fan writes, automatic location lookup, or security-setting changes are installed.",
-      y: 54, in: permissions, height: 65)
-    for (title, action, y) in [
-      ("Enable Notifications…", #selector(notifications), 145),
-      ("Allow Calendar Events…", #selector(calendar), 195),
-      ("Enable Launch at Login…", #selector(login), 245),
-      ("Allow Wi-Fi Identity…", #selector(wifiPermission), 295),
-    ] {
-      let b = NSButton(title: title, target: self, action: action)
-      b.frame = NSRect(x: 18, y: y, width: 270, height: 30)
-      permissions.addSubview(b)
+  }
+  private func buildShortcuts(_ page: SettingsForm) {
+    page.section("Keyboard shortcuts")
+    shortcutsField = NSTextView(); shortcutsField.delegate = self
+    shortcutsField.string = (settings.shortcuts ?? []).map {
+      $0.targetTitle + " | " + $0.combination
+    }.joined(separator: "\n")
+    shortcutsField.setAccessibilityLabel("Global shortcut combinations");
+    page.editor(shortcutsField, height: 220)
+    page.note(
+      "One target | combination per line. Examples: CPU | Command+Option+C and Settings | Command+Control+A. Use unique combinations with Command or Control; shortcuts stay off until you Apply."
+    )
+  }
+  private func buildPermissions(_ page: SettingsForm) {
+    page.section("Access")
+    page.buttons([button("Enable Notifications…", #selector(notifications))])
+    page.note("Allow Aerie's value and state-change notifications.")
+    page.buttons([button("Allow Calendar Events…", #selector(calendar))])
+    page.note("Show your chosen event calendars locally in Date & Time.")
+    page.buttons([button("Allow Wi-Fi Identity…", #selector(wifiPermission))])
+    page.note(
+      "macOS uses Location Services permission to reveal Wi-Fi network names. Signal and channel information depend on OS availability. Requesting identity access does not start location tracking."
+    )
+    page.buttons([button("Enable Launch at Login…", #selector(login))])
+    page.note(
+      "Start Aerie when you sign in. No privileged helper or security-setting change is installed.")
+  }
+  @objc private func toggleNotificationAdvanced() {
+    notificationAdvanced?.isHidden = toggles["notificationAdvanced"]?.state != .on
+  }
+  @objc private func sensorRuleChanged() {
+    let index = (choices["ruleSensorChoice"]?.indexOfSelectedItem ?? 0) - 1
+    guard sensorRuleChoices.indices.contains(index) else { return }
+    let sensor = sensorRuleChoices[index]
+    fields["ruleSensorKey"]?.stringValue = sensor.key
+    choices["ruleSensorUnit"]?.selectItem(withTitle: sensor.unit)
+    updateNotificationExample(); draftChanged()
+  }
+  @objc private func findLocation() {
+    locationStatus.stringValue = "Finding locations…"; locationPicker.isHidden = true
+    locationSession.search(fields["locationQuery"]?.stringValue ?? "") { [weak self] result in
+      self?.receiveLocations(result)
     }
-    label(
-      "macOS requires Location Services access to reveal Wi-Fi SSID, BSSID and country. The button requests access only while Settings is active. Aerie never requests device coordinates or background location updates. Signal, noise, rate and channel remain subject to OS availability. Close Settings to cancel the pending attempt; this does not revoke an OS grant.",
-      y: 345, in: permissions, height: 125)
-    let close = NSButton(title: "Close", target: self, action: #selector(closeWindow))
-    close.frame = NSRect(x: 440, y: 18, width: 85, height: 30)
-    content.addSubview(close)
-    let apply = NSButton(title: "Apply", target: self, action: #selector(applySettings))
-    apply.frame = NSRect(x: 535, y: 18, width: 95, height: 30)
-    apply.keyEquivalent = "\r"
-    content.addSubview(apply)
-    errorLabel.textColor = .systemRed
-    errorLabel.font = .systemFont(ofSize: 11)
-    errorLabel.frame = NSRect(x: 20, y: 53, width: 610, height: 35)
-    content.addSubview(errorLabel)
+  }
+  @objc private func useMacLocation() {
+    locationStatus.stringValue = "Waiting for the Mac's location…"; locationPicker.isHidden = true
+    locationSession.macLocation(foreground: NSApp.isActive && window?.isKeyWindow == true) {
+      [weak self] result in self?.receiveLocations(result)
+    }
+  }
+  private func receiveLocations(_ result: Result<[LocationChoice], LocationLookupError>) {
+    switch result {
+    case .failure(let error): locationStatus.stringValue = error.message
+    case .success(let choices):
+      locationChoices = Array(choices.filter(\.valid).prefix(10))
+      guard !locationChoices.isEmpty else {
+        locationStatus.stringValue = LocationLookupError.unavailable.message; return
+      }
+      if locationChoices.count == 1 { stageLocation(locationChoices[0]); return }
+      locationPicker.removeAllItems(); locationPicker.addItem(withTitle: "Choose a location")
+      locationPicker.addItems(withTitles: locationChoices.map(\.name));
+      locationPicker.isHidden = false
+      locationStatus.stringValue =
+        "Choose the matching location. Forecasts and maps remain unchanged."
+    }
+  }
+  @objc private func chooseLocation() {
+    let index = locationPicker.indexOfSelectedItem - 1
+    guard locationChoices.indices.contains(index) else { return };
+    stageLocation(locationChoices[index])
+  }
+  func stageLocation(_ point: LocationChoice) {
+    guard point.valid else { return }
+    fields["weatherName"]?.stringValue = String(point.name.prefix(64))
+    fields["latitude"]?.stringValue = String(point.latitude);
+    fields["longitude"]?.stringValue = String(point.longitude)
+    if toggles["reuseDaylightLocation"]?.state == .on {
+      fields["daylightName"]?.stringValue = String(point.name.prefix(64))
+      fields["daylightLatitude"]?.stringValue = String(point.latitude);
+      fields["daylightLongitude"]?.stringValue = String(point.longitude)
+      fields["daylightZone"]?.stringValue = point.zone
+    }
+    locationPicker.isHidden = true
+    locationStatus.stringValue =
+      "Location staged. Forecasts, maps and daylight each stay under their own switch. Apply to save."
+    draftChanged()
+  }
+  func windowDidMiniaturize(_ notification: Notification) {
+    locationSession.cancel();
+    locationStatus.stringValue = "Location lookup cancelled. Try again when Settings is active."
+  }
+  @objc private func menuLayoutChanged() {
+    let layout = choices["menuLayout"]?.indexOfSelectedItem ?? 0
+    choices["menuGap"]?.isEnabled = layout == 0
+    choices["menuPadding"]?.isEnabled = layout != 2
+    toggles["spacing"]?.isEnabled = layout == 2
+    draftChanged()
+  }
+  @objc private func networkScopeChanged() {
+    let all = toggles["networkAll"]?.state == .on
+    for button in interfaceButtons.values { button.isEnabled = !all }
+    draftChanged()
+  }
+  @objc private func dateFormatChanged() {
+    if choices["clockMode"]?.indexOfSelectedItem == 1
+      && fields["clockFormat"]?.stringValue.isEmpty == true
+    {
+      let formatter = DateFormatter(); LocalClockFormat.configure(formatter, pattern: "")
+      fields["clockFormat"]?.stringValue = formatter.dateFormat
+    }
+    updateDateExample(); draftChanged()
+  }
+  func controlTextDidChange(_ notification: Notification) { updateDateExample(); draftChanged() }
+  func textDidChange(_ notification: Notification) { draftChanged() }
+  private func ruleSummary(_ rule: ThresholdRule) -> String {
+    let key = SensorIdentity.key(metric: rule.metric)
+    let aliases = (try? SensorIdentity.parseNames(sensorNamesField.string)) ?? settings.sensorNames
+    let name = key.flatMap { sensorKey in
+      aliases?[sensorKey] ?? sensorInventory.first(where: { $0.key == sensorKey })?.label
+    }
+    return NotificationPresentation.summary(rule, sensorName: name)
+  }
+  @objc private func draftChanged() {
+    guard !fields.isEmpty else { return }
+    updateNotificationExample()
+    draftLabel.stringValue = "Unapplied changes. Apply to save, or Close to discard."
+  }
+  private func updateNotificationExample() {
+    guard let index = choices["ruleMetric"]?.indexOfSelectedItem,
+      ruleMetrics.indices.contains(index)
+    else { return }
+    let metric = ruleMetrics[index]
+    let unit = NotificationPresentation.unit(
+      metric, sensorUnit: choices["ruleSensorUnit"]?.titleOfSelectedItem)
+    notificationUnits.stringValue =
+      metric == "thermal"
+      ? "Thermal levels: 0 normal, 1 fair, 2 serious, 3 critical." : "Limits use " + unit + "."
+    guard let threshold = Double(fields["ruleThreshold"]?.stringValue ?? ""),
+      let seconds = Double(fields["ruleDuration"]?.stringValue ?? ""), threshold.isFinite,
+      seconds.isFinite,
+      let condition = choices["ruleComparison"]?.indexOfSelectedItem,
+      RuleComparison.allCases.indices.contains(condition)
+    else {
+      notificationExample.stringValue = "Enter a limit and waiting time to see the notification.";
+      return
+    }
+    let rule = ThresholdRule(
+      metric: metric == "sensor"
+        ? "sensor:" + (fields["ruleSensorKey"]?.stringValue ?? "") : metric,
+      threshold: threshold * NotificationPresentation.scale(metric),
+      comparison: RuleComparison.allCases[condition],
+      duration: seconds, sensorUnit: metric == "sensor" ? unit : nil,
+      upperThreshold: Double(fields["ruleUpper"]?.stringValue ?? "").map {
+        $0 * NotificationPresentation.scale(metric)
+      })
+    notificationExample.stringValue = "Notify when " + ruleSummary(rule) + "."
+  }
+  @objc private func systemClockChanged() { updateDateExample() }
+  private func updateDateExample() {
+    let custom = choices["clockMode"]?.indexOfSelectedItem == 1
+    fields["clockFormat"]?.isEnabled = custom
+    let formatter = DateFormatter()
+    LocalClockFormat.configure(
+      formatter, pattern: custom ? fields["clockFormat"]?.stringValue ?? "" : "")
+    localTimeZoneLabel.stringValue =
+      "Time zone: " + TimeZone.autoupdatingCurrent.identifier
+      + " · Follows Mac automatically"
+    dateExample.stringValue = formatter.string(from: Date())
   }
   @objc private func openTerms() {
     NSWorkspace.shared.open(
@@ -580,15 +828,16 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.publicAddress = toggles["publicAddress"]!.state == .on
     s.networkInterfaces =
       toggles["networkAll"]!.state == .on
-      ? nil
-      : fields["networkNames"]!.stringValue.split(separator: ",", omittingEmptySubsequences: false)
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      ? nil : interfaceButtons.filter { $0.value.state == .on }.map(\.key).sorted()
     s.compactSpacing = toggles["spacing"]!.state == .on
     s.persistentHistory = toggles["persistentHistory"]!.state == .on
     s.shortcuts = try KeyboardShortcut.parse(shortcutsField.string)
     s.sensorSampling = choices["sensors"]!.indexOfSelectedItem == 0 ? .all : .whenNeeded
     s.sensorNames = try SensorIdentity.parseNames(sensorNamesField.string)
-    s.combined = toggles["combined"]!.state == .on
+    s.combined = choices["menuLayout"]!.indexOfSelectedItem == 2
+    s.groupedMenus = choices["menuLayout"]!.indexOfSelectedItem == 0
+    s.menuPadding = choices["menuPadding"]!.indexOfSelectedItem
+    s.menuGap = choices["menuGap"]!.indexOfSelectedItem
     s.combinedModules = try MenuPresentation.modules(
       fromTitles: fields["combinedModules"]!.stringValue)
     s.combinedStyle =
@@ -596,7 +845,8 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     let combinedColor = fields["combinedColor"]!.stringValue.trimmingCharacters(
       in: .whitespacesAndNewlines)
     s.combinedColorHex = combinedColor.isEmpty ? nil : combinedColor
-    s.clockFormat = fields["clockFormat"]!.stringValue
+    s.clockFormat =
+      choices["clockMode"]!.indexOfSelectedItem == 0 ? "" : fields["clockFormat"]!.stringValue
     var calendarOptions = settings.effectiveCalendarOptions
     calendarOptions.firstWeekday = choices["firstWeekday"]!.indexOfSelectedItem + 1
     calendarOptions.system = CalendarSystem.allCases[choices["calendarSystem"]!.indexOfSelectedItem]
@@ -659,7 +909,8 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       MenuConfiguration(
         module: $0.0, visible: menuToggles[$0.0]!.state == .on,
         style: DisplayStyle.allCases[menuStyles[$0.0]!.indexOfSelectedItem],
-        colorHex: menuColors[$0.0]!.stringValue.isEmpty ? nil : menuColors[$0.0]!.stringValue)
+        colorHex: menuColors[$0.0]!.stringValue.isEmpty ? nil : menuColors[$0.0]!.stringValue,
+        labelPlacement: MenuLabelPlacement.allCases[menuLabels[$0.0]!.indexOfSelectedItem])
     }
     return try s.validated()
   }
@@ -668,7 +919,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       let s = try readSettings()
       settings = s
       onApply?(s)
-      errorLabel.stringValue = "Settings applied"
+      errorLabel.stringValue = ""; draftLabel.stringValue = "Settings applied."
     } catch {
       errorLabel.stringValue =
         "Check values, clock names/time zones, rule cooldowns, unique menu order, #RRGGBB colors, and a visible or combined item."
@@ -688,12 +939,13 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     let upper = comparison.requiresUpperBound ? Double(fields["ruleUpper"]!.stringValue) : nil
     let rule = ThresholdRule(
       metric: individual ? "sensor:" + fields["ruleSensorKey"]!.stringValue : metric,
-      threshold: threshold,
+      threshold: threshold * NotificationPresentation.scale(metric),
       comparison: comparison,
       duration: duration, cooldown: cooldown,
       sensorUnit: individual
         ? SensorIdentity.units[choices["ruleSensorUnit"]!.indexOfSelectedItem] : nil,
-      upperThreshold: upper, hysteresis: hysteresis,
+      upperThreshold: upper.map { $0 * NotificationPresentation.scale(metric) },
+      hysteresis: hysteresis * NotificationPresentation.scale(metric),
       repeatWhileMet: toggles["ruleRepeat"]!.state == .on)
     guard rule.valid else {
       errorLabel.stringValue =
@@ -708,21 +960,21 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   }
   @objc private func addRule() {
     guard settings.rules.count < 50, let rule = ruleFromForm() else { return }
-    settings.rules.append(rule); refreshRules(selected: rule.id)
+    settings.rules.append(rule); refreshRules(selected: rule.id); draftChanged()
   }
   @objc private func saveRule() {
     guard let index = selectedRuleIndex, let replacement = ruleFromForm() else { return }
     let current = settings.rules[index]
     settings.rules[index] = RuleEdits.replacing(current, with: replacement)
-    refreshRules(selected: current.id)
+    refreshRules(selected: current.id); draftChanged()
   }
   @objc private func deleteRule() {
     guard let index = selectedRuleIndex else { return }; settings.rules.remove(at: index);
-    refreshRules()
+    refreshRules(); draftChanged()
   }
   @objc private func toggleRule() {
     guard let index = selectedRuleIndex else { return }; settings.rules[index].enabled.toggle()
-    refreshRules(selected: settings.rules[index].id)
+    refreshRules(selected: settings.rules[index].id); draftChanged()
   }
   @objc private func selectRule() {
     guard let index = selectedRuleIndex else { return }; let rule = settings.rules[index]
@@ -730,39 +982,55 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     choices["ruleMetric"]?.selectItem(
       at: key != nil ? ruleMetrics.count - 1 : ruleMetrics.firstIndex(of: rule.metric) ?? 0)
     fields["ruleSensorKey"]?.stringValue = key ?? ""
+    if let key, let index = sensorRuleChoices.firstIndex(where: { $0.key == key }) {
+      choices["ruleSensorChoice"]?.selectItem(at: index + 1)
+    } else {
+      choices["ruleSensorChoice"]?.selectItem(at: 0)
+    }
     choices["ruleSensorUnit"]?.selectItem(
       at: SensorIdentity.units.firstIndex(of: rule.sensorUnit ?? "") ?? 0)
     ruleMetricChanged()
     choices["ruleComparison"]?.selectItem(
       at: RuleComparison.allCases.firstIndex(of: rule.comparison) ?? 0)
-    fields["ruleUpper"]?.stringValue = String(rule.upperThreshold ?? 100)
-    fields["ruleHysteresis"]?.stringValue = String(rule.recoveryBand)
+    fields["ruleUpper"]?.stringValue = String(
+      (rule.upperThreshold ?? 100) / NotificationPresentation.scale(rule.metric))
+    fields["ruleHysteresis"]?.stringValue = String(
+      rule.recoveryBand / NotificationPresentation.scale(rule.metric))
     toggles["ruleRepeat"]?.state = rule.repeats ? .on : .off
     ruleComparisonChanged()
-    fields["ruleThreshold"]?.stringValue = String(rule.threshold)
+    fields["ruleThreshold"]?.stringValue = String(
+      rule.threshold / NotificationPresentation.scale(rule.metric))
     fields["ruleDuration"]?.stringValue = String(rule.duration)
     fields["ruleCooldown"]?.stringValue = String(rule.cooldown)
+    updateNotificationExample()
   }
   @objc private func ruleComparisonChanged() {
     guard let selected = choices["ruleComparison"]?.indexOfSelectedItem,
       RuleComparison.allCases.indices.contains(selected)
     else { return }
-    fields["ruleUpper"]?.isEnabled = RuleComparison.allCases[selected].requiresUpperBound
+    let requiresRange = RuleComparison.allCases[selected].requiresUpperBound
+    fields["ruleUpper"]?.isEnabled = requiresRange
+    if requiresRange {
+      toggles["notificationAdvanced"]?.state = .on; notificationAdvanced?.isHidden = false
+    }
+    updateNotificationExample()
   }
   @objc private func ruleMetricChanged() {
     let individual = choices["ruleMetric"]?.indexOfSelectedItem == ruleMetrics.count - 1
+    choices["ruleSensorChoice"]?.isEnabled = individual
     fields["ruleSensorKey"]?.isEnabled = individual
     choices["ruleSensorUnit"]?.isEnabled = individual
+    updateNotificationExample()
   }
   @objc private func clearRules() {
     settings.rules.removeAll()
-    refreshRules()
+    refreshRules(); draftChanged()
   }
   private func refreshRules(selected id: UUID? = nil) {
-    rulesPicker.removeAllItems(); rulesPicker.addItem(withTitle: "New rule")
+    rulesPicker.removeAllItems(); rulesPicker.addItem(withTitle: "New notification")
     rulesPicker.addItems(
       withTitles: settings.rules.map {
-        "\($0.enabled ? "On" : "Off") · \($0.metric) \($0.conditionDescription)"
+        "\($0.enabled ? "On" : "Off") · \(ruleSummary($0))"
       })
     if let id, let index = settings.rules.firstIndex(where: { $0.id == id }) {
       rulesPicker.selectItem(at: index + 1)
@@ -770,9 +1038,9 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     rulesPicker.isEnabled = !settings.rules.isEmpty
     rulesLabel.stringValue =
       settings.rules.isEmpty
-      ? "No rules. Add a rule, then Apply."
+      ? "No value notifications. Add one to the draft, then Apply."
       : settings.rules.map {
-        "\($0.metric) \($0.conditionDescription) for \($0.duration)s; cooldown \($0.cooldown)s; recovery \($0.recoveryBand); \($0.repeats ? "repeating" : "once per episode")"
+        "\($0.enabled ? "Enabled" : "Disabled"): \(ruleSummary($0)). \($0.repeats ? "Repeats" : "Once until it clears"); at least \(String(format: "%g", $0.cooldown)) seconds between notifications."
       }.joined(separator: "\n")
   }
   @objc private func exportSettings() {
@@ -821,11 +1089,14 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       accepted = alert.runModal() == .alertSecondButtonReturn
     }
     guard accepted else { return false }
+    locationSession.cancel(); locationChoices.removeAll()
     calendarPicker?.close(); calendarPicker = nil
     settings = profile.settings
     for subview in window?.contentView?.subviews ?? [] { subview.removeFromSuperview() }
     fields.removeAll(); toggles.removeAll(); choices.removeAll()
-    menuToggles.removeAll(); menuStyles.removeAll(); menuOrders.removeAll(); menuColors.removeAll()
+    menuToggles.removeAll(); menuStyles.removeAll(); menuOrders.removeAll(); menuColors.removeAll();
+    menuLabels.removeAll();
+    interfaceButtons.removeAll()
     build()
     errorLabel.stringValue =
       "Changes staged. Review the options, then Apply; closing discards this draft."

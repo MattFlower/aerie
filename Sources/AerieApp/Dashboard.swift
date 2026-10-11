@@ -5,6 +5,7 @@ import EventKit
 enum DashboardRow {
   case heading(String)
   case metric(String, String)
+  case gauge(String, String, Double?, NSColor)
   case note(String)
   case chart(String, String, NSColor, Double?)
   case cores([Double])
@@ -15,6 +16,7 @@ enum DashboardRow {
     switch self {
     case .heading: return 34
     case .metric: return 27
+    case .gauge: return 54
     case .note: return 47
     case .chart: return 100
     case .cores(let c): return CGFloat((c.count + 11) / 12) * 42 + 18
@@ -101,7 +103,7 @@ final class DashboardView: NSView {
       let label: String
       switch row {
       case .heading(let s), .note(let s): label = s
-      case .metric(let k, let v): label = "\(k): \(v)"
+      case .metric(let k, let v), .gauge(let k, let v, _, _): label = "\(k): \(v)"
       case .chart(let key, let title, _, _):
         if let selectedPoint, let value = selectedPoint.values[key] {
           chartFormatter.dateStyle = .short; chartFormatter.timeStyle = .medium
@@ -325,6 +327,26 @@ final class DashboardView: NSView {
           value, rect: NSRect(x: 174, y: y + 5, width: bounds.width - 188, height: 20),
           font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium), color: .labelColor,
           alignment: .right)
+      case .gauge(let key, let value, let fraction, let color):
+        drawText(
+          key, rect: NSRect(x: 14, y: y + 4, width: 180, height: 20), font: .systemFont(ofSize: 12),
+          color: .labelColor)
+        drawText(
+          value, rect: NSRect(x: 174, y: y + 4, width: bounds.width - 188, height: 20),
+          font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium), color: .labelColor,
+          alignment: .right)
+        let track = NSRect(x: 14, y: y + 30, width: max(1, bounds.width - 28), height: 8)
+        NSColor.quaternaryLabelColor.setFill();
+        NSBezierPath(roundedRect: track, xRadius: 4, yRadius: 4).fill()
+        if let fraction, fraction.isFinite {
+          var fill = track; fill.size.width *= CGFloat(max(0, min(1, fraction)))
+          color.setFill(); NSBezierPath(roundedRect: fill, xRadius: 4, yRadius: 4).fill()
+        } else {
+          let unavailable = NSBezierPath();
+          unavailable.move(to: NSPoint(x: track.midX - 12, y: track.midY));
+          unavailable.line(to: NSPoint(x: track.midX + 12, y: track.midY))
+          NSColor.secondaryLabelColor.setStroke(); unavailable.lineWidth = 2; unavailable.stroke()
+        }
       case .note(let s):
         drawText(
           s, rect: rect.insetBy(dx: 0, dy: 6), font: .systemFont(ofSize: 11),
@@ -828,7 +850,7 @@ final class DashboardController: NSViewController {
     case .cpu:
       var rows: [DashboardRow] = [
         DashboardRow.heading("Processor"),
-        DashboardRow.metric("Total", Format.percent(s.cpu.total)),
+        DashboardRow.gauge("Total", Format.percent(s.cpu.total), s.cpu.total, AeriePalette.cpu),
         DashboardRow.metric("User", Format.percent(s.cpu.user)),
         DashboardRow.metric("System", Format.percent(s.cpu.system)),
         DashboardRow.chart("cpu", "CPU %", AeriePalette.cpu, 100),
@@ -858,7 +880,9 @@ final class DashboardController: NSViewController {
       for gpu in s.gpu {
         rows += [
           DashboardRow.heading(gpu.name),
-          DashboardRow.metric("Device utilization", Format.percent(gpu.utilization)),
+          DashboardRow.gauge(
+            "Device utilization", Format.percent(gpu.utilization), gpu.utilization, AeriePalette.cpu
+          ),
           DashboardRow.metric("Renderer", Format.percent(gpu.renderer)),
           DashboardRow.metric("Tiler", Format.percent(gpu.tiler)),
           DashboardRow.metric(
@@ -889,7 +913,8 @@ final class DashboardController: NSViewController {
       }
       return [
         DashboardRow.heading("Memory"), DashboardRow.metric("Pressure", m.pressure),
-        DashboardRow.metric("Used", Format.percent(m.usedFraction)),
+        DashboardRow.gauge(
+          "Used", Format.percent(m.usedFraction), m.usedFraction, AeriePalette.memory),
         DashboardRow.chart("memory", "Used memory %", AeriePalette.memory, 100),
         DashboardRow.metric("Physical", bytes(m.total)),
         DashboardRow.metric("App", bytes(m.app)), DashboardRow.metric("Wired", bytes(m.wired)),
@@ -916,7 +941,9 @@ final class DashboardController: NSViewController {
         rows += [
           DashboardRow.heading(v.name), DashboardRow.metric("Capacity", bytes(v.total)),
           DashboardRow.metric("Available", bytes(v.free)),
-          DashboardRow.metric("Used", Format.percent(v.usedFraction)),
+          DashboardRow.gauge(
+            "Used", v.total > 0 ? Format.percent(v.usedFraction) : "Unavailable",
+            v.total > 0 ? v.usedFraction : nil, AeriePalette.memory),
           DashboardRow.metric(
             "Important-use capacity", v.important.map { self.bytes($0) } ?? "Unavailable"),
           DashboardRow.metric(
@@ -1141,7 +1168,7 @@ final class DashboardController: NSViewController {
       ]
       if p.present {
         rows += [
-          DashboardRow.metric("Charge", Format.percent(p.percent)),
+          DashboardRow.gauge("Charge", Format.percent(p.percent), p.percent, AeriePalette.power),
           DashboardRow.metric("Charging", p.charging.map { $0 ? "Yes" : "No" } ?? "Unavailable"),
           DashboardRow.metric(
             p.charging == true ? "Time to full" : "Time remaining",
@@ -1183,7 +1210,7 @@ final class DashboardController: NSViewController {
     case .time:
       let now = Date()
       let formatter = DateFormatter()
-      formatter.dateFormat = settings.clockFormat
+      LocalClockFormat.configure(formatter, pattern: settings.clockFormat)
       var rows: [DashboardRow] = [
         DashboardRow.heading("Local time"),
         DashboardRow.metric(

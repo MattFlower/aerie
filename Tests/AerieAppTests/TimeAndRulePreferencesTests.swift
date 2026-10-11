@@ -9,7 +9,7 @@ final class TimeAndRulePreferencesTests: XCTestCase {
       _ = NSApplication.shared
       let controller = PreferencesController(settings: Settings()); defer { controller.close() }
       let content = try XCTUnwrap(controller.window?.contentView)
-      let tabs = try XCTUnwrap(content.subviews.compactMap { $0 as? NSTabView }.first)
+      let tabs = try XCTUnwrap(try preferenceTabs(controller))
       @MainActor func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants($0) }
       }
@@ -34,20 +34,22 @@ final class TimeAndRulePreferencesTests: XCTestCase {
       comparison.selectItem(withTitle: "Inside range (inclusive)");
       _ = comparison.sendAction(comparison.action, to: comparison.target)
       XCTAssertTrue(upper.isEnabled); upper.stringValue = "200"
-      try field("Threshold").stringValue = "100"
-      try field("Recovery band (native units)").stringValue = "5"
-      try popup("Metric").selectItem(withTitle: "Storage read bytes/s")
+      try field("Limit").stringValue = "100"
+      try field("Recovery margin").stringValue = "5"
+      try popup("Notify me when").selectItem(withTitle: "Storage read speed")
       let repeats = try XCTUnwrap(
         controls.compactMap { $0 as? NSButton }.first {
           $0.title == "Repeat while active after each cooldown"
         })
       repeats.state = .off
-      try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first { $0.title == "Add" })
+      try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first { $0.title == "Add to Draft" })
         .performClick(nil)
       var applied: Settings?
       controller.onApply = { applied = $0 }
       let apply = try XCTUnwrap(
-        content.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Apply" })
+        try preferenceControls(controller).compactMap { $0 as? NSButton }.first {
+          $0.title == "Apply"
+        })
       apply.performClick(nil)
       let settings = try XCTUnwrap(applied), rule = try XCTUnwrap(settings.rules.first)
       XCTAssertEqual(settings.worldClockStyle, .analog);
@@ -58,8 +60,8 @@ final class TimeAndRulePreferencesTests: XCTestCase {
       XCTAssertEqual(settings.calendarOptions?.upcomingDays, 14)
       XCTAssertEqual(settings.effectiveHourlyForecastHours, 168)
       XCTAssertEqual(rule.metric, "diskRead"); XCTAssertEqual(rule.comparison, .inside);
-      XCTAssertEqual(rule.upperThreshold, 200)
-      XCTAssertEqual(rule.recoveryBand, 5); XCTAssertFalse(rule.repeats)
+      XCTAssertEqual(rule.upperThreshold, 200_000_000)
+      XCTAssertEqual(rule.recoveryBand, 5_000_000); XCTAssertFalse(rule.repeats)
       XCTAssertFalse(settings.weather.enabled); XCTAssertFalse(settings.weather.mapsEnabled)
       XCTAssertNil(settings.eventCalendars); XCTAssertFalse(controller.window?.isVisible ?? true)
       applied = nil; try field("Upcoming event days (1–31)").stringValue = "32";

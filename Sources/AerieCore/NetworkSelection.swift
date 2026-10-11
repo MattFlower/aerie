@@ -7,7 +7,7 @@ public struct NetworkSelection: Equatable {
     guard let names else { return true }
     let allowed = CharacterSet(
       charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-    return !names.isEmpty && names.count <= 128 && Set(names).count == names.count
+    return names.count <= 128 && Set(names).count == names.count
       && names.allSatisfy {
         !$0.isEmpty && $0.utf8.count < 32 && $0.unicodeScalars.allSatisfy(allowed.contains)
       }
@@ -16,8 +16,9 @@ public struct NetworkSelection: Equatable {
     active && (names?.contains(name) ?? true)
   }
   public var description: String {
-    names.map { "Selected active interfaces: " + $0.joined(separator: ", ") }
-      ?? "All active interfaces"
+    guard let names else { return "All active interfaces" }
+    return names.isEmpty
+      ? "No interfaces selected" : "Selected active interfaces: " + names.joined(separator: ", ")
   }
 }
 

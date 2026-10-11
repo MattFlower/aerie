@@ -59,6 +59,10 @@ final class Collector {
   private var previousProcesses: [Int32: AerieProcess] = [:]
   private var processTime: Double?
   private let processGroups = ProcessGroupReader()
+  private lazy var sensorPlatform = SensorPlatform.detect(
+    cpuBrand: sysText("machdep.cpu.brand_string") ?? "",
+    nativeGPUModels: accelerators.compactMap { property($0, "model") as? String },
+    nativeARM: sysNumber("hw.optional.arm64").map { $0 != 0 })
   private var sensorSources:
     [(source: AerieSensorSource, key: String, label: String, unit: String)] = []
   private var accelerators = services("IOAccelerator")
@@ -104,7 +108,8 @@ final class Collector {
             let unit = Self.sensorUnit(key: key, source: source)
           {
             // Retain a declared supported source even when its first live reading is unavailable.
-            sensorSources.append((source, key, Self.sensorLabel(key), unit))
+            sensorSources.append(
+              (source, key, Self.sensorLabel(key, unit: unit, platform: sensorPlatform), unit))
           }
         }
       }
@@ -590,13 +595,10 @@ final class Collector {
     }
     return result
   }
-  static func sensorLabel(_ key: String) -> String {
-    let known = [
-      "TC0P": "CPU proximity", "TC0D": "CPU die", "TG0P": "GPU proximity", "TG0D": "GPU die",
-      "TB0T": "Battery", "TA0P": "Ambient", "Ts0P": "Palm rest", "F0Ac": "Fan 1", "F1Ac": "Fan 2",
-      "PC0C": "CPU power", "PG0C": "GPU power", "PSTR": "System power",
-    ]
-    if key == "F0Ac" || key == "F1Ac" { return known[key] ?? key }
-    return known[key].map { $0 + " (unverified role)" } ?? key
+  static func sensorLabel(_ key: String, unit: String = "°C", platform: SensorPlatform = .unknown)
+    -> String
+  {
+    SensorCatalog.name(key: key, unit: unit, platform: platform)
+      ?? SensorCatalog.fallback(key: key, unit: unit)
   }
 }

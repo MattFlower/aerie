@@ -9,6 +9,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private let defaults = UserDefaults.standard
   private var settings = Settings()
   private var items: [(MenuConfiguration, NSStatusItem)] = []
+  private var groupedStatus: GroupedStatusView?
+  private var widgetValues: [Module: StatusWidget] = [:]
+  private var currentMenuModule: Module?
   private var collector: Collector?
   private var snapshot = Snapshot()
   private var history = HistoryStore()
@@ -157,11 +160,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       self?.calendarDetails.removeAll()
       self?.updateCalendar()
     }
-    for name in [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange] {
+    for name in [
+      Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange,
+      NSLocale.currentLocaleDidChangeNotification,
+    ] {
       clockObservers.append(
         NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
           [weak self] _ in
-          self?.clockFormatter.timeZone = .current
+          self?.configureClockFormat()
           self?.updateItems()
           self?.updateCalendar()
         })
@@ -492,11 +498,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
   }
   private func rebuildItems() {
+    groupedStatus?.releaseContent(); groupedStatus?.removeFromSuperview(); groupedStatus = nil;
+    widgetValues.removeAll()
     for (_, item) in items { NSStatusBar.system.removeStatusItem(item) }
     items.removeAll()
     graphValues.removeAll(); stackedValues.removeAll()
     accessibilityValues.removeAll()
-    clockFormatter.dateFormat = settings.clockFormat
+    configureClockFormat()
     let menus =
       settings.combined
       ? [
@@ -504,8 +512,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
           module: .overview, style: settings.combinedStyle ?? .text,
           colorHex: settings.combinedColorHex)
       ]
-      : settings.menus.filter(\.visible)
-    for menu in menus {
+      : settings.visibleMenus
+    let presented =
+      settings.effectiveGroupedMenus && !settings.combined
+      ? [MenuConfiguration(module: .overview)] : menus
+    for menu in presented {
       let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
       item.isVisible = true
       if let button = item.button {
@@ -513,6 +524,21 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         button.action = #selector(clickedStatus(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.setAccessibilityLabel("Aerie \(menu.module.title)")
+      }
+      if settings.effectiveGroupedMenus && !settings.combined, let button = item.button {
+        let group = GroupedStatusView(frame: button.bounds); groupedStatus = group
+        group.onSelect = { [weak self, weak button] module in
+          guard let self, let button else { return }
+          if self.menuPanel.isShown && self.currentMenuModule == module {
+            self.menuPanel.performClose(nil)
+          } else {
+            self.showModule(module, anchoredTo: button)
+          }
+        }
+        group.onContext = { [weak self, weak button] in
+          if let button { self?.clickedStatus(button) }
+        }
+        button.addSubview(group)
       }
       items.append((menu, item))
     }
@@ -534,15 +560,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
       return
     }
-    if menuPanel.isShown {
-      menuPanel.performClose(nil)
-      return
-    }
+    if let group = groupedStatus { _ = group.press(index: 0); return }
+    if menuPanel.isShown { menuPanel.performClose(nil); return }
     let module = items.first { $0.1.button === sender }?.0.module ?? .overview
     showModule(module, anchoredTo: sender)
   }
   private func showModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
     if menuPanel.isShown { menuPanel.performClose(nil) }
+    currentMenuModule = module
     idleMemory.presentationOpened()
     dashboard.snapshot = snapshot
     dashboard.settings = settings
@@ -560,6 +585,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     menuPanel.contentViewController?.view.window?.makeKey()
   }
   private func dashboardDidClose() {
+    currentMenuModule = nil
     collector?.setVisibleModule(nil); releaseViewMetadata(module: nil)
     dashboard.history = HistoryStore(interval: settings.interval);
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
@@ -573,11 +599,53 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     dashboard.snapshot.releaseActiveViewState(module: module, suspended: paused || sleeping)
     if paused || sleeping || module != .network { dashboard.releaseWiFi() }
   }
+  private func configureClockFormat() {
+    LocalClockFormat.configure(clockFormatter, pattern: settings.clockFormat)
+  }
+  private func widget(_ configuration: MenuConfiguration) -> StatusWidget {
+    let module = configuration.module
+    var result = StatusWidget(
+      module: module, value: menuValue(module),
+      style: configuration.style == .graph && graphKey(module) == nil ? .text : configuration.style,
+      label: configuration.labelPlacement ?? .automatic, colorHex: configuration.colorHex,
+      paused: paused)
+    if module == .weather {
+      result.symbol = MenuRenderer.weatherSymbol(
+        code: weatherReport?.code, daylight: weatherReport?.isDay, glyph: weatherReport?.glyph)
+    }
+    if module == .overview { result.symbol = "mountain.2" }
+    if configuration.style == .graph, let key = graphKey(module) {
+      result.points = history.recent.suffix(48).map { $0.values[key] }
+    }
+    return result
+  }
   private func updateItems() {
+    if let group = groupedStatus, let item = items.first?.1 {
+      let descriptors = settings.visibleMenus.map { widget($0) }
+      item.length = group.update(
+        descriptors, padding: CGFloat(settings.effectiveMenuPadding),
+        gap: CGFloat(settings.effectiveMenuGap))
+      item.button?.toolTip = descriptors.map(\.accessibility).joined(separator: "\n")
+      return
+    }
+
     for (configuration, item) in items {
       guard let button = item.button else { continue }
       let module = configuration.module
-      let components = (settings.combined ? settings.effectiveCombinedModules : [module]).map {
+      if !settings.combined {
+        let descriptor = widget(configuration)
+        if widgetValues[module] != descriptor {
+          let image = MenuRenderer.widget(
+            descriptor, padding: CGFloat(settings.effectiveMenuPadding))
+          button.title = ""; button.image = image; item.length = image.size.width
+          button.contentTintColor = MenuRenderer.color(configuration.colorHex)
+          button.setAccessibilityValue(descriptor.accessibility);
+          button.toolTip = descriptor.accessibility
+          widgetValues[module] = descriptor
+        }
+        continue
+      }
+      let components = (settings.combined ? settings.visibleCombinedModules : [module]).map {
         menuValue($0)
       }
       let value = MenuPresentation.combined(components, compact: false)
@@ -659,9 +727,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         secondary: "R " + shortRate(snapshot.diskRead) + " W " + shortRate(snapshot.diskWrite))
     case .network:
       return MenuValue(
-        full: "↓" + shortRate(snapshot.download) + " ↑" + shortRate(snapshot.upload),
-        secondary: "↑" + shortRate(snapshot.upload),
-        stackedPrimary: "↓" + shortRate(snapshot.download))
+        full: "Download " + networkMenuRate(snapshot.download) + ", upload "
+          + networkMenuRate(snapshot.upload),
+        secondary: "↑" + networkMenuRate(snapshot.upload),
+        stackedPrimary: "↓" + networkMenuRate(snapshot.download))
     case .sensors:
       let temperatures = snapshot.sensors.filter { $0.unit == "°C" && $0.state == .live }
         .compactMap(\.value)
@@ -692,6 +761,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
           WeatherCondition.describe($0.code)
         } ?? "Weather unavailable")
     }
+  }
+  private func networkMenuRate(_ value: Double?) -> String {
+    guard let value else { return "—" }
+    return Format.rate(
+      value, domain: .network, binary: settings.binaryBytes, networkBits: settings.networkBits)
   }
   private func shortRate(_ value: Double?) -> String {
     guard let value else { return "—" }
@@ -747,7 +821,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     if let preferences {
       preferences.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
     }
-    preferences = PreferencesController(settings: settings)
+    preferences = PreferencesController(
+      settings: settings, interfaces: snapshot.interfaces, sensors: snapshot.sensors,
+      interfaceDescriptions: InterfaceCatalog.descriptions())
     windowLifecycle?.register(preferences?.window, role: .settings)
     preferences?.onWindowCreated = { [weak self] in
       self?.windowLifecycle?.register($0, role: .calendar)

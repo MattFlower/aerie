@@ -2,15 +2,21 @@
 
 Updated 2026-10-11. Weather is off by default. Development and CI use synthetic forecasts; neither automatically requests the user's location.
 
+## Choosing a point
+
+Unconfigured weather is hidden from the menu bar. A saved valid point keeps the weather item stable while forecasts are off, stale or unavailable. Weather Settings offers three point inputs: manual coordinates, explicit city/ZIP search through Apple's geocoder, or **Use My Mac Location** through macOS Location Services. Search sends its query and network IP to Apple; the Mac action may prompt for OS permission and requests one point with coarse desired accuracy. No reverse geocoding, background tracking or IP geolocation is performed. Requests time out after 20 seconds, are replaced by a newer action and are cancelled on close/minimization. Ambiguous results require a choice. Public tests inject providers and never request a real point or grant.
+
+A choice stages weather coordinates and, optionally, offline daylight coordinates/time zone. It does not enable forecasts, maps or daylight. Apply saves the draft; each service has its own switch and disclosure. macOS permission persists independently of cancelling a request or clearing a point. Apple geocoding and macOS location availability need real consented validation; synthetic cancellation/selection tests do not establish service availability.
+
 ## Open-Meteo forecast adapter
 
 [Open-Meteo terms](https://open-meteo.com/en/terms) permit the free hosted service for personal/noncommercial use, within the documented request limits. The app refreshes at most every 15 minutes for one chosen location. The provider abstraction allows a different compliant backend later. Calling the REST API does not incorporate its server source code.
 
 Data attribution is displayed as Open-Meteo with a link; forecast data is licensed under CC BY 4.0. Current conditions are model-derived estimates, rather than local station observations. Quality and resolution vary by region, model, terrain, and forecast lead time. The service offers regional models including NOAA HRRR in supported US coverage; selecting a model is a later option.
 
-Opt-in discloses IP and coordinate transmission and coordinate-bearing troubleshooting logs which the provider may retain up to 90 days. Manual coordinates are rounded to two decimal places. No credentials, geocoding query, or precise device location is required.
+Opt-in discloses IP and coordinate transmission and coordinate-bearing troubleshooting logs which the provider may retain up to 90 days. Chosen coordinates are rounded to two decimal places before forecast requests. The point can be entered manually, found by an explicit city/ZIP search, or chosen with a one-shot macOS location request. No credentials are required.
 
-Forecast Unix timestamps remain absolute instants. Hourly and daylight times use the returned location timezone with daylight saving adjustments. Daily labels retain the response's fixed-offset forecast-day boundaries so a transition cannot relabel a day as the previous date. Missing or invalid timezone metadata uses a disclosed fixed-offset fallback, or UTC when no valid offset exists. See [provider timestamp documentation](https://open-meteo.com/en/docs).
+Forecast Unix timestamps remain absolute instants. Hourly and daylight times use the returned location timezone with daylight saving adjustments. Daily labels retain the response's fixed-offset forecast-day boundaries so a transition cannot relabel a day as the previous date. Missing or invalid timezone metadata uses a disclosed fixed-offset fallback, or UTC when no valid offset exists. Current condition icons use reported WMO codes and the optional `is_day` flag. Missing daylight metadata uses a neutral icon; unknown conditions remain explicit. NWS observations use recognized metadata from their published icon identifiers; Aerie draws native symbols without downloading those assets. Unknown or mixed identifiers retain an unavailable icon rather than inferring one from free text. See [NWS icon-code descriptions](https://api.weather.gov/icons). See [provider timestamp documentation](https://open-meteo.com/en/docs).
 
 ## NWS observations and forecasts
 
@@ -47,7 +53,7 @@ NOAA public data is available without paid credentials, but basemap licensing an
 
 ## Map consent, data and resource behavior
 
-NOAA maps have a separate opt-in in Weather Settings and use the manually entered location. Forecast opt-in is independent. Opening a map sends the selected map extent and IP to the selected NOAA/NWS service. Opening alert details also sends the rounded map-center point to NWS. Maps are off by default; old settings decode with maps off, and import/export disables location services. No device location, third-party basemap or API key is used.
+NOAA maps have a separate opt-in in Weather Settings and use the chosen location. Forecast opt-in is independent. Opening a map sends the selected map extent and IP to the selected NOAA/NWS service. Opening alert details also sends the rounded map-center point to NWS. Maps are off by default; old settings decode with maps off, and import/export clears saved points and source consent. Maps do not request a device location; only the separate explicit Settings action can do so. No third-party basemap or API key is used.
 
 [NWS usage terms](https://www.weather.gov/disclaimer) permit its public-domain data unless a product says otherwise, require source identification and prohibit implying endorsement. The selected NWS state-boundary service identifies its copyright/source as NOAA/NWS; no external commercial basemap is incorporated. Source attribution remains visible. Service coverage varies: US radar and NDFD, GOES regional or global satellite mosaics, and NHC tropical-cyclone tracks. Tropical past/forecast tracks are distinguished from convective-cell tracks, which remain unimplemented.
 

@@ -4,7 +4,8 @@ cd "$(dirname "$0")/.."
 scratch="${AERIE_BUILD_SCRATCH:-.build}"
 swift build --scratch-path "$scratch" --build-system native -c release --product Aerie
 app="${AERIE_APP_OUTPUT:-dist/Aerie.app}"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp THIRD_PARTY_NOTICES.md "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
 cp "$scratch/release/Aerie" "$app/Contents/MacOS/Aerie"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -21,8 +22,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Show your upcoming calendar events locally in the Aerie time menu.</string>
-<key>NSLocationWhenInUseUsageDescription</key><string>Allow macOS to reveal Wi-Fi network identity in Aerie's Network menu. Aerie does not request your device coordinates.</string>
-<key>NSLocationUsageDescription</key><string>Allow macOS to reveal Wi-Fi network identity in Aerie's Network menu. Aerie does not request your device coordinates.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Choose one Mac location for Weather and Daylight, or allow macOS to reveal Wi-Fi network names. Location is requested only when you choose Use My Mac Location.</string>
+<key>NSLocationUsageDescription</key><string>Choose one Mac location for Weather and Daylight, or allow macOS to reveal Wi-Fi network names. Location is requested only when you choose Use My Mac Location.</string>
 </dict></plist>
 PLIST
 # Finder can annotate a generated bundle directory; that metadata invalidates strict signing.

@@ -9,7 +9,7 @@ final class SettingsProfilePreferencesTests: XCTestCase {
   }
   @MainActor private func controls(_ controller: PreferencesController) throws -> [NSView] {
     let content = try XCTUnwrap(controller.window?.contentView)
-    let tabs = try XCTUnwrap(content.subviews.compactMap { $0 as? NSTabView }.first)
+    let tabs = try XCTUnwrap(try preferenceTabs(controller))
     return allViews(content) + tabs.tabViewItems.compactMap(\.view).flatMap { allViews($0) }
   }
   @MainActor private func button(_ title: String, in controller: PreferencesController) throws
