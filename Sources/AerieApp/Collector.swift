@@ -63,6 +63,7 @@ final class Collector {
   private var accelerators = services("IOAccelerator")
   private var disks = services("IOBlockStorageDriver")
   private var groups: [(String, Int)] = []
+  private let clockStates = ClockStateReader()
   private var storageIDs: Set<UInt64> = []
   private var inventoryTime = -Double.infinity
   private var cache = Snapshot()
@@ -122,6 +123,7 @@ final class Collector {
     pathMonitor.start(queue: queue)
   }
   deinit {
+    clockStates.close()
     processNetwork.stop()
     storageMetadata.configure(visible: false)
     pathMonitor.cancel()
@@ -157,6 +159,7 @@ final class Collector {
   func setSuspended(_ value: Bool) {
     queue.async {
       self.suspended = value
+      if value { self.clockStates.close() }
       self.cache.releaseActiveViewState(
         module: self.storagePanelVisible ? .storage : self.networkPanelVisible ? .network : nil,
         suspended: value)
@@ -242,6 +245,9 @@ final class Collector {
     snapshot.cpu.load = loads
     snapshot.cpu.uptime = now
     snapshot.cpu.frequency = sysNumber("hw.cpufrequency").map { Double($0) / 1e9 }
+    let clockReading = clockStates.sample(time: now)
+    snapshot.clockResidencies = clockReading.rows
+    snapshot.clockResidencyStatus = clockReading.status
     let memory = aerie_memory()
     snapshot.memory = Self.memoryReading(memory, previous: cache.memory, date: snapshot.date) {
       key, count in

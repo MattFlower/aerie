@@ -437,6 +437,31 @@ final class DashboardController: NSViewController {
       )
     ]
   }
+  private func clockRows(kinds: [ClockChannelKind]) -> [DashboardRow] {
+    var rows: [DashboardRow] = []
+    var lastKind: ClockChannelKind?
+    for (index, reading) in snapshot.clockResidencies.enumerated()
+    where kinds.contains(reading.kind) {
+      if lastKind != reading.kind {
+        let title: String
+        switch reading.kind {
+        case .cpuComplex: title = "CPU-complex clock states"
+        case .cpuCore: title = "CPU-core clock states"
+        case .gpu: title = "GPU clock states"
+        }
+        rows.append(.heading(title)); lastKind = reading.kind
+      }
+      rows.append(
+        .action(
+          reading.name, Format.percent(reading.activeFraction) + " active-labelled",
+          "clock-state:\(index)"))
+      if let frequency = reading.activeGHz {
+        rows.append(.metric("Active interval average", String(format: "%.3f GHz", frequency)))
+      }
+    }
+    rows.append(.note(snapshot.clockResidencyStatus))
+    return rows
+  }
   private func makeRows() -> [DashboardRow] {
     let s = snapshot
     switch module {
@@ -473,17 +498,18 @@ final class DashboardController: NSViewController {
         DashboardRow.heading("Logical cores"), DashboardRow.cores(s.cpu.cores),
       ] + s.cpu.groups.map { DashboardRow.metric($0.0, "\($0.1) logical cores") } + [
         DashboardRow.metric(
-          "Frequency", s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
+          "Nominal frequency",
+          s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
         DashboardRow.metric(
           "Load 1 / 5 / 15 min",
           s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")),
         DashboardRow.metric("Uptime", Format.duration(s.cpu.uptime)),
-        DashboardRow.heading("Top CPU processes"),
-      ] + top({ ($0.cpu ?? 0) > ($1.cpu ?? 0) }, value: { Format.percent($0.cpu) }) + [
-        DashboardRow.note(
-          "Dynamic core frequencies and group residency require telemetry this OS may restrict. Counts above describe topology; individual bars show actual logical-core utilization."
-        )
-      ]
+      ] + clockRows(kinds: [.cpuComplex, .cpuCore]) + [DashboardRow.heading("Top CPU processes")]
+        + top({ ($0.cpu ?? 0) > ($1.cpu ?? 0) }, value: { Format.percent($0.cpu) }) + [
+          DashboardRow.note(
+            "Logical-core bars show scheduler load. Clock-state residency reports separate hardware activity; channel names come from the system. Dynamic GHz remains unavailable for unnamed frequency states."
+          )
+        ]
     case .gpu:
       var rows: [DashboardRow] = [DashboardRow.chart("gpu", "GPU %", AeriePalette.cpu, 100)]
       for gpu in s.gpu {
@@ -508,7 +534,7 @@ final class DashboardController: NSViewController {
         DashboardRow.note(
           "Driver-exposed statistics vary by GPU. Global FPS and per-process GPU utilization are unavailable when the driver does not publish them."
         ))
-      return rows
+      return rows + clockRows(kinds: [.gpu])
     case .memory:
       let m = s.memory
       guard m.validity == .fresh else {

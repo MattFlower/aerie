@@ -18,7 +18,7 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 
 ## Current capabilities
 
-- CPU utilization, user/system split, logical-core bars, topology, load, uptime, and top processes.
+- CPU utilization, user/system split, logical-core bars, topology, load, uptime, and top processes; read-only CPU-complex/core and GPU clock-state distributions with native details where exposed.
 - Driver-exposed GPU utilization, rendering/tiling activity, and shared-memory use.
 - Memory categories, OS pressure state, compression, swap, paging, and top process footprints.
 - Local/removable/network volume capacity, per-source disk activity, mounted-volume/APFS backing associations, read-only OS-reported SMART status, and process disk I/O.

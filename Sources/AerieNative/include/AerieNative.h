@@ -43,4 +43,18 @@ int aerie_smc_source(const char *key, AerieSensorSource *source);
 int aerie_smc_value(AerieSensorSource source, double *value);
 void aerie_smc_close(void);
 int aerie_network_spawn(const char *executable, const char *argument, int seconds, int *master, int *pid);
+// Opaque, read-only platform clock-state subscriptions. No privileged helper or timer.
+typedef struct AeriePerformance AeriePerformance;
+typedef struct { char name[32]; uint64_t ticks; } AerieClockState;
+typedef struct {
+    int kind, state_count;
+    uint64_t driver_id, channel_id;
+    char name[64], unit[32];
+    AerieClockState states[64];
+} AerieClockChannel;
+AeriePerformance *aerie_performance_create(void);
+// kind: 0 CPU complexes, 1 CPU cores, 2 GPU. status: 0 readable, 1 library/symbol unavailable,
+// 2 channel unavailable, 3 subscription unavailable, 4 sample unavailable, 5 bounded truncation.
+int aerie_performance_read(AeriePerformance *reader, AerieClockChannel *out, int capacity, int status[3]);
+void aerie_performance_close(AeriePerformance *reader);
 #endif

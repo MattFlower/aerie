@@ -4,8 +4,8 @@ Updated 2026-10-11. A check marks implementation, not complete hardware coverage
 
 | Area | Implemented | Remaining validation or work |
 | --- | --- | --- |
-| CPU | User/system, per-core, topology counts, load, uptime, process CPU | Dynamic frequencies, grouped residency/utilization, CPU temperatures by role; multiple CPU architectures |
-| GPU | Published utilization, renderer/tiler, shared memory, refreshed accelerator inventory | Per-process GPU, global FPS, frequencies/temperatures where not published; multi-GPU validation |
+| CPU | User/system, per-core, topology counts, load, uptime, process CPU; bounded CPU-complex/core clock-state distributions with per-state details | Verified dynamic frequency mapping, grouped scheduler utilization/role labels, CPU temperatures by role; multiple CPU architectures |
+| GPU | Published utilization, renderer/tiler, shared memory, refreshed accelerator inventory; separate system GPU clock-state distributions | Per-process GPU, global FPS, frequencies/temperatures where not published; multi-GPU validation |
 | Memory | App/wired/compressed/free/cache/purgeable, pressure state, paging, swap, process physical footprint | Validate accounting against OS tools on more hardware; pressure percentage needs an honest definition |
 | Storage | Mounted volume capacity/kind, important-use space, per-source device rates, native volume BSD names, APFS backing associations, OS-reported SMART fallback, process I/O, 30-second device/mount inventory and topology rate reset | Drive temperature/endurance from supported telemetry, broader SMART/NVMe coverage, real metadata/device UI and hot-plug hardware validation |
 | Network | Complete interface rates/totals/IP/errors, configurable aggregate interface selection, per-interface observed sessions, visible-panel OS TCP/UDP process summaries, passive connection state and available Wi-Fi details | Optional public IP, expanded Wi-Fi permission path; real filter/session/process UI, helper peaks/reclamation and topology validation |

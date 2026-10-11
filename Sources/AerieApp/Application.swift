@@ -77,6 +77,22 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       self?.calendarSelection.today(); self?.updateCalendar()
     }
     dashboard.canvas.onAction = { [weak self] identifier in
+      if let self, identifier.hasPrefix("clock-state:"),
+        let index = Int(identifier.dropFirst(12)),
+        self.dashboard.snapshot.clockResidencies.indices.contains(index)
+      {
+        let reading = self.dashboard.snapshot.clockResidencies[index]
+        let frequency = reading.activeGHz.map { String(format: "%.3f GHz", $0) } ?? "Unavailable"
+        let states = reading.states.map {
+          "\($0.name): \(String(format: "%.3f%%", $0.fraction * 100))"
+        }.joined(separator: "\n")
+        self.showWeatherDetail(
+          title: reading.name + " · clock states",
+          message:
+            "Interval: \(self.settings.interval) seconds\nActive-labelled state residency: \(Format.percent(reading.activeFraction))\nActive interval-weighted frequency: \(frequency)\n\n\(states.isEmpty ? "No valid counter baseline." : states)\n\nPercentages describe the distribution within each reported channel, separately from scheduler CPU load. Channels can cover different power domains. Active percentage requires a named inactive bucket; GHz requires explicit frequency labels for every occupied active state."
+        )
+        return
+      }
       if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-alert:"),
         let index = Int(identifier.dropFirst(14)), let report = self.dashboard.weather?.alertReport,
         report.alerts.indices.contains(index)
@@ -318,6 +334,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
             .count,
           "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,
           "refreshInterval": settings.interval, "weatherOptIn": settings.weather.enabled,
+          "clockStateChannels": snapshot.clockResidencies.count,
+          "cpuComplexClockChannels": snapshot.clockResidencies.filter { $0.kind == .cpuComplex }
+            .count,
+          "cpuCoreClockChannels": snapshot.clockResidencies.filter { $0.kind == .cpuCore }.count,
+          "gpuClockChannels": snapshot.clockResidencies.filter { $0.kind == .gpu }.count,
+          "liveClockResidencies": snapshot.clockResidencies.filter { $0.activeFraction != nil }
+            .count,
+          "explicitClockFrequencies": snapshot.clockResidencies.filter { $0.activeGHz != nil }
+            .count,
+          "clockStateStatus": snapshot.clockResidencyStatus,
           "persistentHistory": settings.effectivePersistentHistory,
           "configuredShortcuts": (settings.shortcuts ?? []).count,
           "registeredShortcuts": keyboardShortcuts?.registeredCount ?? 0,

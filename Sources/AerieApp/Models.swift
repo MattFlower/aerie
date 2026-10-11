@@ -106,6 +106,8 @@ struct PowerData {
   var peripherals: [(String, Double)] = []
 }
 struct Snapshot {
+  var clockResidencies: [ClockResidency] = []
+  var clockResidencyStatus = "Clock-state telemetry unavailable"
   var date = Date()
   var cpu = CPUData()
   var gpu = [GPUData]()
