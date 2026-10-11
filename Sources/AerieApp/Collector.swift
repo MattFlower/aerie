@@ -99,19 +99,12 @@ final class Collector {
         if key.hasPrefix("T") || key.hasPrefix("P") || key.hasPrefix("V") || key.hasPrefix("I")
           || (key.hasPrefix("F") && key.hasSuffix("Ac"))
         {
-          var sensor = AerieSensor()
-          if aerie_smc_read(key, &sensor) == 0, sensor.value.isFinite,
-            !text(sensor.type).hasPrefix("ui")
+          var source = AerieSensorSource()
+          if aerie_smc_source(key, &source) == 0,
+            let unit = Self.sensorUnit(key: key, source: source)
           {
-            var source = AerieSensorSource()
-            if aerie_smc_source(key, &source) == 0 {
-              let unit =
-                key.hasPrefix("T")
-                ? "°C"
-                : key.hasPrefix("F")
-                  ? "rpm" : key.hasPrefix("P") ? "W" : key.hasPrefix("V") ? "V" : "A"
-              sensorSources.append((source, key, sensorLabel(key), unit))
-            }
+            // Retain a declared supported source even when its first live reading is unavailable.
+            sensorSources.append((source, key, Self.sensorLabel(key), unit))
           }
         }
       }
@@ -398,6 +391,19 @@ final class Collector {
     cache = snapshot
     DispatchQueue.main.async { [weak self] in self?.onSample?(snapshot) }
   }
+  static func sensorUnit(key: String, source: AerieSensorSource) -> String? {
+    guard SensorIdentity.key(metric: "sensor:" + key) != nil,
+      !(source.type >> 24 == 117 && (source.type >> 16) & 255 == 105)
+    else { return nil }
+    var zero = [UInt8](repeating: 0, count: 32), value = 0.0
+    guard aerie_smc_decode(source.type, &zero, source.size, &value) == 0 else { return nil }
+    if key.hasPrefix("T") { return "°C" }
+    if key.hasPrefix("P") { return "W" }
+    if key.hasPrefix("V") { return "V" }
+    if key.hasPrefix("I") { return "A" }
+    if key.hasPrefix("F") && key.hasSuffix("Ac") { return "rpm" }
+    return nil
+  }
   static func sensorReading(
     _ descriptor: SensorData, mode: SensorSamplingMode, panelVisible: Bool,
     ruleRequired: Bool = false,
@@ -584,12 +590,13 @@ final class Collector {
     }
     return result
   }
-  private func sensorLabel(_ key: String) -> String {
+  static func sensorLabel(_ key: String) -> String {
     let known = [
       "TC0P": "CPU proximity", "TC0D": "CPU die", "TG0P": "GPU proximity", "TG0D": "GPU die",
       "TB0T": "Battery", "TA0P": "Ambient", "Ts0P": "Palm rest", "F0Ac": "Fan 1", "F1Ac": "Fan 2",
       "PC0C": "CPU power", "PG0C": "GPU power", "PSTR": "System power",
     ]
-    return known[key] ?? key
+    if key == "F0Ac" || key == "F1Ac" { return known[key] ?? key }
+    return known[key].map { $0 + " (unverified role)" } ?? key
   }
 }

@@ -113,6 +113,17 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             + AlertPresentation.message(report.alerts[index]));
         return
       }
+      if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-hour:"),
+        let index = Int(identifier.dropFirst(13)), let report = self.dashboard.weather,
+        report.hours.indices.contains(index)
+      {
+        let hour = report.hours[index]
+        self.showWeatherDetail(
+          title: "Hourly forecast",
+          message: HourlyForecastPresentation.message(
+            hour, report: report, temperature: self.settings.temperature))
+        return
+      }
       if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-period:"),
         let index = Int(identifier.dropFirst(15)), let report = self.dashboard.weather,
         report.periods.indices.contains(index)
@@ -912,9 +923,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       snapshot.sensors.first { $0.key == key && $0.unit == rule.sensorUnit }
     }
     content.title = "Aerie · \(sensor?.title(names: settings.sensorNames) ?? rule.metric)"
-    let unit = rule.sensorUnit.map { " " + $0 } ?? ""
     content.body =
-      "\(rule.comparison.rawValue.capitalized) \(rule.threshold)\(unit) for \(Int(rule.duration)) seconds."
+      "\(rule.conditionDescription) for \(Int(rule.duration)) seconds."
     UNUserNotificationCenter.current().add(
       UNNotificationRequest(identifier: rule.id.uuidString, content: content, trigger: nil))
   }
@@ -984,9 +994,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     alert.runModal()
   }
   private var menuCalendar: Calendar {
-    var calendar = Calendar.current
-    calendar.firstWeekday = settings.weekStartsMonday ? 2 : 1
-    return calendar
+    settings.effectiveCalendarOptions.calendar()
   }
   private func clearCalendar() {
     dashboard.releaseDaylight()
@@ -1012,7 +1020,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     guard
       let month = CalendarMonth.make(
         displayedMonth: selectedCalendarDate, selected: selectedCalendarDate, now: now,
-        calendar: calendar, showsWeekNumbers: settings.showWeekNumbers)
+        calendar: calendar, showsWeekNumbers: settings.showWeekNumbers,
+        weekNumberStyle: settings.effectiveCalendarOptions.weekNumbers)
     else {
       calendarReader.cancel()
       dashboard.calendarRows = [.note("The current calendar could not produce this month.")]
@@ -1029,8 +1038,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         ))
     } else {
       rows.append(.note("Reading local events…"))
-      let upcomingEnd = calendar.date(byAdding: .day, value: 7, to: now) ?? now
-      let ranges = [month.dayInterval, DateInterval(start: now, end: upcomingEnd)]
+      let upcomingDays = settings.effectiveCalendarOptions.upcomingDays
+      let upcoming = settings.effectiveCalendarOptions.upcomingInterval(
+        from: now, calendar: calendar)
+      let ranges = [month.dayInterval] + (upcoming.map { [$0] } ?? [])
       calendarReader.load(ranges: ranges, calendars: settings.eventCalendars) {
         [weak self] result in
         guard let self, !self.paused, self.dashboard.module == .time, self.menuPanel.isShown else {
@@ -1054,10 +1065,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
           detailFormatter.timeZone = calendar.timeZone
           detailFormatter.setLocalizedDateFormatFromTemplate("EEE MMM d y jmm z")
           for (index, section) in result.ranges.enumerated() {
-            if index == 1 { eventRows.append(.heading("Upcoming events · next seven days")) }
+            if index == 1 {
+              eventRows.append(.heading("Upcoming events · next \(upcomingDays) days"))
+            }
             if section.events.isEmpty {
               eventRows.append(
-                .note(index == 0 ? "No events on this day." : "No events in the next seven days."))
+                .note(
+                  index == 0
+                    ? "No events on this day." : "No events in the next \(upcomingDays) days."))
             }
             for event in section.events {
               let identifier = UUID().uuidString

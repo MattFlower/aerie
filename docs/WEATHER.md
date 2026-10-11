@@ -24,6 +24,14 @@ There are at most eight sequential requests per refresh, with no immediate retry
 
 The development command `Aerie --nws-integration-fixture` checks forecast availability using a fixed public documentation point without reading user preferences. It prints only counts and availability summaries, and is not run by public CI. Automated tests intercept transport using synthetic JSON and exercise bounds, cancellation, nulls, units, DST, stale observations and independent product failures. This does not establish native rendering or live consent acceptance.
 
+## Cached hourly details
+
+Hourly rows are selectable, with a configurable presentation bound of 24, 48, 72 or 168 current/upcoming periods. Detail windows use the existing report and issue no new requests. Missing-temperature hours remain visible. Probability of precipitation is separate from amount; neither implies rain rather than snow.
+
+[NWS schema documentation](https://api.weather.gov/openapi.json) defines hourly validity windows, humidity, dewpoint, wind and gust fields. Aerie accepts recognized quantitative units or keeps published textual wind ranges; unknown units remain unavailable. Window endpoints retain their distinct timezone offsets through repeated daylight-saving hours. NWS does not supply every detail shown by the generic view.
+
+The [Open-Meteo forecast schema](https://open-meteo.com/en/docs) supplies requested hourly feels-like temperature, humidity, dewpoint, wind/gusts/direction, surface pressure, cloud cover, precipitation amount, UV and visibility where available. Requests explicitly select Celsius, km/h and millimetres. Hourly precipitation amount/probability and maximum gust describe the preceding hour; details show that window separately from instantaneous fields. Optional short/null arrays preserve missing values without shifting neighbouring hours; invalid percentages/directions/nonnegative quantities are withheld. The model adapter retains at most 384 hourly entries and the same 2 MB receipt bound, ephemeral session, provider consent and 15-minute fetch cadence. No provider requests are made by public tests. Native detail interaction, enabled-source cost and coverage remain unvalidated.
+
 ## Detailed maps milestone
 
 The native AppKit window loads only on demand and releases requests, animation timers, raster frames, and rendering state when closed. Idle/background footprint keeps the strict all-process budget. Active map use may have reasonable temporary headroom; measure its peak and verify prompt return close to baseline after close, including repeated open/close cycles. A bounded frame cache and timestamps/legends are required.

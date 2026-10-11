@@ -27,7 +27,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private let rulesPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   private let ruleMetrics = [
     "cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload", "thermal",
-    "sensor",
+    "diskRead", "diskWrite", "sensor",
   ]
   private var rulesLabel = NSTextField(wrappingLabelWithString: "")
   private var errorLabel = NSTextField(wrappingLabelWithString: "")
@@ -297,6 +297,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     network.addSubview(addressTerms)
 
     let weather = tab("Weather", in: tabs)
+    weather.frame.size.height = 885
     weather.frame.size.height = 840
     label("Optional weather", y: 18, in: weather)
     choice(
@@ -331,11 +332,22 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       "Map provider: NOAA/NWS. Opening Maps sends the selected map area and your IP to NOAA services. Alert details also send the rounded map-center point. Maps load only on demand; forecast consent above is separate. NOAA boundaries are used; no device location is requested.",
       y: 626, in: weather, height: 96)
 
+    choice(
+      "hourlyForecastHours", title: "Hourly forecast rows", values: ["24", "48", "72", "168"],
+      selected: [24, 48, 72, 168].firstIndex(of: settings.effectiveHourlyForecastHours) ?? 0,
+      y: 748, in: weather)
+    label(
+      "Hourly details use the current cached report and make no extra requests. Provider fields can be unavailable; precipitation probability and amount are distinct. More rows change only the open-panel presentation, not fetch cadence.",
+      y: 790, in: weather, height: 70)
+
     let time = tab("Time", in: tabs)
     field("clockFormat", title: "Date format", value: settings.clockFormat, y: 18, in: time)
-    toggle(
-      "monday", title: "Calendar week starts Monday", value: settings.weekStartsMonday, y: 65,
-      in: time)
+    time.frame.size.height = 970
+    let calendarOptions = settings.effectiveCalendarOptions
+    choice(
+      "firstWeekday", title: "First weekday",
+      values: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+      selected: calendarOptions.firstWeekday - 1, y: 65, in: time)
     toggle(
       "weeks", title: "Show calendar week numbers", value: settings.showWeekNumbers, y: 99, in: time
     )
@@ -361,6 +373,29 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     calendarSelectionLabel.frame = NSRect(x: 18, y: 559, width: 550, height: 48)
     calendarSelectionLabel.font = .systemFont(ofSize: 12); time.addSubview(calendarSelectionLabel)
     updateCalendarSelectionLabel()
+    choice(
+      "worldClockStyle", title: "World clock style", values: WorldClockStyle.allCases.map(\.title),
+      selected: WorldClockStyle.allCases.firstIndex(of: settings.worldClockStyle ?? .compact) ?? 0,
+      y: 620, in: time)
+    choice(
+      "worldClockOrder", title: "World clock ordering",
+      values: WorldClockOrder.allCases.map(\.title),
+      selected: WorldClockOrder.allCases.firstIndex(of: settings.worldClockOrder ?? .manual) ?? 0,
+      y: 660, in: time)
+    choice(
+      "calendarSystem", title: "Calendar system", values: CalendarSystem.allCases.map(\.title),
+      selected: CalendarSystem.allCases.firstIndex(of: calendarOptions.system) ?? 0, y: 700,
+      in: time)
+    choice(
+      "weekNumbers", title: "Week number convention", values: WeekNumberStyle.allCases.map(\.title),
+      selected: WeekNumberStyle.allCases.firstIndex(of: calendarOptions.weekNumbers) ?? 0, y: 740,
+      in: time)
+    field(
+      "upcomingDays", title: "Upcoming event days (1–31)",
+      value: String(calendarOptions.upcomingDays), y: 780, in: time)
+    label(
+      "Manual order follows the world-clock lines above. Clock styles share the existing system tick. ISO week numbers label each calendar row by its Thursday; selected-calendar weeks use that calendar's rules. Event dates use calendar arithmetic across daylight saving changes; these controls request no event access.",
+      y: 825, in: time, height: 100)
 
     let daylight = tab("Daylight", in: tabs)
     let point = settings.daylight ?? DaylightConfiguration()
@@ -383,7 +418,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       y: 374, in: daylight, height: 106)
 
     let rules = tab("Rules", in: tabs)
-    rules.frame.size.height = 900
+    rules.frame.size.height = 1150
     label("Sustained threshold notifications", y: 18, in: rules)
     label(
       "Missing values and sleep gaps reset the sustain timer. Notifications have a cooldown and require your permission. The rule engine keeps evaluating while menus are closed.",
@@ -393,7 +428,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       values: [
         "CPU %", "GPU %", "Memory used %", "Battery %", "Maximum temperature °C",
         "First volume free GiB", "Download bytes/s", "Upload bytes/s", "Thermal severity 0–3",
-        "Individual sensor",
+        "Storage read bytes/s", "Storage write bytes/s", "Individual sensor",
       ], selected: 0, y: 132, in: rules)
     choices["ruleMetric"]?.target = self
     choices["ruleMetric"]?.action = #selector(ruleMetricChanged)
@@ -403,8 +438,11 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       y: 212, in: rules)
     ruleMetricChanged()
     choice(
-      "ruleComparison", title: "Condition", values: ["Above", "Below"], selected: 0, y: 252,
+      "ruleComparison", title: "Condition", values: RuleComparison.allCases.map(\.title),
+      selected: 0, y: 252,
       in: rules)
+    choices["ruleComparison"]?.target = self;
+    choices["ruleComparison"]?.action = #selector(ruleComparisonChanged)
     field("ruleThreshold", title: "Threshold", value: "90", y: 292, in: rules)
     field("ruleDuration", title: "Sustain seconds", value: "30", y: 332, in: rules)
     field("ruleCooldown", title: "Cooldown seconds", value: "300", y: 372, in: rules)
@@ -424,7 +462,16 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Sensor thresholds use native units, including °C when display units are °F. A missing key or different unit does not fire. Rules keep their keys live in on-demand mode and do not add history series.",
       y: 500, in: rules, height: 73)
-    rulesLabel.frame = NSRect(x: 18, y: 589, width: 550, height: 280); rules.addSubview(rulesLabel)
+    field("ruleUpper", title: "Upper bound (ranges only)", value: "100", y: 588, in: rules)
+    field("ruleHysteresis", title: "Recovery band (native units)", value: "0", y: 630, in: rules)
+    toggle(
+      "ruleRepeat", title: "Repeat while active after each cooldown", value: true, y: 672, in: rules
+    )
+    ruleComparisonChanged()
+    rulesLabel.frame = NSRect(x: 18, y: 724, width: 550, height: 280); rules.addSubview(rulesLabel)
+    label(
+      "A recovery band extends an already-active condition; it never starts one. Outside-range bands must be at most half the range width. Turn repeats off for one notification per active episode. Missing data, edits, pause or sleep reset the episode; cooldown remains separate.",
+      y: 1018, in: rules, height: 100)
     refreshRules()
 
     let changes = tab("Changes", in: tabs)
@@ -529,7 +576,18 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       in: .whitespacesAndNewlines)
     s.combinedColorHex = combinedColor.isEmpty ? nil : combinedColor
     s.clockFormat = fields["clockFormat"]!.stringValue
-    s.weekStartsMonday = toggles["monday"]!.state == .on
+    var calendarOptions = settings.effectiveCalendarOptions
+    calendarOptions.firstWeekday = choices["firstWeekday"]!.indexOfSelectedItem + 1
+    calendarOptions.system = CalendarSystem.allCases[choices["calendarSystem"]!.indexOfSelectedItem]
+    calendarOptions.weekNumbers =
+      WeekNumberStyle.allCases[choices["weekNumbers"]!.indexOfSelectedItem]
+    guard let upcomingDays = Int(fields["upcomingDays"]!.stringValue) else {
+      throw SettingsError.invalid
+    }
+    calendarOptions.upcomingDays = upcomingDays
+    s.calendarOptions = calendarOptions; s.weekStartsMonday = calendarOptions.firstWeekday == 2
+    s.worldClockStyle = WorldClockStyle.allCases[choices["worldClockStyle"]!.indexOfSelectedItem]
+    s.worldClockOrder = WorldClockOrder.allCases[choices["worldClockOrder"]!.indexOfSelectedItem]
     s.showWeekNumbers = toggles["weeks"]!.state == .on
     if toggles["daylightEnabled"]!.state == .on {
       var point = DaylightConfiguration(); point.enabled = true
@@ -552,6 +610,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       guard parts.count == 2, !parts[0].isEmpty else { throw SettingsError.invalid }
       return WorldClock(name: parts[0], zone: parts[1])
     }
+    s.hourlyForecastHours = [24, 48, 72, 168][choices["hourlyForecastHours"]!.indexOfSelectedItem]
     s.weather.enabled = toggles["weather"]!.state == .on
     s.weather.provider = choices["weatherProvider"]!.indexOfSelectedItem == 1 ? "nws" : "openMeteo"
     s.weather.mapsEnabled = toggles["maps"]!.state == .on
@@ -593,22 +652,27 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private func ruleFromForm() -> ThresholdRule? {
     guard let threshold = Double(fields["ruleThreshold"]!.stringValue),
       let duration = Double(fields["ruleDuration"]!.stringValue),
-      let cooldown = Double(fields["ruleCooldown"]!.stringValue)
+      let cooldown = Double(fields["ruleCooldown"]!.stringValue),
+      let hysteresis = Double(fields["ruleHysteresis"]!.stringValue)
     else {
       errorLabel.stringValue = "Rules require numeric values."; return nil
     }
     let metric = ruleMetrics[choices["ruleMetric"]!.indexOfSelectedItem]
     let individual = metric == "sensor"
+    let comparison = RuleComparison.allCases[choices["ruleComparison"]!.indexOfSelectedItem]
+    let upper = comparison.requiresUpperBound ? Double(fields["ruleUpper"]!.stringValue) : nil
     let rule = ThresholdRule(
       metric: individual ? "sensor:" + fields["ruleSensorKey"]!.stringValue : metric,
       threshold: threshold,
-      comparison: choices["ruleComparison"]!.indexOfSelectedItem == 0 ? .above : .below,
+      comparison: comparison,
       duration: duration, cooldown: cooldown,
       sensorUnit: individual
-        ? SensorIdentity.units[choices["ruleSensorUnit"]!.indexOfSelectedItem] : nil)
+        ? SensorIdentity.units[choices["ruleSensorUnit"]!.indexOfSelectedItem] : nil,
+      upperThreshold: upper, hysteresis: hysteresis,
+      repeatWhileMet: toggles["ruleRepeat"]!.state == .on)
     guard rule.valid else {
       errorLabel.stringValue =
-        "Check the four-character key/unit, threshold, sustain 0–86400s and cooldown 10–604800s.";
+        "Check sensor key/unit, ordered bounds/recovery band, sustain 0–86400s and cooldown 10–604800s.";
       return nil
     }
     return rule
@@ -644,10 +708,21 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     choices["ruleSensorUnit"]?.selectItem(
       at: SensorIdentity.units.firstIndex(of: rule.sensorUnit ?? "") ?? 0)
     ruleMetricChanged()
-    choices["ruleComparison"]?.selectItem(at: rule.comparison == .above ? 0 : 1)
+    choices["ruleComparison"]?.selectItem(
+      at: RuleComparison.allCases.firstIndex(of: rule.comparison) ?? 0)
+    fields["ruleUpper"]?.stringValue = String(rule.upperThreshold ?? 100)
+    fields["ruleHysteresis"]?.stringValue = String(rule.recoveryBand)
+    toggles["ruleRepeat"]?.state = rule.repeats ? .on : .off
+    ruleComparisonChanged()
     fields["ruleThreshold"]?.stringValue = String(rule.threshold)
     fields["ruleDuration"]?.stringValue = String(rule.duration)
     fields["ruleCooldown"]?.stringValue = String(rule.cooldown)
+  }
+  @objc private func ruleComparisonChanged() {
+    guard let selected = choices["ruleComparison"]?.indexOfSelectedItem,
+      RuleComparison.allCases.indices.contains(selected)
+    else { return }
+    fields["ruleUpper"]?.isEnabled = RuleComparison.allCases[selected].requiresUpperBound
   }
   @objc private func ruleMetricChanged() {
     let individual = choices["ruleMetric"]?.indexOfSelectedItem == ruleMetrics.count - 1
@@ -662,7 +737,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     rulesPicker.removeAllItems(); rulesPicker.addItem(withTitle: "New rule")
     rulesPicker.addItems(
       withTitles: settings.rules.map {
-        "\($0.enabled ? "On" : "Off") · \($0.metric) \($0.comparison.rawValue) \($0.threshold) \($0.sensorUnit ?? "")"
+        "\($0.enabled ? "On" : "Off") · \($0.metric) \($0.conditionDescription)"
       })
     if let id, let index = settings.rules.firstIndex(where: { $0.id == id }) {
       rulesPicker.selectItem(at: index + 1)
@@ -672,7 +747,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       settings.rules.isEmpty
       ? "No rules. Add a rule, then Apply."
       : settings.rules.map {
-        "\($0.metric) \($0.comparison.rawValue) \($0.threshold) \($0.sensorUnit ?? "") for \($0.duration)s; cooldown \($0.cooldown)s"
+        "\($0.metric) \($0.conditionDescription) for \($0.duration)s; cooldown \($0.cooldown)s; recovery \($0.recoveryBand); \($0.repeats ? "repeating" : "once per episode")"
       }.joined(separator: "\n")
   }
   @objc private func exportSettings() {

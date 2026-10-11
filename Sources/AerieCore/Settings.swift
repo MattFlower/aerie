@@ -115,14 +115,24 @@ public struct Settings: Codable, Equatable {
   public var showWeekNumbers = true
   public var eventCalendars: [String]?
   public var daylight: DaylightConfiguration?
+  public var calendarOptions: CalendarOptions?
+  public var effectiveCalendarOptions: CalendarOptions {
+    calendarOptions ?? CalendarOptions(firstWeekday: weekStartsMonday ? 2 : 1)
+  }
+  public var worldClockStyle: WorldClockStyle?
+  public var worldClockOrder: WorldClockOrder?
   public var clocks = [WorldClock(name: "UTC", zone: "Etc/UTC")]
   public var weather = WeatherConfiguration()
+  public var hourlyForecastHours: Int?
+  public var effectiveHourlyForecastHours: Int { hourlyForecastHours ?? 24 }
   public var rules: [ThresholdRule] = []
   // Optional for decoding configurations saved before change rules existed.
   public var changeRules: [ChangeRule]?
   public init() {}
   public func validated() throws -> Settings {
-    guard EventCalendarSelection.valid(eventCalendars) else { throw SettingsError.invalid }
+    guard effectiveCalendarOptions.valid, EventCalendarSelection.valid(eventCalendars) else {
+      throw SettingsError.invalid
+    }
     if let daylight, daylight.enabled && !daylight.valid { throw SettingsError.invalid }
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
       networkSelection.valid, ProcessSort.valid(processSorts),
@@ -145,6 +155,7 @@ public struct Settings: Codable, Equatable {
       (changeRules ?? []).allSatisfy(\.valid),
       Set((changeRules ?? []).map(\.id)).count == (changeRules ?? []).count,
       Set((changeRules ?? []).map(\.kind)).count == (changeRules ?? []).count,
+      [24, 48, 72, 168].contains(effectiveHourlyForecastHours),
       !weather.enabled || weather.valid, !weather.mapsEnabled || weather.mapsValid,
       ["openMeteo", "nws"].contains(weather.provider), weather.mapsProvider == "noaa"
     else { throw SettingsError.invalid }

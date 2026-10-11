@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <mach/mach_time.h>
+#include <math.h>
 
 int aerie_cpu(uint64_t *ticks, int capacity) {
     natural_t cores = 0; processor_info_array_t info = NULL; mach_msg_type_number_t count = 0;
@@ -275,24 +276,36 @@ int aerie_smc_source(const char *key, AerieSensorSource *source) {
     }
     source->key = in.key; source->type = in.info.type; source->size = in.info.size; return 0;
 }
+static int smc_hex(char c) {
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+int aerie_smc_decode(uint32_t encoding, const uint8_t *bytes, uint32_t size, double *value) {
+    if (!bytes || !value || !size || size > 32) return -1;
+    char type[5]; unfourcc(encoding, type);
+    double decoded;
+    if ((type[0] == 'f' || type[0] == 's') && type[1] == 'p') {
+        int integer = smc_hex(type[2]), fraction = smc_hex(type[3]);
+        if (size != 2 || integer < 0 || fraction < 0 || integer + fraction != (type[0] == 's' ? 15 : 16)) return -1;
+        uint16_t raw = ((uint16_t)bytes[0] << 8) | bytes[1];
+        int32_t number = type[0] == 's' && raw >= 0x8000 ? (int32_t)raw - 0x10000 : raw;
+        decoded = number / (double)(1U << fraction);
+    } else if (encoding == fourcc("flt ")) {
+        if (size != 4) return -1;
+        uint32_t bits = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) | ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+        float number; _Static_assert(sizeof(number) == 4, "Unexpected float width");
+        memcpy(&number, &bits, sizeof(number)); decoded = number;
+    } else if (encoding == fourcc("ui8 ") && size == 1) decoded = bytes[0];
+    else if (encoding == fourcc("ui16") && size == 2) decoded = ((uint16_t)bytes[0] << 8) | bytes[1];
+    else if (encoding == fourcc("ui32") && size == 4) decoded = fourcc((const char *)bytes);
+    else return -1;
+    if (!isfinite(decoded)) return -1;
+    *value = decoded; return 0;
+}
 int aerie_smc_value(AerieSensorSource source, double *value) {
     if (!value || !source.size || source.size > 32) return -1;
     SMCData in = {0}, out = {0}; in.key = source.key; in.info.size = source.size; in.info.type = source.type; in.command = 5;
     if (smc_call(&in, &out) != 0) return -1;
-    char type[5]; unfourcc(source.type, type);
-    if (source.type == fourcc("sp78")) *value = (int16_t)((out.bytes[0] << 8) | out.bytes[1]) / 256.0;
-    else if (source.type == fourcc("fpe2")) *value = ((out.bytes[0] << 8) | out.bytes[1]) / 4.0;
-    else if (source.type == fourcc("flt ")) { float f; memcpy(&f, out.bytes, sizeof(f)); *value = f; }
-    else if ((type[0] == 'f' || type[0] == 's') && type[1] == 'p' && source.size == 2) {
-        char c = type[3]; int fractional = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-        if (fractional < 0) return -1;
-        uint16_t raw = (out.bytes[0] << 8) | out.bytes[1];
-        *value = (type[0] == 's' ? (int16_t)raw : (int)raw) / (double)(1U << fractional);
-    } else if (source.type == fourcc("ui8 ")) *value = out.bytes[0];
-    else if (source.type == fourcc("ui16")) *value = (out.bytes[0] << 8) | out.bytes[1];
-    else if (source.type == fourcc("ui32")) *value = fourcc((const char *)out.bytes);
-    else return -1;
-    return 0;
+    return aerie_smc_decode(source.type, out.bytes, source.size, value);
 }
 int aerie_smc_read(const char *key, AerieSensor *sensor) {
     if (!sensor) return -1;
@@ -304,7 +317,8 @@ int aerie_smc_read(const char *key, AerieSensor *sensor) {
 
 int aerie_smc_keys(char *keys, int capacity) {
     AerieSensor n = {0}; if (aerie_smc_read("#KEY", &n) != 0) return 0;
-    int total = (int)n.value; if (total < 0 || total > 20000) return 0;
+    if (!isfinite(n.value) || n.value < 0 || n.value > 20000 || floor(n.value) != n.value) return 0;
+    int total = (int)n.value;
     int count = 0;
     for (int i = 0; i < total && count < capacity; i++) {
         SMCData in = {0}, out = {0}; in.command = 8; in.index = i;

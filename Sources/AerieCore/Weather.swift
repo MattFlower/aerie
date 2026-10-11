@@ -6,14 +6,31 @@ public struct WeatherHour: Equatable {
   public var precipitation: Double?
   public var code: Int
   public var condition: String?
+  public var end: Date?
+  public var precedingHourAggregates: Bool
+  public var apparent, humidity, dewpoint, wind, gusts, direction, pressure, cloud, amount, uv,
+    visibility: Double?
+  public var windDescription, gustDescription, detail: String?
   public init(
-    date: Date, temperature: Double?, precipitation: Double?, code: Int, condition: String? = nil
+    date: Date, temperature: Double?, precipitation: Double?, code: Int, condition: String? = nil,
+    end: Date? = nil, precedingHourAggregates: Bool = false, apparent: Double? = nil,
+    humidity: Double? = nil, dewpoint: Double? = nil,
+    wind: Double? = nil, gusts: Double? = nil, direction: Double? = nil, pressure: Double? = nil,
+    cloud: Double? = nil, amount: Double? = nil, uv: Double? = nil, visibility: Double? = nil,
+    windDescription: String? = nil, gustDescription: String? = nil, detail: String? = nil
   ) {
     self.date = date
     self.temperature = temperature
     self.precipitation = precipitation
     self.code = code
-    self.condition = condition
+    self.condition = condition; self.end = end;
+    self.precedingHourAggregates = precedingHourAggregates; self.apparent = apparent;
+    self.humidity = humidity
+    self.dewpoint = dewpoint; self.wind = wind; self.gusts = gusts; self.direction = direction
+    self.pressure = pressure; self.cloud = cloud; self.amount = amount; self.uv = uv;
+    self.visibility = visibility
+    self.windDescription = windDescription; self.gustDescription = gustDescription;
+    self.detail = detail
   }
 }
 public struct WeatherDay: Equatable {
@@ -129,12 +146,19 @@ public struct OpenMeteoProvider: WeatherProvider {
         value:
           "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
       ),
-      URLQueryItem(name: "hourly", value: "temperature_2m,precipitation_probability,weather_code"),
+      URLQueryItem(
+        name: "hourly",
+        value:
+          "temperature_2m,precipitation_probability,weather_code,apparent_temperature,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_gusts_10m,wind_direction_10m,surface_pressure,cloud_cover,precipitation,uv_index,visibility"
+      ),
       URLQueryItem(
         name: "daily",
         value:
           "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max"
       ),
+      URLQueryItem(name: "temperature_unit", value: "celsius"),
+      URLQueryItem(name: "wind_speed_unit", value: "kmh"),
+      URLQueryItem(name: "precipitation_unit", value: "mm"),
       URLQueryItem(name: "forecast_days", value: "7"),
       URLQueryItem(name: "timeformat", value: "unixtime"),
       URLQueryItem(name: "timezone", value: "auto"),
@@ -148,6 +172,7 @@ public struct OpenMeteoProvider: WeatherProvider {
     return try Self.decode(await client.data(url))
   }
   public static func decode(_ data: Data, fetched: Date = Date()) throws -> WeatherReport {
+    guard data.count <= ForecastHTTPClient.maximumBytes else { throw WeatherError.payloadTooLarge }
     let payload = try JSONDecoder().decode(Payload.self, from: data)
     let c = payload.current
     guard let temperature = c.temperature_2m, temperature.isFinite else {
@@ -155,16 +180,35 @@ public struct OpenMeteoProvider: WeatherProvider {
     }
     var hours: [WeatherHour] = []
     if let h = payload.hourly {
-      guard h.time.count == h.temperature_2m.count, h.time.count == h.weather_code.count else {
+      guard h.time.count <= 384, h.time.count == h.temperature_2m.count,
+        h.time.count == h.weather_code.count
+      else {
         throw WeatherError.invalidResponse
       }
       for i in h.time.indices {
-        guard let value = h.temperature_2m[i], value.isFinite else { continue }
+        guard h.time[i].isFinite, (-62135596800...253402300799).contains(h.time[i]) else {
+          throw WeatherError.invalidResponse
+        }
+        func value(_ array: [Double?]?, range: ClosedRange<Double>? = nil) -> Double? {
+          guard let array, i < array.count, let n = array[i], n.isFinite, range?.contains(n) ?? true
+          else { return nil }
+          return n
+        }
         hours.append(
           WeatherHour(
-            date: Date(timeIntervalSince1970: h.time[i]), temperature: value,
-            precipitation: h.precipitation_probability.flatMap { i < $0.count ? $0[i] : nil },
-            code: h.weather_code[i] ?? -1))
+            date: Date(timeIntervalSince1970: h.time[i]), temperature: value(h.temperature_2m),
+            precipitation: value(h.precipitation_probability, range: 0...100),
+            code: h.weather_code[i] ?? -1,
+            precedingHourAggregates: true, apparent: value(h.apparent_temperature),
+            humidity: value(h.relative_humidity_2m, range: 0...100),
+            dewpoint: value(h.dew_point_2m), wind: value(h.wind_speed_10m, range: 0...1e12),
+            gusts: value(h.wind_gusts_10m, range: 0...1e12),
+            direction: value(h.wind_direction_10m, range: 0...360),
+            pressure: value(h.surface_pressure, range: Double.leastNonzeroMagnitude...1e12),
+            cloud: value(h.cloud_cover, range: 0...100),
+            amount: value(h.precipitation, range: 0...1e12),
+            uv: value(h.uv_index, range: 0...1e12), visibility: value(h.visibility, range: 0...1e12)
+          ))
       }
     }
     var days: [WeatherDay] = []
@@ -219,6 +263,9 @@ public struct OpenMeteoProvider: WeatherProvider {
     var temperature_2m: [Double?]
     var precipitation_probability: [Double?]?
     var weather_code: [Int?]
+    var apparent_temperature, relative_humidity_2m, dew_point_2m, wind_speed_10m, wind_gusts_10m,
+      wind_direction_10m, surface_pressure, cloud_cover, precipitation, uv_index,
+      visibility: [Double?]?
   }
   private struct Daily: Decodable {
     var time: [Double]

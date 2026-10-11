@@ -154,7 +154,9 @@ final class CoreTests: XCTestCase {
       """.utf8)
     let report = try OpenMeteoProvider.decode(data, fetched: Date(timeIntervalSince1970: 0))
     XCTAssertEqual(report.temperature, 12)
-    XCTAssertEqual(report.hours.count, 1)
+    XCTAssertEqual(report.hours.count, 2)
+    XCTAssertNil(report.hours[1].temperature)
+    XCTAssertEqual(report.hours[1].precipitation, 0)
     XCTAssertEqual(report.hours[0].precipitation, 50)
     XCTAssertEqual(report.days[0].low, 5)
   }

@@ -7,6 +7,11 @@ public struct WeatherPeriod: Equatable {
   public let isDay: Bool
   public let temperature, precipitation: Double?
   public let condition, detail, wind: String
+  public var humidity: Double? = nil
+  public var dewpoint: Double? = nil
+  public var windSpeed: Double? = nil
+  public var gusts: Double? = nil
+  public var gustDescription: String? = nil
 }
 public struct NWSPoint {
   public let forecast, hourly, stations: URL
@@ -68,13 +73,18 @@ public enum NWSWeather {
     guard let q = value as? [String: Any], let value = number(q["value"]),
       let unit = q["unitCode"] as? String
     else { return nil }
+    func wind(_ factor: Double) -> Double? {
+      let converted = value * factor
+      return value >= 0 && converted.isFinite ? converted : nil
+    }
     switch (kind, unit) {
     case ("temperature", "wmoUnit:degC"): return value
     case ("temperature", "wmoUnit:degF"): return (value - 32) / 1.8
     case ("temperature", "wmoUnit:K"): return value - 273.15
     case ("wind", "wmoUnit:km_h-1"): return value >= 0 ? value : nil
-    case ("wind", "wmoUnit:m_s-1"): return value >= 0 ? value * 3.6 : nil
-    case ("wind", "wmoUnit:kt"): return value >= 0 ? value * 1.852 : nil
+    case ("wind", "wmoUnit:m_s-1"): return wind(3.6)
+    case ("wind", "wmoUnit:mi_h-1"): return wind(1.609344)
+    case ("wind", "wmoUnit:kt"): return wind(1.852)
     case ("percent", "wmoUnit:percent"): return (0...100).contains(value) ? value : nil
     case ("direction", "wmoUnit:degree_(angle)"): return (0...360).contains(value) ? value : nil
     case ("pressure", "wmoUnit:Pa"): return value > 0 ? value / 100 : nil
@@ -178,8 +188,17 @@ public enum NWSWeather {
           precipitation: quantity(period["probabilityOfPrecipitation"], kind: "percent"),
           condition: text(period["shortForecast"], limit: 256),
           detail: text(period["detailedForecast"], limit: 4096),
-          wind: [text(period["windSpeed"], limit: 128), text(period["windDirection"], limit: 32)]
-            .filter { !$0.isEmpty }.joined(separator: " · ")))
+          wind: [
+            (period["windSpeed"] as? String).map { String($0.prefix(128)) }
+              ?? quantity(period["windSpeed"], kind: "wind").map { String(format: "%.1f km/h", $0) }
+              ?? "",
+            text(period["windDirection"], limit: 32),
+          ].filter { !$0.isEmpty }.joined(separator: " · "),
+          humidity: quantity(period["relativeHumidity"], kind: "percent"),
+          dewpoint: quantity(period["dewpoint"], kind: "temperature"),
+          windSpeed: quantity(period["windSpeed"], kind: "wind"),
+          gusts: quantity(period["windGust"], kind: "wind"),
+          gustDescription: (period["windGust"] as? String).map { String($0.prefix(128)) }))
     }
     return (
       result.sorted { $0.start < $1.start },
@@ -218,7 +237,9 @@ public struct NWSProvider: WeatherProvider {
       report.hours = hourly.periods.map {
         WeatherHour(
           date: $0.start, temperature: $0.temperature, precipitation: $0.precipitation, code: -1,
-          condition: $0.condition)
+          condition: $0.condition, end: $0.end, humidity: $0.humidity, dewpoint: $0.dewpoint,
+          wind: $0.windSpeed, gusts: $0.gusts, windDescription: $0.wind,
+          gustDescription: $0.gustDescription, detail: $0.detail)
       }
     } catch { try Task.checkCancellation(); report.notes.append("Hourly forecast unavailable.") }
     do {

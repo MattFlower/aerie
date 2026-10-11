@@ -9,6 +9,7 @@ enum DashboardRow {
   case chart(String, String, NSColor, Double?)
   case cores([Double])
   case calendar(CalendarMonth)
+  case clock(WorldClockReading, WorldClockStyle)
   case action(String, String, String)
   var height: CGFloat {
     switch self {
@@ -18,6 +19,7 @@ enum DashboardRow {
     case .chart: return 100
     case .cores(let c): return CGFloat((c.count + 11) / 12) * 42 + 18
     case .calendar(let model): return CalendarMonthView.height(model)
+    case .clock(_, let style): return style == .compact ? 58 : 100
     case .action: return 34
     }
   }
@@ -112,6 +114,7 @@ final class DashboardView: NSView {
       case .cores(let c):
         label = c.enumerated().map { "Core \($0.offset + 1): \(Format.percent($0.element))" }
           .joined(separator: ", ")
+      case .clock(let reading, _): label = reading.accessibilityLabel
       case .calendar, .action: label = ""
       }
       let chart: Bool
@@ -233,6 +236,66 @@ final class DashboardView: NSView {
     else { return }
     onAction?(identifier)
   }
+  private func drawClock(_ reading: WorldClockReading, style: WorldClockStyle, in rect: NSRect) {
+    var x = rect.minX
+    if style == .analog {
+      let center = NSPoint(x: rect.minX + 43, y: rect.minY + 48), radius: CGFloat = 35
+      NSColor.separatorColor.setStroke()
+      let outline = NSBezierPath(
+        ovalIn: NSRect(
+          x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+      outline.lineWidth = 1; outline.stroke()
+      func point(_ angle: Double, _ length: CGFloat) -> NSPoint {
+        NSPoint(
+          x: center.x + CGFloat(sin(angle)) * length, y: center.y - CGFloat(cos(angle)) * length)
+      }
+      for index in 0..<12 {
+        let angle = Double(index) / 12 * 2 * .pi
+        let tick = NSBezierPath(); tick.move(to: point(angle, radius - 3));
+        tick.line(to: point(angle, radius - (index % 3 == 0 ? 8 : 5))); tick.stroke()
+      }
+      for (angle, length, width, color) in [
+        (reading.hourAngle, CGFloat(19), CGFloat(3), NSColor.labelColor),
+        (reading.minuteAngle, CGFloat(28), CGFloat(2), NSColor.labelColor),
+        (reading.secondAngle, CGFloat(30), CGFloat(1), AeriePalette.cpu),
+      ] {
+        color.setStroke(); let hand = NSBezierPath(); hand.lineWidth = width;
+        hand.lineCapStyle = .round
+        hand.move(to: center); hand.line(to: point(angle, length)); hand.stroke()
+      }
+      NSColor.labelColor.setFill();
+      NSBezierPath(ovalIn: NSRect(x: center.x - 2, y: center.y - 2, width: 4, height: 4)).fill()
+      x += 95
+    }
+    let width = rect.maxX - x
+    drawText(
+      reading.name, rect: NSRect(x: x, y: rect.minY + 6, width: width, height: 19),
+      font: .systemFont(ofSize: 12, weight: .semibold), color: .labelColor)
+    if style == .compact {
+      drawText(
+        reading.time,
+        rect: NSRect(x: x + 130, y: rect.minY + 5, width: max(0, width - 130), height: 24),
+        font: .monospacedDigitSystemFont(ofSize: 16, weight: .medium), color: .labelColor,
+        alignment: .right)
+      drawText(
+        reading.date + " · " + reading.offset + " · " + reading.day,
+        rect: NSRect(x: x, y: rect.minY + 30, width: width, height: 17),
+        font: .systemFont(ofSize: 10), color: .secondaryLabelColor)
+    } else {
+      drawText(
+        reading.time, rect: NSRect(x: x, y: rect.minY + 27, width: width, height: 35),
+        font: .monospacedDigitSystemFont(ofSize: style == .large ? 28 : 23, weight: .regular),
+        color: .labelColor)
+      drawText(
+        reading.date + " · " + reading.day,
+        rect: NSRect(x: x, y: rect.minY + 65, width: width, height: 15),
+        font: .systemFont(ofSize: 10), color: .secondaryLabelColor)
+      drawText(
+        reading.offset + " · " + reading.zone,
+        rect: NSRect(x: x, y: rect.minY + 81, width: width, height: 15),
+        font: .systemFont(ofSize: 9), color: .secondaryLabelColor)
+    }
+  }
   override func draw(_ dirtyRect: NSRect) {
     NSColor.windowBackgroundColor.setFill()
     dirtyRect.intersection(bounds).fill()
@@ -316,6 +379,7 @@ final class DashboardView: NSView {
             "\(index + 1)", rect: NSRect(x: x, y: base.maxY + 3, width: width, height: 14),
             font: .systemFont(ofSize: 9), color: .secondaryLabelColor, alignment: .center)
         }
+      case .clock(let reading, let style): drawClock(reading, style: style, in: rect)
       case .calendar, .action: break
       }
     }
@@ -1107,14 +1171,15 @@ final class DashboardController: NSViewController {
         DashboardRow.metric("Lunar age", String(format: "%.1f days", Astronomy.moonAge(at: now))),
         DashboardRow.heading("World clocks"),
       ]
-      for clock in settings.clocks {
-        formatter.timeZone = TimeZone(identifier: clock.zone)
-        rows += [DashboardRow.metric(clock.name, formatter.string(from: now))]
-        if let next = formatter.timeZone.nextDaylightSavingTimeTransition(after: now) {
-          let f = DateFormatter()
-          f.dateStyle = .medium
-          f.timeZone = formatter.timeZone
-          rows += [DashboardRow.metric("Next daylight saving change", f.string(from: next))]
+      for reading in ClockPresentation.readings(
+        settings.clocks, at: now, order: settings.worldClockOrder ?? .manual)
+      {
+        rows.append(.clock(reading, settings.worldClockStyle ?? .compact))
+        if let zone = TimeZone(identifier: reading.zone),
+          let next = zone.nextDaylightSavingTimeTransition(after: now)
+        {
+          let f = DateFormatter(); f.dateStyle = .medium; f.timeZone = zone
+          rows.append(.metric("Next daylight saving change", f.string(from: next)))
         }
       }
       rows += daylightRows(now: now)
@@ -1165,18 +1230,29 @@ final class DashboardController: NSViewController {
         DashboardRow.metric(
           "Cloud cover", w.cloud.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
         DashboardRow.note(w.timeContext.description),
-        DashboardRow.heading("Next 24 hours"),
+        DashboardRow.heading("Hourly forecast"),
       ]
       f.dateFormat = "EEE HH:mm"
-      for h in w.hours.filter({ $0.date >= Date().addingTimeInterval(-3600) }).prefix(24) {
-        rows += [
-          DashboardRow.metric(
+      let hours = HourlyForecastPresentation.indices(
+        w.hours, at: Date(), limit: settings.effectiveHourlyForecastHours)
+      if hours.isEmpty { rows.append(.note("No current or upcoming hourly forecast returned.")) }
+      for index in hours {
+        let h = w.hours[index]
+        let chance = h.precipitation.map { String(format: "%.0f%% precipitation", $0) } ?? ""
+        rows.append(
+          .action(
             f.string(from: h.date),
-            "\(h.temperature.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable")  \(h.precipitation.map { String(format: "%.0f%% rain", $0) } ?? "")"
-          )
-        ]
-        if let condition = h.condition, !condition.isEmpty { rows.append(.note(condition)) }
+            (h.temperature.map { Format.temperature($0, unit: settings.temperature) }
+              ?? "Unavailable") + "  " + chance, "weather-hour:\(index)"))
+        rows.append(
+          .note(
+            (h.condition ?? WeatherCondition.describe(h.code))
+              + (h.windDescription.map { $0.isEmpty ? "" : " · " + $0 } ?? "")))
       }
+      rows.append(
+        .note(
+          "Showing \(hours.count) cached hourly periods, up to \(settings.effectiveHourlyForecastHours). Select an hour for available wind, humidity, precipitation and other details. No extra requests are made."
+        ))
       if !w.periods.isEmpty {
         rows.append(.heading("Named forecast periods"))
         for (index, period) in w.periods.enumerated() {

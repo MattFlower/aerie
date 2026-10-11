@@ -42,6 +42,8 @@ int aerie_smc_open(void);
 int aerie_smc_keys(char *keys, int capacity);
 int aerie_smc_read(const char *key, AerieSensor *sensor);
 int aerie_smc_source(const char *key, AerieSensorSource *source);
+// Pure bounded decoder for already-read payloads; no IOKit calls or unit/role inference.
+int aerie_smc_decode(uint32_t type, const uint8_t *bytes, uint32_t size, double *value);
 int aerie_smc_value(AerieSensorSource source, double *value);
 void aerie_smc_close(void);
 int aerie_network_spawn(const char *executable, const char *argument, int seconds, int *master, int *pid);

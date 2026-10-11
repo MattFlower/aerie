@@ -14,7 +14,7 @@ bash scripts/build-app.sh
 open dist/Aerie.app
 ```
 
-The build is ad-hoc signed for local development. It is not notarized or submitted to the App Store. Left-click a menu item to inspect its dashboard. Right-click for settings, sampling pause, Activity Monitor, or quit. Configure independent items or one combined item, text/graph/compact styles, units, order, appearance, refresh interval, rules, and world clocks in Settings.
+Set `AERIE_BUILD_SCRATCH` and `AERIE_APP_OUTPUT` to local build/output directories if needed; they default to `.build` and `dist/Aerie.app`. The build is ad-hoc signed for local development. It is not notarized or submitted to the App Store. Left-click a menu item to inspect its dashboard. Right-click for settings, sampling pause, Activity Monitor, or quit. Configure independent items or one combined item, text/graph/compact styles, units, order, appearance, refresh interval, rules, and world clocks in Settings.
 
 ## Current capabilities
 
@@ -26,12 +26,12 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Complete interface throughput, cumulative and observed-session totals, aggregate interface selection, local addresses, errors, passive connectivity, and passive Wi-Fi radio/mode/signal/noise/rate/channel details. Wi-Fi SSID, BSSID and country require existing macOS authorization; Settings provides an explicit foreground request control.
 - Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default, local names that retain firmware keys, individual native-unit alerts, and an explicit on-demand option that keeps enabled rule inputs live.
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
-- Local/world clocks, selectable monthly calendar with navigation and week numbers, optional selected-day/upcoming local event details with event-calendar selection, approximate lunar phase, and separately configured offline solar-noon/daylight/twilight estimates.
-- Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.
+- Local/world clocks with compact/large/analog styles and independent ordering; selectable calendar systems, first weekday and ISO/calendar week conventions; optional selected-day/upcoming local event details with calendar filtering and a 1–31-day horizon, approximate lunar phase, and separately configured offline solar-noon/daylight/twilight estimates.
+- Editable scalar/range threshold notifications with inclusive bounds, recovery bands, repeating or once-per-episode delivery, and system-state change rules; cooldowns and missing-data/sleep handling.
 - Ten-minute detailed history, one day of minute averages, and one week of hourly averages; timestamp-based zoom/pan and visible-range CSV export, plus optional bounded local restart checkpoints.
 - Native text, graph, compact or two-line menu items, per-item colors, and ordered combined-module values.
 - Explicit optional global shortcuts for modules and Settings, with layout-aware character keys and reported registration conflicts.
-- Opt-in Open-Meteo current/hourly/daily model forecasts or US NWS station observations, hourly/named-period forecasts and current point-alert details, with explicit provider/location consent.
+- Opt-in Open-Meteo current/hourly/daily model forecasts or US NWS station observations, hourly/named-period forecasts, cached hourly detail fields and current point-alert details, with explicit provider/location consent.
 - Separately opted-in native NOAA weather maps: observed radar, satellite bands, tropical tracks, official alert overlays, wind barbs/speed, temperature, precipitation and snow forecasts, plus current point-alert messages with distinct sent/effective/onset/expiry/end times.
 
 Some statistics require hardware or permissions that are unavailable to a normal user process. Aerie shows unavailable states and does not install an elevated helper. Regional weather coverage, per-polygon alert inspection, visual validation and other open requirements are tracked in the capability checklist.

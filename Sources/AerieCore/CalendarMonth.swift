@@ -23,7 +23,7 @@ public struct CalendarMonth: Equatable {
   /// Calendar arithmetic preserves the user's calendar, time zone, and DST day lengths.
   public static func make(
     displayedMonth: Date, selected: Date, now: Date, calendar: Calendar,
-    showsWeekNumbers: Bool, locale: Locale = .current
+    showsWeekNumbers: Bool, locale: Locale = .current, weekNumberStyle: WeekNumberStyle = .calendar
   ) -> CalendarMonth? {
     guard (1...7).contains(calendar.firstWeekday),
       let month = calendar.dateInterval(of: .month, for: displayedMonth),
@@ -50,9 +50,15 @@ public struct CalendarMonth: Equatable {
             selected: calendar.isDate(date, inSameDayAs: selected),
             today: calendar.isDate(date, inSameDayAs: now)))
       }
-      // A week number belongs to the calendar's complete week, including adjacent-month days.
+      var weekCalendar = calendar
+      var weekDate = cells[0].date
+      if weekNumberStyle == .iso8601 {
+        weekCalendar = Calendar(identifier: .iso8601); weekCalendar.timeZone = calendar.timeZone
+        // Each row is labelled by its Thursday, independent of the displayed first weekday.
+        weekDate = cells[(5 - calendar.firstWeekday + 7) % 7].date
+      }
       weeks.append(
-        CalendarWeek(days: cells, number: calendar.component(.weekOfYear, from: cells[0].date)))
+        CalendarWeek(days: cells, number: weekCalendar.component(.weekOfYear, from: weekDate)))
     }
     let formatter = DateFormatter()
     formatter.locale = locale; formatter.calendar = calendar; formatter.timeZone = calendar.timeZone
