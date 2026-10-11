@@ -14,7 +14,7 @@ final class ProcessGroupReader {
       guard aerie_process_path(pid, identity.startTime, &bytes, Int32(bytes.count)) > 0 else {
         return nil
       }
-      return String(validatingCString: bytes)
+      return String(validatingUTF8: bytes)
     }
   ) { self.path = path }
   func read(_ identities: [ProcessIdentity], enabled: Bool, visible: Bool) -> [ProcessIdentity:
