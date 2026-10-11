@@ -2,7 +2,7 @@ import AppKit
 
 private final class MenuDashboardWindow: NSPanel {
   override var canBecomeKey: Bool { true }
-  override var canBecomeMain: Bool { false }
+  override var canBecomeMain: Bool { true }
   override func cancelOperation(_ sender: Any?) { close() }
 }
 
@@ -12,6 +12,7 @@ final class MenuPanel: NSObject, NSWindowDelegate {
   var contentSize = NSSize(width: 416, height: 620)
   var onClose: (() -> Void)?
   private var panel: MenuDashboardWindow?
+  private var deactivationObserver: NSObjectProtocol?
   var isShown: Bool { panel?.isVisible == true }
 
   func show(anchoredTo button: NSStatusBarButton) {
@@ -24,7 +25,7 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     let anchor = Self.anchor(attached: attachedAnchor, visibleFrame: screen.visibleFrame)
     let window = MenuDashboardWindow(
       contentRect: NSRect(origin: .zero, size: contentSize),
-      styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel], backing: .buffered,
+      styleMask: [.titled, .closable, .utilityWindow], backing: .buffered,
       defer: false)
     window.isReleasedWhenClosed = false
     window.title = "Aerie"
@@ -37,8 +38,14 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     window.setFrameOrigin(
       Self.origin(anchor: anchor, visibleFrame: screen.visibleFrame, size: window.frame.size))
     panel = window
+    deactivationObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main
+    ) { [weak self] _ in self?.performClose(nil) }
     NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
+  }
+  deinit {
+    if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
   }
   static func anchor(attached: NSRect?, visibleFrame: NSRect) -> NSRect {
     // Hidden or overflowed status items have no window. Settings must still open the dashboard.
@@ -48,17 +55,9 @@ final class MenuPanel: NSObject, NSWindowDelegate {
   func windowWillClose(_ notification: Notification) {
     guard let window = notification.object as? NSWindow, window === panel else { return }
     panel = nil; window.delegate = nil; window.contentViewController = nil
+    if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
+    deactivationObserver = nil
     onClose?()
-  }
-  func windowDidResignKey(_ notification: Notification) {
-    guard let window = notification.object as? NSWindow, window === panel else { return }
-    // Menu tracking may temporarily route events elsewhere within the same application.
-    DispatchQueue.main.async { [weak self, weak window] in
-      guard let self, let window, self.panel === window, !window.isKeyWindow,
-        !NSApp.isActive
-      else { return }
-      self.performClose(nil)
-    }
   }
   static func origin(anchor: NSRect, visibleFrame: NSRect, size: NSSize) -> NSPoint {
     let margin: CGFloat = 8
