@@ -211,12 +211,18 @@ final class Collector {
     }
     var interfaces = [AerieInterface](repeating: AerieInterface(), count: 128)
     let networkCount = Int(aerie_interfaces(&interfaces, 128))
-    snapshot.interfaces = interfaces.prefix(networkCount).map {
+    snapshot.networkAvailable = networkCount >= 0
+    snapshot.interfaces = interfaces.prefix(max(0, networkCount)).map {
       let name = text($0.name)
       return InterfaceData(
         name: name, active: $0.active != 0, addresses: text($0.addresses),
         received: $0.received, sent: $0.sent, download: rate("\(name).in", $0.received, now),
         upload: rate("\(name).out", $0.sent, now), errors: $0.errors_in + $0.errors_out)
+    }
+    if networkCount < 0 {
+      for key in counters.keys where key.hasSuffix(".in") || key.hasSuffix(".out") {
+        counters.removeValue(forKey: key)
+      }
     }
     var reads: UInt64 = 0
     var writes: UInt64 = 0

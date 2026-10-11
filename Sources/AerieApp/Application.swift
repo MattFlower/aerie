@@ -116,6 +116,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         let output: [String: Any] = [
           "cpu": snapshot.cpu.total != nil, "cores": snapshot.cpu.cores.count,
           "memory": snapshot.memory.total > 0, "interfaces": snapshot.interfaces.count,
+          "networkCountersAvailable": snapshot.networkAvailable,
           "volumes": snapshot.volumes.count, "gpu": snapshot.gpu.count,
           "sensors": snapshot.sensors.count, "sensorStatus": snapshot.sensorStatus,
           "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,

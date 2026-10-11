@@ -102,6 +102,7 @@ struct Snapshot {
   var volumes = [VolumeData]()
   var mountedVolumePaths: [String]?
   var interfaces = [InterfaceData]()
+  var networkAvailable = false
   var sensors = [SensorData]()
   var power = PowerData()
   var processes = [ProcessData]()

@@ -437,6 +437,11 @@ final class DashboardController: NSViewController {
         DashboardRow.chart("download", "Download bytes/s", AeriePalette.incoming, nil),
         DashboardRow.chart("upload", "Upload bytes/s", AeriePalette.outgoing, nil),
       ]
+      if !s.networkAvailable {
+        rows.append(.note("Interface counters are unavailable; no rates or totals are inferred."))
+      } else if s.interfaces.isEmpty {
+        rows.append(.note("No non-loopback interfaces were reported."))
+      }
       for i in s.interfaces.sorted(by: { $0.active && !$1.active }) {
         rows += [
           DashboardRow.heading(i.name + (i.active ? " · active" : " · inactive")),
