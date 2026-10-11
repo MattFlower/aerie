@@ -25,7 +25,7 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Complete interface throughput, cumulative and observed-session totals, aggregate interface selection, local addresses, errors, passive connectivity, and available Wi-Fi details.
 - Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default with an explicit on-demand option for non-temperature families.
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
-- Local/world clocks, selectable monthly calendar with navigation and week numbers, optional selected-day/upcoming local event details with event-calendar selection, and approximate lunar phase.
+- Local/world clocks, selectable monthly calendar with navigation and week numbers, optional selected-day/upcoming local event details with event-calendar selection, approximate lunar phase, and separately configured offline solar-noon/daylight/twilight estimates.
 - Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.
 - Ten-minute detailed history, one day of minute averages, and one week of hourly averages; timestamp-based zoom/pan and visible-range CSV export, plus optional bounded local restart checkpoints.
 - Native text, graph, compact or two-line menu items, per-item colors, and ordered combined-module values.
@@ -39,7 +39,7 @@ Some statistics require hardware or permissions that are unavailable to a normal
 
 System readings stay local. Forecasts and maps are off by default; Aerie does not use device location, IP geolocation, or automatic city search. Enabling forecasts sends your chosen coordinates (rounded to two decimal places) and network IP only to the selected provider. Map consent is separate and sends the selected map extent and IP to NOAA/NWS services while the map is visible. Opening map alert details also sends its rounded center point to NWS. Read [weather sources and terms](docs/WEATHER.md) before opting in. Open-Meteo's free hosted API is for personal/noncommercial use; an open-source application license does not remove that restriction. NWS coverage is principally US land forecasts and advertised observation stations.
 
-Notifications, calendar events, and launch-at-login are requested only through explicit Settings actions. Exported settings remove weather location and local event-calendar identifiers. Public tests contain synthetic fixtures and do not make weather requests.
+Notifications, calendar events, and launch-at-login are requested only through explicit Settings actions. Offline daylight uses only its own manually entered point and time zone; it sends no coordinates and requires no location grant. Turning it off clears that point. Exported settings remove weather/daylight locations and local event-calendar identifiers. Public tests contain synthetic fixtures and do not make weather requests.
 
 ## Development and performance
 

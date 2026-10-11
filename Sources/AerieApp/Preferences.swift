@@ -301,7 +301,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     clockScroll.documentView = clocksField
     time.addSubview(clockScroll)
     label(
-      "Calendar events remain local. Access is requested only through the Permissions tab. Lunar phase is an offline approximation; daylight times are shown from an opted-in weather forecast.",
+      "Calendar events remain local. Access is requested only through the Permissions tab. Lunar phase is an offline approximation. Offline daylight uses a separate manual point and makes no network requests.",
       y: 434, in: time, height: 70)
     let calendars = NSButton(
       title: "Choose Event Calendars…", target: self,
@@ -310,6 +310,26 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     calendarSelectionLabel.frame = NSRect(x: 18, y: 559, width: 550, height: 48)
     calendarSelectionLabel.font = .systemFont(ofSize: 12); time.addSubview(calendarSelectionLabel)
     updateCalendarSelectionLabel()
+
+    let daylight = tab("Daylight", in: tabs)
+    let point = settings.daylight ?? DaylightConfiguration()
+    toggle(
+      "daylightEnabled", title: "Enable offline sunrise, sunset and twilight estimates",
+      value: point.enabled, y: 18, in: daylight)
+    field("daylightName", title: "Manual point name", value: point.name, y: 68, in: daylight)
+    field(
+      "daylightLatitude", title: "Latitude (north positive)", value: String(point.latitude), y: 110,
+      in: daylight)
+    field(
+      "daylightLongitude", title: "Longitude (east positive)", value: String(point.longitude),
+      y: 152, in: daylight)
+    field("daylightZone", title: "IANA time zone", value: point.zone, y: 194, in: daylight)
+    label(
+      "Coordinates stay in local settings and are never sent by this feature. Enter the point and its time zone yourself; no device location, IP lookup or permission request is used. Weather and map consent remain separate. Turning this option off removes the saved daylight point; settings export also removes it.",
+      y: 246, in: daylight, height: 106)
+    label(
+      "The Time panel shows the point's current local day, solar noon, daylight duration and civil/nautical/astronomical boundaries. These are approximate standard-horizon calculations for 1901–2099; terrain, refraction and polar conditions affect observed times. They do not enable weather or read calendars.",
+      y: 374, in: daylight, height: 106)
 
     let rules = tab("Rules", in: tabs)
     label("Sustained threshold notifications", y: 18, in: rules)
@@ -432,6 +452,20 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.clockFormat = fields["clockFormat"]!.stringValue
     s.weekStartsMonday = toggles["monday"]!.state == .on
     s.showWeekNumbers = toggles["weeks"]!.state == .on
+    if toggles["daylightEnabled"]!.state == .on {
+      var point = DaylightConfiguration(); point.enabled = true
+      point.name = fields["daylightName"]!.stringValue.trimmingCharacters(
+        in: .whitespacesAndNewlines)
+      guard let latitude = Double(fields["daylightLatitude"]!.stringValue),
+        let longitude = Double(fields["daylightLongitude"]!.stringValue)
+      else { throw SettingsError.invalid }
+      point.latitude = latitude; point.longitude = longitude
+      point.zone = fields["daylightZone"]!.stringValue.trimmingCharacters(
+        in: .whitespacesAndNewlines)
+      s.daylight = point
+    } else {
+      s.daylight = nil
+    }
     s.clocks = try clocksField.string.split(separator: "\n").map { line in
       let parts = line.split(separator: "|", maxSplits: 1).map {
         $0.trimmingCharacters(in: .whitespaces)
@@ -551,6 +585,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       var s = try readSettings()
       s.weather = WeatherConfiguration()
       s.eventCalendars = nil
+      s.daylight = nil
       let panel = NSSavePanel()
       panel.nameFieldStringValue = "Aerie-settings.json"
       if panel.runModal() == .OK, let url = panel.url {

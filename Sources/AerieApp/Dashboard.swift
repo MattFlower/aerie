@@ -290,6 +290,10 @@ func drawHistoryPlot(
 }
 
 final class DashboardController: NSViewController {
+  private var daylightConfiguration: DaylightConfiguration?
+  private(set) var daylightReading: SolarDay?
+  var suspended = false
+  func releaseDaylight() { daylightConfiguration = nil; daylightReading = nil }
   let canvas = DashboardView(frame: NSRect(x: 0, y: 0, width: 416, height: 600))
   let modules = NSPopUpButton(frame: .zero, pullsDown: false)
   let windowPicker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -390,6 +394,7 @@ final class DashboardController: NSViewController {
     resetZoom()
   }
   func show(_ module: Module) {
+    if module != .time { releaseDaylight() }
     self.module = module
     modules.selectItem(at: Module.allCases.firstIndex(of: module) ?? 0)
     refresh()
@@ -403,8 +408,10 @@ final class DashboardController: NSViewController {
     mapsButton.title = settings.weather.mapsValid ? "Maps…" : "Enable Maps…"
     let age = max(0, Date().timeIntervalSince(snapshot.date))
     stateLabel.stringValue =
-      age > settings.interval * 3
-      ? "Stale · \(Int(age))s" : "Live · \(settings.interval.formatted())s"
+      suspended
+      ? "Paused"
+      : age > settings.interval * 3
+        ? "Stale · \(Int(age))s" : "Live · \(settings.interval.formatted())s"
     let rows = makeRows()
     canvas.expectedInterval =
       windowPicker.indexOfSelectedItem == 0
@@ -460,6 +467,68 @@ final class DashboardController: NSViewController {
       }
     }
     rows.append(.note(snapshot.clockResidencyStatus))
+    return rows
+  }
+  private func daylightRows(now: Date) -> [DashboardRow] {
+    guard !suspended else { releaseDaylight(); return [] }
+    guard let configuration = settings.daylight, configuration.enabled, configuration.valid else {
+      releaseDaylight(); return []
+    }
+    if daylightConfiguration != configuration
+      || daylightReading.map({
+        now < $0.interval.start || now >= $0.interval.end
+      }) != false
+    {
+      daylightConfiguration = configuration
+      daylightReading = SolarDay.make(date: now, configuration: configuration)
+    }
+    guard let reading = daylightReading else {
+      return [
+        .heading("Offline daylight · " + configuration.name),
+        .note("Solar estimates are unavailable for this date; supported years are 1901–2099."),
+      ]
+    }
+    let formatter = DateFormatter(); formatter.timeZone = reading.zone
+    formatter.timeStyle = .short
+    func times(_ dates: [Date]) -> String {
+      dates.isEmpty
+        ? "No crossing today" : dates.map { formatter.string(from: $0) }.joined(separator: ", ")
+    }
+    let dateFormatter = DateFormatter(); dateFormatter.timeZone = reading.zone;
+    dateFormatter.dateStyle = .medium
+    var rows: [DashboardRow] = [
+      .heading("Offline daylight · " + configuration.name),
+      .note(dateFormatter.string(from: reading.interval.start) + " · " + reading.zone.identifier),
+      .metric("Approx. solar noon", times(reading.transits)),
+    ]
+    for boundary in reading.boundaries {
+      let rise, set: String
+      switch boundary.band {
+      case .daylight: rise = "Approx. sunrise"; set = "Approx. sunset"
+      case .civil: rise = "Civil dawn"; set = "Civil dusk"
+      case .nautical: rise = "Nautical dawn"; set = "Nautical dusk"
+      case .astronomical: rise = "Astronomical dawn"; set = "Astronomical dusk"
+      }
+      rows += [.metric(rise, times(boundary.rises)), .metric(set, times(boundary.sets))]
+      if boundary.band == .daylight {
+        rows.append(.metric("Daylight in this local day", Format.duration(boundary.secondsAbove)))
+      }
+      switch boundary.state {
+      case .transitions: break
+      case .continuousAbove:
+        rows.append(
+          .note("Sun stays above the \(boundary.band.rawValue) boundary throughout this local day.")
+        )
+      case .continuousBelow:
+        rows.append(
+          .note("Sun stays below the \(boundary.band.rawValue) boundary throughout this local day.")
+        )
+      }
+    }
+    rows.append(
+      .note(
+        "Calculated locally from the manual point; no coordinates are sent. Standard horizon/refraction estimates exclude terrain and variable atmospheric conditions; polar timing has greater uncertainty."
+      ))
     return rows
   }
   private func makeRows() -> [DashboardRow] {
@@ -819,6 +888,7 @@ final class DashboardController: NSViewController {
           rows += [DashboardRow.metric("Next daylight saving change", f.string(from: next))]
         }
       }
+      rows += daylightRows(now: now)
       rows += [DashboardRow.heading("Calendar")] + calendarRows
       return rows
     case .weather:

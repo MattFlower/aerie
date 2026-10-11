@@ -108,6 +108,7 @@ public struct Settings: Codable, Equatable {
   public var weekStartsMonday = true
   public var showWeekNumbers = true
   public var eventCalendars: [String]?
+  public var daylight: DaylightConfiguration?
   public var clocks = [WorldClock(name: "UTC", zone: "Etc/UTC")]
   public var weather = WeatherConfiguration()
   public var rules: [ThresholdRule] = []
@@ -116,6 +117,7 @@ public struct Settings: Codable, Equatable {
   public init() {}
   public func validated() throws -> Settings {
     guard EventCalendarSelection.valid(eventCalendars) else { throw SettingsError.invalid }
+    if let daylight, daylight.enabled && !daylight.valid { throw SettingsError.invalid }
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
       networkSelection.valid, KeyboardShortcut.valid(shortcuts ?? []),
       menus.count <= Module.allCases.count,
@@ -138,7 +140,9 @@ public struct Settings: Codable, Equatable {
       !weather.enabled || weather.valid, !weather.mapsEnabled || weather.mapsValid,
       ["openMeteo", "nws"].contains(weather.provider), weather.mapsProvider == "noaa"
     else { throw SettingsError.invalid }
-    return self
+    var result = self
+    if daylight?.enabled != true { result.daylight = nil }
+    return result
   }
 }
 public enum SettingsError: Error { case invalid }

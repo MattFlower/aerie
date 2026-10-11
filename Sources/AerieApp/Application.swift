@@ -186,6 +186,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) {
         [weak self] _ in
         self?.sleeping = true
+        self?.dashboard.suspended = true
         self?.collector?.setSuspended(true)
         self?.releaseViewMetadata(module: nil)
         self?.clearCalendar()
@@ -197,6 +198,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         [weak self] _ in
         guard let self else { return }
         self.sleeping = false
+        self.dashboard.suspended = self.paused
         self.collector?.setSuspended(self.paused)
         self.weatherFetchTime = .distantPast
         if self.popover.isShown { self.updateCalendar() }
@@ -227,6 +229,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
   private func receive(_ reading: Snapshot) {
+    dashboard.suspended = paused || sleeping
     preferences?.validateCalendarAccess()
     var snapshot = reading; snapshot.networkSelection = settings.networkSelection
     snapshot.releaseActiveViewState(
@@ -757,6 +760,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   @objc private func togglePaused() {
     paused.toggle()
+    dashboard.suspended = paused || sleeping
     collector?.setSuspended(paused)
     if paused {
       releaseViewMetadata(module: nil); clearCalendar()
@@ -836,6 +840,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     return calendar
   }
   private func clearCalendar() {
+    dashboard.releaseDaylight()
     calendarReader.cancel(); calendarDetails.removeAll(); dashboard.calendarRows.removeAll()
     if dashboard.module == .time { dashboard.canvas.releaseInteractiveRows() }
     lastCalendarRefresh = .distantPast
