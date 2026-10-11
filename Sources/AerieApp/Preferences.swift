@@ -132,6 +132,14 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     let dashboard = NSButton(
       title: "Open Dashboard", target: self, action: #selector(openDashboard))
     dashboard.frame = NSRect(x: 18, y: 580, width: 170, height: 28); general.addSubview(dashboard)
+    choice(
+      "sensors", title: "Hardware sensor sampling",
+      values: ["All supported sensors", "Other families on demand"],
+      selected: settings.effectiveSensorSampling == .all ? 0 : 1, y: 621, in: general)
+    label(
+      "Full sampling is the default. On demand still samples every temperature at the chosen interval for history and rules; fans, power, voltage and current are read at that same interval while Sensors is open. Inventory is always retained; deferred readings are never treated as zero or stale live values.",
+      y: 661, in: general, height: 92)
+    general.setFrameSize(NSSize(width: 600, height: 775))
     let menus = tab("Menus", in: tabs)
     toggle(
       "combined", title: "Use one combined menu-bar item", value: settings.combined, y: 14,
@@ -191,7 +199,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       "maps", title: "Enable NOAA/NWS maps for this manual location",
       value: settings.weather.mapsEnabled, y: 505, in: weather)
     label(
-      "Map provider: NOAA/NWS. Opening Maps sends the selected map area and your IP to NOAA services. Maps load only on demand; forecast consent above is separate. NOAA boundaries are used; no third-party basemap or device location is requested.",
+      "Map provider: NOAA/NWS. Opening Maps sends the selected map area and your IP to NOAA services. Alert details also send the rounded map-center point. Maps load only on demand; forecast consent above is separate. NOAA boundaries are used; no device location is requested.",
       y: 546, in: weather, height: 96)
 
     let time = tab("Time", in: tabs)
@@ -317,6 +325,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.binaryBytes = toggles["binary"]!.state == .on
     s.networkBits = toggles["bits"]!.state == .on
     s.compactSpacing = toggles["spacing"]!.state == .on
+    s.sensorSampling = choices["sensors"]!.indexOfSelectedItem == 0 ? .all : .whenNeeded
     s.combined = toggles["combined"]!.state == .on
     s.clockFormat = fields["clockFormat"]!.stringValue
     s.weekStartsMonday = toggles["monday"]!.state == .on

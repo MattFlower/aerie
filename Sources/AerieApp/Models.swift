@@ -74,11 +74,13 @@ struct ProcessData {
   var write: Double?
   var wakeups: Double?
 }
+enum SensorReadState { case live, deferred, unavailable }
 struct SensorData {
   var key: String
   var label: String
-  var value: Double
+  var value: Double?
   var unit: String
+  var state = SensorReadState.live
 }
 struct PowerData {
   var source: String?
@@ -130,7 +132,9 @@ struct Snapshot {
     values["gpu"] = gpu.first?.utilization.map { $0 * 100 }
     values["memory"] = memory.validity.live(memory.usedFraction).map { $0 * 100 }
     values["battery"] = power.percent.map { $0 * 100 }
-    values["temperature"] = sensors.filter { $0.unit == "°C" }.map(\.value).max()
+    values["temperature"] = sensors.filter { $0.unit == "°C" && $0.state == .live }.compactMap(
+      \.value
+    ).max()
     values["diskFree"] = volumes.first.map { $0.free / 1_073_741_824 }
     values["download"] = download
     values["upload"] = upload

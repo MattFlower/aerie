@@ -126,4 +126,17 @@ final class MapClientTests: XCTestCase {
     XCTAssertTrue(CGImageDestinationFinalize(destination))
     XCTAssertThrowsError(try MapRaster.decode(encoded as Data))
   }
+  func testAlertPresentationDistinguishesCurrentPointScopeAndEachMessageDate() throws {
+    let data = Data(
+      """
+      {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"event":"Synthetic watch","sent":"2026-01-01T00:00:00Z","effective":"2026-01-01T01:00:00Z","onset":"2026-01-01T02:00:00Z","expires":"2026-01-01T04:00:00Z","ends":"2026-01-01T03:00:00Z"}}]}
+      """.utf8)
+    let report = try WeatherAlerts.parse(data, fetched: Date(timeIntervalSince1970: 0))
+    let text = AlertPresentation.text(report)
+    for label in [
+      "CURRENT NWS ALERTS AT THE MAP CENTER", "Fetched:", "Message sent:", "Effective:", "Onset:",
+      "Message expires:", "Event ends:", "historical radar or future forecast frame",
+    ] { XCTAssertTrue(text.contains(label)) }
+    XCTAssertTrue(text.contains("00:00 UTC")); XCTAssertTrue(text.contains("04:00 UTC"))
+  }
 }

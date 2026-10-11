@@ -120,6 +120,8 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   private var selection = MapSelection()
   private var activity = MapActivity()
   private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+  private var alertDetailsWindow: NSWindow?
+  private weak var alertDetailsText: NSTextView?
   private var selected: WMSLayer? { selection.layer }
   private var times: [Date] { selection.timeline.times }
   private var frame: Int { selection.frame }
@@ -194,12 +196,15 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     play.action = #selector(togglePlay); view.addSubview(play)
     let refresh = NSButton(title: "Refresh", target: self, action: #selector(refresh))
     refresh.frame = NSRect(x: 616, y: 87, width: 73, height: 28); view.addSubview(refresh)
-    alertToggle.frame = NSRect(x: 540, y: 177, width: 170, height: 28); alertToggle.target = self
+    alertToggle.frame = NSRect(x: 540, y: 186, width: 170, height: 24); alertToggle.target = self
     alertToggle.action = #selector(changeOverlay); view.addSubview(alertToggle)
+    let details = NSButton(
+      title: "Alert details at center…", target: self, action: #selector(showAlerts))
+    details.frame = NSRect(x: 539, y: 160, width: 166, height: 24); view.addSubview(details)
     let zoomIn = NSButton(title: "+", target: self, action: #selector(zoomIn))
-    zoomIn.frame = NSRect(x: 548, y: 137, width: 60, height: 28); view.addSubview(zoomIn)
+    zoomIn.frame = NSRect(x: 548, y: 131, width: 60, height: 24); view.addSubview(zoomIn)
     let zoomOut = NSButton(title: "−", target: self, action: #selector(zoomOut))
-    zoomOut.frame = NSRect(x: 616, y: 137, width: 60, height: 28); view.addSubview(zoomOut)
+    zoomOut.frame = NSRect(x: 616, y: 131, width: 60, height: 24); view.addSubview(zoomOut)
     let source = NSButton(title: "NOAA/NWS sources", target: self, action: #selector(openSource))
     source.frame = NSRect(x: 542, y: 58, width: 155, height: 26); view.addSubview(source)
     canvas.setAccessibilityLabel(
@@ -207,6 +212,41 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   }
   @objc private func openSource() {
     NSWorkspace.shared.open(URL(string: "https://www.weather.gov/gis/cloudgiswebservices")!)
+  }
+  @objc private func showAlerts() {
+    guard activity.active else { return }
+    selection.playing = false; stopAnimation()
+    if alertDetailsWindow == nil {
+      let panel = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 580, height: 480),
+        styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+      panel.title = "Aerie · Current NWS alerts at map center"; panel.isReleasedWhenClosed = false
+      panel.delegate = self
+      let scroll = NSScrollView(frame: panel.contentView!.bounds)
+      scroll.autoresizingMask = [.width, .height]; scroll.hasVerticalScroller = true
+      let text = NSTextView(frame: scroll.bounds)
+      text.isEditable = false; text.isSelectable = true; text.isRichText = false
+      text.font = .systemFont(ofSize: 13); text.textContainerInset = NSSize(width: 14, height: 14)
+      text.autoresizingMask = [.width]; text.isVerticallyResizable = true;
+      text.isHorizontallyResizable = false
+      text.textContainer?.widthTracksTextView = true
+      scroll.documentView = text; panel.contentView?.addSubview(scroll)
+      alertDetailsWindow = panel; alertDetailsText = text; panel.center()
+    }
+    alertDetailsText?.string = "Loading current NWS alerts for the map center…"
+    alertDetailsWindow?.makeKeyAndOrderFront(nil)
+    run { controller in
+      do {
+        let url = try WeatherAlerts.request(
+          latitude: controller.latitude, longitude: controller.longitude)
+        let data = try await controller.client.data(url); try Task.checkCancellation()
+        let report = try WeatherAlerts.parse(data, fetched: Date())
+        controller.alertDetailsText?.string = AlertPresentation.text(report)
+      } catch is CancellationError { throw CancellationError() } catch {
+        controller.alertDetailsText?.string =
+          "Current alert details are unavailable. Close this view and retry later. Map coverage and point-message coverage may differ."
+      }
+    }
   }
   @objc private func changeKind() {
     selection.select(kind: WeatherMapKind.allCases[picker.indexOfSelectedItem])
@@ -429,6 +469,8 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
       generation += 1; task?.cancel(); task = nil; stopAnimation()
       refreshTimer?.invalidate(); refreshTimer = nil; client.suspendRequests()
       cache.clear(); canvas.clear(); legend.image = nil; alertTimestamp.stringValue = ""
+      alertDetailsText?.string =
+        "Map requests are paused. Close and reopen alert details after the map is visible to refresh current messages."
       status.stringValue =
         "Map requests paused while this window is not visible or the Mac is asleep."
     case .resume:
@@ -439,7 +481,13 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     case .unchanged: break
     }
   }
-  func windowWillClose(_ notification: Notification) { releaseResources(); onClose?() }
+  func windowWillClose(_ notification: Notification) {
+    if let closing = notification.object as? NSWindow, closing === alertDetailsWindow {
+      generation += 1; task?.cancel(); task = nil; client.suspendRequests()
+      alertDetailsText?.string = ""; alertDetailsText = nil; alertDetailsWindow = nil; return
+    }
+    releaseResources(); onClose?()
+  }
   func releaseResources() {
     closed = true; generation += 1; task?.cancel(); task = nil; stopAnimation()
     refreshTimer?.invalidate(); refreshTimer = nil; client.close()
@@ -447,6 +495,8 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     for (center, token) in observers { center.removeObserver(token) }; observers.removeAll()
     cache.clear(); metadata.removeAll(); selection = MapSelection()
     canvas.clear(); legend.image = nil; alertTimestamp.stringValue = ""
+    alertDetailsText?.string = ""; alertDetailsText = nil
+    alertDetailsWindow?.delegate = nil; alertDetailsWindow?.close(); alertDetailsWindow = nil
   }
   deinit {
     task?.cancel(); animation?.invalidate(); refreshTimer?.invalidate(); client.close()

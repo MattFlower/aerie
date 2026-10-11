@@ -46,6 +46,20 @@ enum MapIntegration {
       let raster = try MapRaster.decode(await client.data(url))
       results.append(["layer": "boundaries", "validRaster": true, "decodedCost": raster.cost])
     } catch { passed = false; results.append(["layer": "boundaries", "validRaster": false]) }
+    do {
+      let data = try await client.data(WeatherAlerts.request(latitude: 40, longitude: -100))
+      let report = try WeatherAlerts.parse(data, fetched: Date())
+      results.append([
+        "layer": "pointAlertDetails", "validMetadata": true, "messageCount": report.alerts.count,
+        "moreAvailable": report.moreAvailable,
+      ])
+    } catch {
+      passed = false;
+      results.append([
+        "layer": "pointAlertDetails", "validMetadata": false,
+        "error": String(describing: error),
+      ])
+    }
     let output: [String: Any] = [
       "fixture": "fixed public CONUS extent", "usedUserSettings": false, "results": results,
       "passed": passed,

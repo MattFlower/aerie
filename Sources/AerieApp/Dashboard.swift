@@ -478,6 +478,11 @@ final class DashboardController: NSViewController {
       var rows: [DashboardRow] = [
         DashboardRow.heading("Hardware"), DashboardRow.metric("Thermal state", s.thermal),
         DashboardRow.note(s.sensorStatus),
+        DashboardRow.note(
+          settings.effectiveSensorSampling == .all
+            ? "All supported sensors are sampled at the selected system interval."
+            : "On-demand sensor sampling: all temperatures stay live for history and rules; other families become live when this panel is open."
+        ),
       ]
       for unit in ["°C", "rpm", "W", "V", "A"] {
         let sensors = s.sensors.filter { $0.unit == unit }
@@ -488,11 +493,16 @@ final class DashboardController: NSViewController {
               unit]!)
         ]
         rows += sensors.map {
-          DashboardRow.metric(
-            $0.label,
-            unit == "°C"
-              ? Format.temperature($0.value, unit: settings.temperature)
-              : String(format: "%.1f %@", $0.value, unit))
+          let value: String
+          if let reading = $0.value, $0.state == .live {
+            value =
+              unit == "°C"
+              ? Format.temperature(reading, unit: settings.temperature)
+              : String(format: "%.1f %@", reading, unit)
+          } else {
+            value = $0.state == .deferred ? "Waiting for live read" : "Unavailable"
+          }
+          return DashboardRow.metric($0.label, value)
         }
       }
       rows += [

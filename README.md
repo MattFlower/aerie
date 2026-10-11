@@ -23,19 +23,19 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Memory categories, OS pressure state, compression, swap, paging, and top process footprints.
 - Local/removable/network volume capacity, physical disk activity, and process disk I/O.
 - Interface throughput, cumulative totals, local addresses, errors, passive connectivity, and available Wi-Fi details.
-- Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware.
+- Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default with an explicit on-demand option for non-temperature families.
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
 - Local/world clocks, monthly calendar, optional local calendar events, and approximate lunar phase.
 - Editable sustained threshold notifications and system-state change rules, with cooldowns and missing-data/sleep handling.
 - Ten-minute detailed history, one day of minute averages, and one week of hourly averages.
 - Opt-in Open-Meteo current/hourly/daily model forecasts, with attribution and explicit provider/location consent.
-- Separately opted-in native NOAA weather maps: observed radar, satellite bands, tropical tracks, official alert overlays, wind barbs/speed, temperature, precipitation and snow forecasts.
+- Separately opted-in native NOAA weather maps: observed radar, satellite bands, tropical tracks, official alert overlays, wind barbs/speed, temperature, precipitation and snow forecasts, plus current point-alert messages with distinct sent/effective/onset/expiry/end times.
 
-Some statistics require hardware or permissions that are unavailable to a normal user process. Aerie shows unavailable states and does not install an elevated helper. Regional weather coverage, per-alert detail, visual validation and other open requirements are tracked in the capability checklist.
+Some statistics require hardware or permissions that are unavailable to a normal user process. Aerie shows unavailable states and does not install an elevated helper. Regional weather coverage, per-polygon alert inspection, visual validation and other open requirements are tracked in the capability checklist.
 
 ## Privacy and weather
 
-System readings stay local. Forecasts and maps are off by default; Aerie does not use device location, IP geolocation, or automatic city search. Enabling weather sends your chosen coordinates (rounded to two decimal places) and network IP to Open-Meteo. Map consent is separate and sends the selected map extent and IP to NOAA/NWS services only while a map is open. Read [weather sources and terms](docs/WEATHER.md) before opting in. The free hosted API is for personal/noncommercial use; an open-source application license does not remove that restriction.
+System readings stay local. Forecasts and maps are off by default; Aerie does not use device location, IP geolocation, or automatic city search. Enabling weather sends your chosen coordinates (rounded to two decimal places) and network IP to Open-Meteo. Map consent is separate and sends the selected map extent and IP to NOAA/NWS services while the map is visible. Opening alert details also sends its rounded center point to NWS. Read [weather sources and terms](docs/WEATHER.md) before opting in. The free hosted API is for personal/noncommercial use; an open-source application license does not remove that restriction.
 
 Notifications, calendar events, and launch-at-login are requested only through explicit Settings actions. Exported settings remove weather location. Public tests contain synthetic fixtures and do not make weather requests.
 

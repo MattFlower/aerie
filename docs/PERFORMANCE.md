@@ -25,6 +25,12 @@ Raw output contains process names and should stay outside the repository. `footp
 
 Report median, 95th percentile, and peak physical footprint, CPU, and wakeup rate. Match scenario conditions across runs. Background workload and system compression can affect measurements. A favorable early sample does not satisfy feature-complete acceptance.
 
+## Sensor sampling configuration
+
+Full hardware-sensor sampling remains the default for new and legacy settings. Every supported source is read at the chosen system interval; failed readings stay in the inventory with unavailable values. An explicit General Settings option can defer fans, power, voltage and current until the Sensors panel needs them. It always samples every temperature at the original interval because maximum-temperature history and threshold rules require them. Opening Sensors restores all families at that same cadence; closing it removes deferred live values instead of reusing stale values or treating them as zero. There is no automatic battery/low-power sampling reduction.
+
+Disclose this option in every measurement. A run using on-demand sensor families is a different configuration from full sampling and cannot prove full-sampling feature/performance acceptance. The development-only `--sensor-sampling-demand` launch argument applies the option for that process without saving it; `--background --self-check` reports inventory, live/deferred source counts, temperature coverage, network counter width and interval. It does not exercise a real open panel. Synthetic regressions verify identical temperature history/rule inputs, full inventory retention, visible-panel restoration and missing-value semantics. Real panel transitions still need UI validation.
+
 ## CI cost boundary
 
 As verified on 2026-10-11, [GitHub documentation](https://docs.github.com/en/billing/concepts/product-billing/github-actions) makes standard GitHub-hosted runners free for public repositories. Larger runners are billed. CI uses `macos-15`, read-only repository permissions, no Actions artifact/cache uploads, a timeout, and concurrency cancellation. It skips when the repository is private. Account billing APIs may require an additional scope; no credentials or budgets are changed to obtain it.

@@ -88,6 +88,9 @@ public struct Settings: Codable, Equatable {
   public var binaryBytes = true
   public var networkBits = false
   public var compactSpacing = false
+  // Optional for old configurations. Full sampling remains the default until explicitly changed.
+  public var sensorSampling: SensorSamplingMode?
+  public var effectiveSensorSampling: SensorSamplingMode { sensorSampling ?? .all }
   public var clockFormat = "EEE d MMM HH:mm"
   public var weekStartsMonday = true
   public var showWeekNumbers = true

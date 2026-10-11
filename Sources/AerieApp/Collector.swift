@@ -62,6 +62,7 @@ final class Collector {
   private var connection = "Checking"
   private var settings = Settings()
   private var detailed = false
+  private var sensorPanelVisible = false
   private var suspended = false
   var onSample: ((Snapshot) -> Void)?
 
@@ -124,9 +125,11 @@ final class Collector {
       schedule.configure(interval: settings.interval) { [weak self] in self?.sample() }
     }
   }
-  func setDetailed(_ value: Bool) {
+  func setVisibleModule(_ module: Module?) {
     queue.async {
+      let value = module.map { ProcessDemand.required(module: $0, visible: true) } ?? false
       self.detailed = value;
+      self.sensorPanelVisible = module == .sensors
       if !value {
         self.cache.processes.removeAll(); self.previousProcesses.removeAll(); self.processTime = nil
       }
@@ -257,12 +260,13 @@ final class Collector {
       gpu.fps = stats["Frames Per Second"]?.doubleValue
       return gpu
     }
-    snapshot.sensors = sensorSources.compactMap { entry in
-      var value = 0.0
-      guard aerie_smc_value(entry.source, &value) == 0, value.isFinite,
-        entry.unit != "°C" || (-50...150).contains(value)
-      else { return nil }
-      return SensorData(key: entry.key, label: entry.label, value: value, unit: entry.unit)
+    snapshot.sensors = sensorSources.map { entry in
+      Self.sensorReading(
+        SensorData(key: entry.key, label: entry.label, value: nil, unit: entry.unit),
+        mode: settings.effectiveSensorSampling, panelVisible: sensorPanelVisible
+      ) {
+        var value = 0.0; return aerie_smc_value(entry.source, &value) == 0 ? value : nil
+      }
     }
     snapshot.power = power()
     if now - inventoryTime >= 30 {
@@ -283,6 +287,22 @@ final class Collector {
     if detailed { snapshot.processes = processes(now, &snapshot.processDenied) }
     cache = snapshot
     DispatchQueue.main.async { [weak self] in self?.onSample?(snapshot) }
+  }
+  static func sensorReading(
+    _ descriptor: SensorData, mode: SensorSamplingMode, panelVisible: Bool,
+    read: () -> Double?
+  ) -> SensorData {
+    var result = descriptor; result.value = nil
+    guard SensorDemand.required(unit: descriptor.unit, mode: mode, panelVisible: panelVisible)
+    else {
+      result.state = .deferred; return result
+    }
+    guard let value = read(), value.isFinite,
+      descriptor.unit != "°C" || (-50...150).contains(value)
+    else {
+      result.state = .unavailable; return result
+    }
+    result.value = value; result.state = .live; return result
   }
   static func memoryReading(
     _ memory: AerieMemory, previous: MemoryData, date: Date,

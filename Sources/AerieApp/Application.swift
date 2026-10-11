@@ -39,6 +39,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     {
       settings = valid
     }
+    if CommandLine.arguments.contains("--sensor-sampling-demand") {
+      settings.sensorSampling = .whenNeeded
+    }
     history.configure(interval: settings.interval)
     popover.behavior = .transient
     popover.contentSize = NSSize(width: 416, height: 620)
@@ -47,7 +50,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     dashboard.onSettings = { [weak self] in self?.showSettings() }
     dashboard.onMaps = { [weak self] in self?.showMaps() }
     dashboard.onModule = { [weak self] module in
-      self?.collector?.setDetailed(ProcessDemand.required(module: module, visible: true))
+      self?.collector?.setVisibleModule(module)
       self?.updateCalendar()
     }
     rebuildItems()
@@ -121,6 +124,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
             && snapshot.interfaces.allSatisfy { $0.counterBits == 64 },
           "volumes": snapshot.volumes.count, "gpu": snapshot.gpu.count,
           "sensors": snapshot.sensors.count, "sensorStatus": snapshot.sensorStatus,
+          "sensorSampling": settings.effectiveSensorSampling.rawValue,
+          "liveSensors": snapshot.sensors.filter { $0.state == .live }.count,
+          "deferredSensors": snapshot.sensors.filter { $0.state == .deferred }.count,
+          "temperatureInventory": snapshot.sensors.filter { $0.unit == "°C" }.count,
+          "liveTemperatures": snapshot.sensors.filter { $0.unit == "°C" && $0.state == .live }
+            .count,
           "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,
           "refreshInterval": settings.interval, "weatherOptIn": settings.weather.enabled,
         ]
@@ -184,12 +193,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     _ = dashboard.view
     dashboard.show(module)
     updateCalendar()
-    collector?.setDetailed(ProcessDemand.required(module: module, visible: true))
+    collector?.setVisibleModule(module)
     popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     popover.contentViewController?.view.window?.makeKey()
   }
   func popoverDidClose(_ notification: Notification) {
-    collector?.setDetailed(false); dashboard.snapshot.processes.removeAll();
+    collector?.setVisibleModule(nil); dashboard.snapshot.processes.removeAll();
     dashboard.history = HistoryStore(interval: settings.interval);
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
   }
@@ -208,8 +217,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       case .network: value = "↓\(shortRate(snapshot.download)) ↑\(shortRate(snapshot.upload))"
       case .sensors:
         value =
-          snapshot.sensors.first(where: { $0.unit == "°C" }).map {
-            Format.temperature($0.value, unit: settings.temperature)
+          snapshot.sensors.first(where: { $0.unit == "°C" && $0.state == .live }).flatMap(\.value)
+          .map {
+            Format.temperature($0, unit: settings.temperature)
           } ?? "TEMP —"
       case .power:
         value = snapshot.power.present ? "BAT \(Format.percent(snapshot.power.percent))" : "PWR AC"
