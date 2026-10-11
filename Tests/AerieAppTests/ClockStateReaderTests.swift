@@ -3,11 +3,13 @@ import XCTest
 @testable import AerieApp
 
 private final class SyntheticClockSource: ClockStateSource {
+  var subscriptions: Int? = 1
   var closed = false, ticks: UInt64 = 0
   var statuses: [Int32] = [0, 0, 0]
   func read() -> ClockSourceReading {
     ticks += 100
     return ClockSourceReading(
+      subscriptions: subscriptions,
       counters: [
         ClockCounter(
           kind: .gpu, identity: "fixture", name: "Fixture",
@@ -17,6 +19,20 @@ private final class SyntheticClockSource: ClockStateSource {
   func close() { closed = true }
 }
 final class ClockStateReaderTests: XCTestCase {
+  func testSubscriptionDiagnosticsPreserveFallbackAndUnavailableStates() {
+    let source = SyntheticClockSource()
+    let reader = ClockStateReader(factory: { source })
+    XCTAssertEqual(reader.sample(time: 100).subscriptions, 1)
+    source.subscriptions = 3
+    XCTAssertEqual(reader.sample(time: 101).subscriptions, 3)
+    for count in [nil, 0, 4, -1] as [Int?] {
+      source.subscriptions = count
+      XCTAssertNil(reader.sample(time: 102).subscriptions)
+    }
+    source.subscriptions = 1; source.statuses = []
+    XCTAssertNil(reader.sample(time: 103).subscriptions)
+  }
+
   func testUnavailableLibraryRetriesAtMostOncePerMinuteAndResumeCanRetryImmediately() {
     var attempts = 0
     let reader = ClockStateReader(factory: {

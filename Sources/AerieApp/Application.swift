@@ -372,6 +372,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
             .count,
           "battery": snapshot.power.present, "diskActivity": snapshot.diskRead != nil,
           "refreshInterval": settings.interval, "weatherOptIn": settings.weather.enabled,
+          "clockStateSubscriptions": snapshot.clockSubscriptions ?? -1,
           "clockStateChannels": snapshot.clockResidencies.count,
           "cpuComplexClockChannels": snapshot.clockResidencies.filter { $0.kind == .cpuComplex }
             .count,

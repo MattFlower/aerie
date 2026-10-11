@@ -45,6 +45,10 @@ void aerie_smc_close(void);
 int aerie_network_spawn(const char *executable, const char *argument, int seconds, int *master, int *pid);
 // Opaque, read-only platform clock-state subscriptions. No privileged helper or timer.
 typedef struct AeriePerformance AeriePerformance;
+typedef struct { int kind; uint64_t driver_id, channel_id; } AerieClockIdentity;
+// Pure catalog checks: collision/unknown identities never acquire an inferred group.
+int aerie_clock_catalog_valid(const AerieClockIdentity *catalog, int count);
+int aerie_clock_catalog_kind(const AerieClockIdentity *catalog, int count, uint64_t driver, uint64_t channel);
 typedef struct { char name[32]; uint64_t ticks; } AerieClockState;
 typedef struct {
     int kind, state_count;
@@ -53,6 +57,7 @@ typedef struct {
     AerieClockState states[64];
 } AerieClockChannel;
 AeriePerformance *aerie_performance_create(void);
+int aerie_performance_subscription_count(AeriePerformance *reader);
 // kind: 0 CPU complexes, 1 CPU cores, 2 GPU. status: 0 readable, 1 library/symbol unavailable,
 // 2 channel unavailable, 3 subscription unavailable, 4 sample unavailable, 5 bounded truncation.
 int aerie_performance_read(AeriePerformance *reader, AerieClockChannel *out, int capacity, int status[3]);

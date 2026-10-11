@@ -268,6 +268,7 @@ final class Collector {
     snapshot.cpu.frequency = sysNumber("hw.cpufrequency").map { Double($0) / 1e9 }
     samplingProfiler?.mark(.clockPrepare)
     let clockReading = clockStates.sample(time: now)
+    snapshot.clockSubscriptions = clockReading.subscriptions
     snapshot.clockResidencies = clockReading.rows
     snapshot.clockResidencyStatus = clockReading.status
     samplingProfiler?.mark(.memory)

@@ -9,11 +9,11 @@ final class SamplingProfiler {
     case appReceive, appHistory, appRules, appMenu, appVisible, appWeather
   }
   struct Stamp { let wall: UInt64; let cpu: UInt64? }
-  struct Total: Codable {
+  struct Total: Encodable {
     var calls = 0, cpuSamples = 0, invalidWallSamples = 0
     var observedWallNanoseconds: UInt64 = 0, observedCPUNanoseconds: UInt64 = 0
   }
-  struct Report: Codable {
+  struct Report: Encodable {
     let kind = "samplingPhases"
     let schema = 1
     let scope: String

@@ -3,10 +3,12 @@ import AerieNative
 import Foundation
 
 struct ClockStateReading {
+  var subscriptions: Int? = nil
   var rows: [ClockResidency] = []
   var status = "Clock-state telemetry has no baseline"
 }
 struct ClockSourceReading {
+  var subscriptions: Int? = nil
   var counters: [ClockCounter] = []
   var statuses: [Int32] = [1, 1, 1]
 }
@@ -42,7 +44,9 @@ private final class NativeClockStateSource: ClockStateSource {
         identity: "\(channel.kind):\(channel.driver_id):\(channel.channel_id)",
         name: Self.text(channel.name), unit: Self.text(channel.unit), states: states)
     }
-    return ClockSourceReading(counters: counters, statuses: statuses)
+    return ClockSourceReading(
+      subscriptions: Int(aerie_performance_subscription_count(reader)),
+      counters: counters, statuses: statuses)
   }
   private static func text<T>(_ tuple: T) -> String {
     withUnsafeBytes(of: tuple) {
@@ -89,6 +93,7 @@ final class ClockStateReader {
     profiler?.mark(.clockDerive)
     let rows = tracker.update(reading.counters, time: time)
     return ClockStateReading(
+      subscriptions: reading.subscriptions.flatMap { (1...3).contains($0) ? $0 : nil },
       rows: rows,
       status: messages.isEmpty
         ? "Read-only clock-state residency; interval baseline required. GHz needs explicit frequency labels."

@@ -110,6 +110,7 @@ struct PowerData {
   var peripherals: [(String, Double)] = []
 }
 struct Snapshot {
+  var clockSubscriptions: Int? = nil
   var clockResidencies: [ClockResidency] = []
   var clockResidencyStatus = "Clock-state telemetry unavailable"
   var date = Date()
