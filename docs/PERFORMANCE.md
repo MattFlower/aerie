@@ -27,9 +27,17 @@ Report median, 95th percentile, and peak physical footprint, CPU, and wakeup rat
 
 ## Network scope and counter continuity
 
+Aggregate interface rates require a valid finite baseline for every selected active interface. A missing/reset member makes that direction unavailable instead of publishing a partial sum into charts, numeric history or threshold rules. Individual interface rows and valid zero rates remain available; an unselected or inactive interface does not invalidate the selected scope. Native collection failure withholds aggregate rates.
+
 Native interface collection remains complete at the chosen system interval. Network Settings can select which active interfaces feed aggregate bandwidth, history and download/upload rules; unselected interfaces are still sampled and displayed. The default sums all active interfaces, which can duplicate traffic through virtual tunnels. Choosing one side avoids that aggregation duplication without reducing collection. Changing scope clears only download/upload history and their pending aggregates, preserving CPU, temperature and other series.
 
 Observed session totals begin at zero at each interface's first reading; prelaunch cumulative traffic is not credited. Counter rollback/wrap or a 32/64-bit source change rebases that interface at zero and shows a new baseline time. Disappearance or a failed complete interface read clears its observation session. These are per-interface observed sessions, not a permanent whole-machine usage ledger. Source failures stay unavailable. Synthetic tests cover large 64-bit cumulative values, source continuity, missing interfaces, scope changes and isolated history clearing. Full-interface native regressions remain mandatory for every build.
+
+## Process grouping and sorting
+
+Process combining defaults off. When enabled, only visible CPU/memory/storage/power or TCP/UDP process views read executable paths, using the existing system tick. Each bounded 4 KiB read rechecks the process's native start identity; a denied, reused, malformed or oversized identity stays separate. Group identity is the outer application-bundle path when present, otherwise the exact executable path. Display names alone never merge processes. The reader has no timer, helper, persisted path cache, file scan or network work. It copies at most8192 current identities; paths remain volatile in active process rows and are excluded from settings, history, exports and diagnostics.
+
+Groups are formed before ranking and applying the displayed process-count limit. CPU/I/O/traffic/wakeup rates are sums only when every member has a valid baseline; valid zero and unavailable remain distinct. Summed physical footprints can include shared-accounting overlap and are labeled as summed process accounting. Per-panel sort choices use already collected metrics and leave the displayed value's unit/CPU normalization unchanged. TCP/UDP remains independent of aggregate interface selection. Leaving process views, closing the panel, pause and sleep discard active rows and grouping metadata through the existing demand owners. Measure enabled grouping source cost and real post-close release separately; default-off or synthetic checks do not establish that budget.
 
 ## Sensor sampling configuration
 

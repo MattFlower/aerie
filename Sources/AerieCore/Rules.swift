@@ -60,6 +60,7 @@ public struct RuleEngine {
     rules: [ThresholdRule], values: [String: Double], time: Double,
     maximumGap: Double = 30
   ) -> [ThresholdRule] {
+    guard time.isFinite, maximumGap.isFinite, maximumGap >= 0 else { reset(); return [] }
     if let previousTime, time <= previousTime || time - previousTime > maximumGap {
       started.removeAll()
     }

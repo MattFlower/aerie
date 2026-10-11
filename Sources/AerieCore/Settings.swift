@@ -78,6 +78,9 @@ public struct Settings: Codable, Equatable {
   public var interval = 1.0
   public var processCount = 5
   public var normalizedProcessCPU = true
+  public var combineProcesses: Bool?
+  public var effectiveCombineProcesses: Bool { combineProcesses ?? false }
+  public var processSorts: [Module: ProcessSort]?
   public var menus = [
     MenuConfiguration(module: .overview), MenuConfiguration(module: .cpu),
     MenuConfiguration(module: .memory), MenuConfiguration(module: .storage),
@@ -122,7 +125,8 @@ public struct Settings: Codable, Equatable {
     guard EventCalendarSelection.valid(eventCalendars) else { throw SettingsError.invalid }
     if let daylight, daylight.enabled && !daylight.valid { throw SettingsError.invalid }
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
-      networkSelection.valid, KeyboardShortcut.valid(shortcuts ?? []),
+      networkSelection.valid, ProcessSort.valid(processSorts),
+      KeyboardShortcut.valid(shortcuts ?? []),
       SensorIdentity.valid(names: sensorNames),
       menus.count <= Module.allCases.count,
       Set(menus.map(\.module)).count == menus.count,

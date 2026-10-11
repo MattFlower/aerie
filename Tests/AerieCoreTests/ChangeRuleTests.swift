@@ -69,4 +69,42 @@ final class ChangeRuleTests: XCTestCase {
     XCTAssertTrue(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 10).isEmpty)
     XCTAssertEqual(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 20).count, 1)
   }
+  func testInvalidThresholdClockCannotPoisonRecoveryOrCreditPreviousSustain() {
+    let rule = ThresholdRule(metric: "cpu", threshold: 50, duration: 10, cooldown: 30)
+    for invalid in [Double.nan, .infinity, -.infinity] {
+      var engine = RuleEngine()
+      XCTAssertTrue(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 0).isEmpty)
+      XCTAssertTrue(engine.evaluate(rules: [rule], values: ["cpu": 90], time: invalid).isEmpty)
+      XCTAssertTrue(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 20).isEmpty)
+      XCTAssertTrue(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 29).isEmpty)
+      XCTAssertEqual(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 30), [rule])
+      _ = engine.evaluate(rules: [rule], values: ["cpu": 90], time: invalid)
+      XCTAssertTrue(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 40).isEmpty)
+      XCTAssertTrue(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 50).isEmpty)
+      XCTAssertEqual(engine.evaluate(rules: [rule], values: ["cpu": 90], time: 60), [rule])
+    }
+  }
+  func testInvalidGapPolicyResetsThresholdSustainAndChangeBaseline() {
+    let threshold = ThresholdRule(metric: "cpu", threshold: 50, duration: 10)
+    let change = ChangeRule(kind: .connectivity)
+    for gap in [Double.nan, .infinity, -.infinity, -1] {
+      var thresholds = RuleEngine(), changes = ChangeRuleEngine()
+      _ = thresholds.evaluate(rules: [threshold], values: ["cpu": 90], time: 0)
+      _ = changes.evaluate(rules: [change], values: [.connectivity: "Online"], time: 0)
+      XCTAssertTrue(
+        thresholds.evaluate(rules: [threshold], values: ["cpu": 90], time: 10, maximumGap: gap)
+          .isEmpty)
+      XCTAssertTrue(
+        changes.evaluate(
+          rules: [change], values: [.connectivity: "Offline"], time: 10, maximumGap: gap
+        ).isEmpty)
+      XCTAssertTrue(thresholds.evaluate(rules: [threshold], values: ["cpu": 90], time: 11).isEmpty)
+      XCTAssertTrue(
+        changes.evaluate(rules: [change], values: [.connectivity: "Offline"], time: 11).isEmpty)
+      XCTAssertEqual(
+        thresholds.evaluate(rules: [threshold], values: ["cpu": 90], time: 21), [threshold])
+      XCTAssertEqual(
+        changes.evaluate(rules: [change], values: [.connectivity: "Online"], time: 21).count, 1)
+    }
+  }
 }

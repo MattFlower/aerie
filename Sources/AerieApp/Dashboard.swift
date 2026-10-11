@@ -556,13 +556,26 @@ final class DashboardController: NSViewController {
   private func top(_ sort: (ProcessData, ProcessData) -> Bool, value: (ProcessData) -> String)
     -> [DashboardRow]
   {
-    let list = snapshot.processes.sorted(by: sort).prefix(settings.processCount)
+    let combined = ProcessPresentation.combine(
+      snapshot.processes, enabled: settings.effectiveCombineProcesses)
+    let order = settings.processSorts?[module] ?? .automatic
+    let list = ProcessPresentation.sorted(combined, by: order, automatic: sort).prefix(
+      settings.processCount)
     if list.isEmpty {
       return [
         .note("Process details begin when this menu opens. Protected processes may be unavailable.")
       ]
     }
-    return list.map { .metric($0.name, value($0)) } + [
+    var rows = list.map { DashboardRow.metric($0.name, value($0)) }
+    if settings.effectiveCombineProcesses {
+      let missing = snapshot.processes.filter { $0.group == nil }.count
+      rows.append(
+        .note(
+          "Combined by application bundle or executable. \(missing) readable processes have no grouping identity and stay separate. Group rates require every member's baseline; memory is summed process footprint and can include shared-accounting overlap."
+        ))
+    }
+    if order != .automatic { rows.append(.note("Process order: " + order.title)) }
+    return rows + [
       .note(
         "\(snapshot.processDenied) protected processes unavailable. CPU format: \(settings.normalizedProcessCPU ? "0–100% of machine" : "100% per logical core")."
       )
@@ -891,7 +904,9 @@ final class DashboardController: NSViewController {
         DashboardRow.chart("download", "Download bytes/s", AeriePalette.incoming, nil),
         DashboardRow.chart("upload", "Upload bytes/s", AeriePalette.outgoing, nil),
         DashboardRow.note(
-          s.networkSelection.description + ". Collection still includes every reported interface."),
+          s.networkSelection.description
+            + ". Collection still includes every reported interface. Aggregate rates require a valid baseline for every selected active interface."
+        ),
       ]
       rows.append(.heading("External address"))
       if let publicAddress {
@@ -964,17 +979,26 @@ final class DashboardController: NSViewController {
         ))
       rows.append(.heading("Process traffic"))
       rows.append(.note(s.processNetworkStatus))
-      let sortedProcesses = s.networkProcesses.sorted { left, right in
-        let leftRate = (left.download ?? 0) + (left.upload ?? 0)
-        let rightRate = (right.download ?? 0) + (right.upload ?? 0)
-        return leftRate > rightRate
-      }
+      let networkOrder = settings.processSorts?[.network] ?? .automatic
+      let sortedProcesses = ProcessPresentation.network(
+        s.networkProcesses, groups: s.networkProcessGroups,
+        enabled: settings.effectiveCombineProcesses, sort: networkOrder)
       for process in sortedProcesses.prefix(settings.processCount) {
-        let title = "\(process.name) · \(process.pid)"
+        let title = process.members > 1 ? process.name : "\(process.name) · \(process.pid)"
         let incoming = rate(process.download, domain: .network)
         let outgoing = rate(process.upload, domain: .network)
         rows.append(.metric(title, "↓ \(incoming)  ↑ \(outgoing)"))
       }
+      if settings.effectiveCombineProcesses {
+        let missing = s.networkProcesses.filter {
+          s.networkProcessGroups[ProcessIdentity(pid: Int($0.pid), startTime: $0.startTime)] == nil
+        }.count
+        rows.append(
+          .note(
+            "Combined by application bundle or executable. \(missing) readable traffic identities stay separate. Group rates require every member's baseline."
+          ))
+      }
+      if networkOrder != .automatic { rows.append(.note("Process order: " + networkOrder.title)) }
       rows.append(
         .note(
           "Process totals cover OS-reported TCP/UDP activity across interfaces, including loopback; they use independent process-start baselines and do not follow the aggregate interface filter. Protected, missing or reset readings have unavailable rates. The app owns one OS logger only while this panel is visible."

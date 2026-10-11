@@ -81,6 +81,8 @@ struct ProcessData {
   var read: Double?
   var write: Double?
   var wakeups: Double?
+  var group: ProcessGroupIdentity? = nil
+  var members = 1
 }
 enum SensorReadState { case live, deferred, unavailable }
 struct SensorData {
@@ -136,6 +138,7 @@ struct Snapshot {
   var power = PowerData()
   var processes = [ProcessData]()
   var networkProcesses = [ProcessNetworkReading]()
+  var networkProcessGroups = [ProcessIdentity: ProcessGroupIdentity]()
   var processNetworkStatus = "Process traffic begins when this panel opens."
   var storageDevices = [StorageDeviceData]()
   var storageMetadata = StorageMetadataReading()
@@ -151,20 +154,30 @@ struct Snapshot {
   /// Every owner applies demand again, including late snapshots queued before a close/pause.
   mutating func releaseActiveViewState(module: Module?, suspended: Bool) {
     if suspended || module != .storage { storageMetadata = StorageMetadataReading() }
-    if suspended || module != .network { networkProcesses.removeAll(); wifi = nil }
+    if suspended || module != .network {
+      networkProcesses.removeAll(); networkProcessGroups.removeAll(); wifi = nil
+    }
     if suspended || !(module.map { ProcessDemand.required(module: $0, visible: true) } ?? false) {
       processes.removeAll()
     }
   }
   var download: Double? {
-    let values = interfaces.filter { networkSelection.includes(name: $0.name, active: $0.active) }
-      .compactMap(\.download)
-    return values.isEmpty ? nil : values.reduce(0, +)
+    networkTotal(\.download)
   }
   var upload: Double? {
-    let values = interfaces.filter { networkSelection.includes(name: $0.name, active: $0.active) }
-      .compactMap(\.upload)
-    return values.isEmpty ? nil : values.reduce(0, +)
+    networkTotal(\.upload)
+  }
+  private func networkTotal(_ rate: KeyPath<InterfaceData, Double?>) -> Double? {
+    guard networkAvailable else { return nil }
+    var total = 0.0, count = 0
+    for interface in interfaces
+    where networkSelection.includes(name: interface.name, active: interface.active) {
+      guard let value = interface[keyPath: rate], value.isFinite, value >= 0 else { return nil }
+      total += value
+      guard total.isFinite else { return nil }
+      count += 1
+    }
+    return count > 0 ? total : nil
   }
   var metrics: [String: Double] {
     var values: [String: Double] = ["thermal": thermalLevel]

@@ -2,7 +2,7 @@
 
 Aerie is an original native macOS menu-bar system monitor built with Swift, AppKit, Mach, libproc, and IOKit. The application samples through a shared scheduler and retains bounded history. Visible Network and Storage panels can own temporary built-in OS command processes; these are included in its performance accounting.
 
-**Development preview:** the application is runnable, but the full feature and performance acceptance checklist is still open. See [capabilities and remaining work](docs/CAPABILITIES.md).
+**Development preview:** the application is runnable, but the full feature and performance acceptance checklist is still open. See [capabilities and remaining work](docs/CAPABILITIES.md) and the [release acceptance checklist](docs/ACCEPTANCE.md).
 
 ## Build and run
 
@@ -21,6 +21,7 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - CPU utilization, user/system split, logical-core bars, topology, load, uptime, and top processes; read-only CPU-complex/core and GPU clock-state distributions with native details where exposed.
 - Driver-exposed GPU utilization, rendering/tiling activity, and shared-memory use.
 - Memory categories, OS pressure state, compression, swap, paging, and top process footprints.
+- Optional application/executable process combining and independent CPU, memory, storage, network and power process sorting. Unknown identities stay separate; incomplete member rates remain unavailable.
 - Local/removable/network volume capacity, per-source disk activity, mounted-volume/APFS backing associations, read-only OS-reported SMART status, and process disk I/O.
 - Complete interface throughput, cumulative and observed-session totals, aggregate interface selection, local addresses, errors, passive connectivity, and passive Wi-Fi radio/mode/signal/noise/rate/channel details. Wi-Fi SSID, BSSID and country require existing macOS authorization; Settings provides an explicit foreground request control.
 - Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default, local names that retain firmware keys, individual native-unit alerts, and an explicit on-demand option that keeps enabled rule inputs live.

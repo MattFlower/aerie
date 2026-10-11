@@ -58,6 +58,7 @@ final class Collector {
   private var diskNames: [UInt64: String] = [:]
   private var previousProcesses: [Int32: AerieProcess] = [:]
   private var processTime: Double?
+  private let processGroups = ProcessGroupReader()
   private var sensorSources:
     [(source: AerieSensorSource, key: String, label: String, unit: String)] = []
   private var accelerators = services("IOAccelerator")
@@ -212,6 +213,15 @@ final class Collector {
     let processTraffic = processNetwork.current(time: now)
     snapshot.networkProcesses = processTraffic.rows;
     snapshot.processNetworkStatus = processTraffic.status
+    if settings.effectiveCombineProcesses && networkPanelVisible {
+      snapshot.networkProcessGroups = processGroups.read(
+        snapshot.networkProcesses.map {
+          ProcessIdentity(pid: Int($0.pid), startTime: $0.startTime)
+        },
+        enabled: true, visible: true)
+    } else {
+      snapshot.networkProcessGroups.removeAll()
+    }
     samplingProfiler?.mark(.inventory)
     if now - inventoryTime >= 30 {
       for item in accelerators { IOObjectRelease(item) }; accelerators = services("IOAccelerator")
@@ -468,6 +478,17 @@ final class Collector {
     }
     previousProcesses = latest
     processTime = now
+    if settings.effectiveCombineProcesses {
+      let groups = processGroups.read(
+        latest.values.map { ProcessIdentity(pid: Int($0.pid), startTime: $0.start_time) },
+        enabled: true, visible: detailed)
+      for index in result.indices {
+        if let native = latest[Int32(result[index].pid)] {
+          result[index].group =
+            groups[ProcessIdentity(pid: result[index].pid, startTime: native.start_time)]
+        }
+      }
+    }
     return result
   }
   private static func wholeMediaName(_ service: io_registry_entry_t) -> String? {

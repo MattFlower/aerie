@@ -90,9 +90,17 @@ public struct ProcessNetworkCSV {
 }
 public struct ProcessNetworkReading {
   public let pid: Int32
+  public let startTime: UInt64
   public let name: String
   public let received, sent: UInt64
   public let download, upload: Double?
+  public init(
+    pid: Int32, startTime: UInt64, name: String, received: UInt64, sent: UInt64,
+    download: Double?, upload: Double?
+  ) {
+    self.pid = pid; self.startTime = startTime; self.name = name
+    self.received = received; self.sent = sent; self.download = download; self.upload = upload
+  }
 }
 public struct ProcessNetworkRates {
   private struct Baseline { let identity: UInt64; let time: Double; let received, sent: UInt64 }
@@ -119,7 +127,8 @@ public struct ProcessNetworkRates {
       }
       rows.append(
         .init(
-          pid: counter.pid, name: counter.name, received: counter.received, sent: counter.sent,
+          pid: counter.pid, startTime: start, name: counter.name, received: counter.received,
+          sent: counter.sent,
           download: rate(counter.received, old?.received), upload: rate(counter.sent, old?.sent)))
       next[counter.pid] = .init(
         identity: start, time: frame.time, received: counter.received, sent: counter.sent)

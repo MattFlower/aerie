@@ -44,7 +44,7 @@ public struct ChangeRuleEngine {
   public mutating func evaluate(
     rules: [ChangeRule], values: [ChangeKind: String], time: Double, maximumGap: Double = 30
   ) -> [ChangeEvent] {
-    guard time.isFinite else { reset(); return [] }
+    guard time.isFinite, maximumGap.isFinite, maximumGap >= 0 else { reset(); return [] }
     if let previousTime, time <= previousTime || time - previousTime > maximumGap {
       previous.removeAll()
     }

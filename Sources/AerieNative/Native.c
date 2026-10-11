@@ -204,6 +204,17 @@ AerieProcess aerie_process(int pid) {
     out.valid = 1; return out;
 }
 
+int aerie_process_path(int pid, uint64_t expected_start, char *buffer, int capacity) {
+    if (pid <= 0 || expected_start == 0 || !buffer || capacity != PROC_PIDPATHINFO_MAXSIZE) return 0;
+    memset(buffer, 0, (size_t)capacity);
+    int length = proc_pidpath(pid, buffer, (uint32_t)capacity);
+    if (length <= 0 || length >= capacity || !buffer[0]) { buffer[0] = 0; return 0; }
+    AerieProcess current = aerie_process(pid);
+    if (!current.valid || current.start_time != expected_start) { buffer[0] = 0; return 0; }
+    buffer[capacity - 1] = 0;
+    return length;
+}
+
 int aerie_processes(AerieProcess *out, int capacity) {
     int size = proc_listallpids(NULL, 0);
     if (size <= 0 || size > 100000) return 0;

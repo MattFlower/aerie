@@ -36,6 +36,8 @@ int aerie_processes(AerieProcess *processes, int capacity);
 AerieProcess aerie_process(int pid);
 // Independent BSD birth identity, available even when resource accounting is denied.
 uint64_t aerie_process_birth(int pid);
+// Read-only executable path; reject a reused or unreadable resource identity.
+int aerie_process_path(int pid, uint64_t expected_start, char *buffer, int capacity);
 int aerie_smc_open(void);
 int aerie_smc_keys(char *keys, int capacity);
 int aerie_smc_read(const char *key, AerieSensor *sensor);

@@ -159,7 +159,21 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Local archive: 2 MB maximum, saved once per minute and on normal exit. Turning this off deletes the archive. No process, calendar, weather or sensor names are saved.",
       y: 805, in: general, height: 62)
-    general.setFrameSize(NSSize(width: 600, height: 885))
+    toggle(
+      "combineProcesses", title: "Combine application and executable processes",
+      value: settings.effectiveCombineProcesses, y: 880, in: general)
+    label(
+      "Combining uses application-bundle or executable identity. Unknown identities stay separate; partial rates remain unavailable. Process sorting can be chosen independently for each panel.",
+      y: 920, in: general, height: 70)
+    for (index, module) in ProcessSort.modules.enumerated() {
+      let options = ProcessSort.options(for: module)
+      choice(
+        "processSort.\(module.rawValue)", title: module.title + " process sorting",
+        values: options.map(\.title),
+        selected: options.firstIndex(of: settings.processSorts?[module] ?? .automatic) ?? 0,
+        y: CGFloat(1000 + index * 42), in: general)
+    }
+    general.setFrameSize(NSSize(width: 600, height: 1240))
     let menus = tab("Menus", in: tabs)
     toggle(
       "combined", title: "Use one combined menu-bar item", value: settings.combined, y: 14,
@@ -484,6 +498,15 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     else { throw SettingsError.invalid }
     s.processCount = count
     s.normalizedProcessCPU = toggles["normalizedCPU"]!.state == .on
+    s.combineProcesses = toggles["combineProcesses"]!.state == .on
+    var sorts: [Module: ProcessSort] = [:]
+    for module in ProcessSort.modules {
+      let options = ProcessSort.options(for: module)
+      let index = choices["processSort.\(module.rawValue)"]!.indexOfSelectedItem
+      guard options.indices.contains(index) else { throw SettingsError.invalid }
+      if options[index] != .automatic { sorts[module] = options[index] }
+    }
+    s.processSorts = sorts.isEmpty ? nil : sorts
     s.binaryBytes = toggles["binary"]!.state == .on
     s.networkBits = toggles["bits"]!.state == .on
     s.publicAddress = toggles["publicAddress"]!.state == .on
