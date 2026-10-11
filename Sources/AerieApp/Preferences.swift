@@ -8,6 +8,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   var onDashboard: (() -> Void)?
   var onNotifications: (() -> Void)?
   var onCalendar: (() -> Void)?
+  var onWiFiPermission: (() -> Void)?
   var onLogin: (() -> Void)?
   private var fields: [String: NSTextField] = [:]
   private var toggles: [String: NSButton] = [:]
@@ -431,14 +432,15 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       ("Enable Notifications…", #selector(notifications), 145),
       ("Allow Calendar Events…", #selector(calendar), 195),
       ("Enable Launch at Login…", #selector(login), 245),
+      ("Allow Wi-Fi Identity…", #selector(wifiPermission), 295),
     ] {
       let b = NSButton(title: title, target: self, action: action)
       b.frame = NSRect(x: 18, y: y, width: 270, height: 30)
       permissions.addSubview(b)
     }
     label(
-      "Wi-Fi SSID may require macOS Location Services permission. Aerie does not request that permission yet. Available signal, noise, rate, and channel information still appears.",
-      y: 308, in: permissions, height: 80)
+      "macOS requires Location Services access to reveal Wi-Fi SSID, BSSID and country. The button requests access only while Settings is active. Aerie never requests device coordinates or background location updates. Signal, noise, rate and channel remain subject to OS availability. Close Settings to cancel the pending attempt; this does not revoke an OS grant.",
+      y: 345, in: permissions, height: 125)
     let close = NSButton(title: "Close", target: self, action: #selector(closeWindow))
     close.frame = NSRect(x: 440, y: 18, width: 85, height: 30)
     content.addSubview(close)
@@ -463,6 +465,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   }
   @objc private func notifications() { onNotifications?() }
   @objc private func calendar() { onCalendar?() }
+  @objc private func wifiPermission() { onWiFiPermission?() }
   @objc private func login() { onLogin?() }
   @objc private func closeWindow() { close() }
   private func readSettings() throws -> Settings {

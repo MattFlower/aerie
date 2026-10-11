@@ -131,7 +131,7 @@ struct Snapshot {
   var storageMetadata = StorageMetadataReading()
   var diskRead: Double?
   var diskWrite: Double?
-  var wifi: [String: String] = [:]
+  var wifi: WiFiReading?
   var thermal = "Nominal"
   var thermalLevel = 0.0
   var lowPower = false
@@ -141,7 +141,7 @@ struct Snapshot {
   /// Every owner applies demand again, including late snapshots queued before a close/pause.
   mutating func releaseActiveViewState(module: Module?, suspended: Bool) {
     if suspended || module != .storage { storageMetadata = StorageMetadataReading() }
-    if suspended || module != .network { networkProcesses.removeAll() }
+    if suspended || module != .network { networkProcesses.removeAll(); wifi = nil }
     if suspended || !(module.map { ProcessDemand.required(module: $0, visible: true) } ?? false) {
       processes.removeAll()
     }

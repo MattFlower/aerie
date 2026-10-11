@@ -20,6 +20,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Show your upcoming calendar events locally in the Aerie time menu.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Allow macOS to reveal Wi-Fi network identity in Aerie's Network menu. Aerie does not request your device coordinates.</string>
+<key>NSLocationUsageDescription</key><string>Allow macOS to reveal Wi-Fi network identity in Aerie's Network menu. Aerie does not request your device coordinates.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$app"

@@ -21,6 +21,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var keyboardShortcuts: KeyboardShortcuts?
   private var shortcutStatus: String?
   private var publicAddressReader: PublicAddressReader?
+  private var wifiAccess: WiFiAccess?
   private let calendarAccess = CalendarAccess()
   private lazy var calendarReader = CalendarEventReader(access: calendarAccess)
   private var calendarAuthorized = false
@@ -188,6 +189,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) {
         [weak self] _ in
         self?.sleeping = true
+        self?.cancelWiFiPermission()
         self?.configurePublicAddress()
         self?.dashboard.suspended = true
         self?.collector?.setSuspended(true)
@@ -214,6 +216,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     }
   }
   func applicationDidHide(_ notification: Notification) {
+    cancelWiFiPermission()
     popover.performClose(nil); collector?.setVisibleModule(nil)
   }
   func applicationWillTerminate(_ notification: Notification) {
@@ -225,6 +228,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     historyPersistence?.finish()
     clearCalendar()
     calendarAccess.cancel()
+    cancelWiFiPermission()
     keyboardShortcuts?.stop(); keyboardShortcuts = nil
     weatherTask?.cancel()
     weatherMaps?.releaseResources(); weatherMaps = nil
@@ -239,6 +243,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     var snapshot = reading; snapshot.networkSelection = settings.networkSelection
     snapshot.releaseActiveViewState(
       module: popover.isShown ? dashboard.module : nil, suspended: paused || sleeping)
+    if snapshot.wifi != nil {
+      snapshot.wifi?.recheckAuthorization(WiFiAccess.nativeAuthorization())
+    }
     self.snapshot = snapshot
     publicAddressReader?.tick(
       time: ProcessInfo.processInfo.systemUptime,
@@ -505,6 +512,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private func releaseViewMetadata(module: Module?) {
     snapshot.releaseActiveViewState(module: module, suspended: paused || sleeping)
     dashboard.snapshot.releaseActiveViewState(module: module, suspended: paused || sleeping)
+    if paused || sleeping || module != .network { dashboard.releaseWiFi() }
   }
   private func updateItems() {
     for (configuration, item) in items {
@@ -679,13 +687,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     }
     preferences = PreferencesController(settings: settings)
     preferences?.onApply = { [weak self] in self?.apply($0) }
-    preferences?.onClose = { [weak self] in self?.preferences = nil }
+    preferences?.onClose = { [weak self] in
+      self?.cancelWiFiPermission(); self?.preferences = nil
+    }
     preferences?.onDashboard = { [weak self] in
       guard let self, let button = self.items.first?.1.button else { return };
       self.preferences?.close(); self.clickedStatus(button)
     }
     preferences?.onNotifications = { [weak self] in self?.requestNotifications() }
     preferences?.onCalendar = { [weak self] in self?.requestCalendar() }
+    preferences?.onWiFiPermission = { [weak self] in self?.requestWiFiPermission() }
     preferences?.onLogin = { [weak self] in self?.requestLogin() }
     preferences?.showWindow(nil)
     NSApp.activate(ignoringOtherApps: true)
@@ -800,8 +811,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     paused.toggle()
     configurePublicAddress()
     dashboard.suspended = paused || sleeping
-    collector?.setSuspended(paused)
+    collector?.setSuspended(paused || sleeping)
     if paused {
+      cancelWiFiPermission()
       releaseViewMetadata(module: nil); clearCalendar()
     } else if popover.isShown {
       updateCalendar()
@@ -858,6 +870,24 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         } else {
           self.clearCalendar(); self.notice("Calendar access remains unavailable.")
         }
+      }
+    }
+  }
+  private func cancelWiFiPermission() { wifiAccess?.cancel(); wifiAccess = nil }
+  private func requestWiFiPermission() {
+    guard !paused, !sleeping else {
+      notice("Resume sampling before requesting Wi-Fi identity access."); return
+    }
+    if wifiAccess == nil { wifiAccess = WiFiAccess() }
+    wifiAccess?.request(foreground: NSApp.isActive && preferences?.window?.isVisible == true) {
+      [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .success(let status):
+        self.notice(status.description + ". Open Network to refresh available details.")
+      case .failure(.requiresForeground):
+        self.notice("Activate Aerie Settings before requesting Wi-Fi identity access.")
+      case .failure(.alreadyRequesting): break
       }
     }
   }

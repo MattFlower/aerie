@@ -11,15 +11,15 @@ final class SensorPreferencesTests: XCTestCase {
       defer { controller.close() }
       let content = try XCTUnwrap(controller.window?.contentView)
       let tabs = try XCTUnwrap(content.subviews.compactMap { $0 as? NSTabView }.first)
-      func descendants(_ view: NSView) -> [NSView] {
+      @MainActor func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants($0) }
       }
       let controls = tabs.tabViewItems.compactMap(\.view).flatMap { descendants($0) }
-      func field(_ label: String) throws -> NSTextField {
+      @MainActor func field(_ label: String) throws -> NSTextField {
         try XCTUnwrap(
           controls.compactMap { $0 as? NSTextField }.first { $0.accessibilityLabel() == label })
       }
-      func popup(_ label: String) throws -> NSPopUpButton {
+      @MainActor func popup(_ label: String) throws -> NSPopUpButton {
         try XCTUnwrap(
           controls.compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == label })
       }

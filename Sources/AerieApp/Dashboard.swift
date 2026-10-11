@@ -308,6 +308,10 @@ final class DashboardController: NSViewController {
   var onModule: ((Module) -> Void)?
   var module = Module.overview
   var snapshot = Snapshot()
+  func releaseWiFi() {
+    snapshot.wifi = nil
+    if module == .network { canvas.releaseInteractiveRows(); refresh() }
+  }
   var settings = Settings()
   var history = HistoryStore()
   var historyStatus = "History archive is off"
@@ -784,11 +788,21 @@ final class DashboardController: NSViewController {
             ))
         }
       }
-      if !s.wifi.isEmpty {
-        rows +=
-          [DashboardRow.heading("Wi-Fi")]
-          + s.wifi.sorted { $0.key < $1.key }.map { DashboardRow.metric($0.key, $0.value) }
+      rows.append(.heading("Wi-Fi"))
+      if let wifi = s.wifi {
+        rows += wifi.fields.map { DashboardRow.metric($0.0, $0.1) }
+        rows.append(.note(wifi.identityNote))
+        rows.append(
+          .note(
+            "Passive interface sample · " + wifi.fetched.formatted(date: .omitted, time: .shortened)
+          ))
+      } else {
+        rows.append(.note("No Wi-Fi interface reading is available."))
       }
+      rows.append(
+        .note(
+          "Radio details refresh every 30 seconds while this panel is open, or when the network path or authorization changes. Zero error sentinels are unavailable. Identity is discarded on close, pause or sleep; no network scan is performed."
+        ))
       rows.append(.heading("Process traffic"))
       rows.append(.note(s.processNetworkStatus))
       let sortedProcesses = s.networkProcesses.sorted { left, right in

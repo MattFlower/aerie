@@ -1,6 +1,5 @@
 import AerieCore
 import AerieNative
-import CoreWLAN
 import Darwin
 import DiskArbitration
 import Foundation
@@ -52,6 +51,7 @@ final class Collector {
   private var networkSession = NetworkSessionTracker()
   private lazy var processNetwork = ProcessNetworkReader(queue: queue)
   private var networkPanelVisible = false
+  private var wifiReader: WiFiReader?
   private var storagePanelVisible = false
   private let storageMetadata = StorageMetadataReader()
   private let diskSession = DASessionCreate(kCFAllocatorDefault)
@@ -152,6 +152,7 @@ final class Collector {
       self.storageMetadata.configure(visible: self.storagePanelVisible && !self.suspended)
       self.cache.releaseActiveViewState(module: module, suspended: self.suspended)
       self.networkPanelVisible = module == .network
+      self.configureWiFi()
       self.processNetwork.configure(
         visible: self.networkPanelVisible && !self.suspended, interval: self.settings.interval)
       if !self.networkPanelVisible { self.cache.networkProcesses.removeAll() }
@@ -163,6 +164,7 @@ final class Collector {
   func setSuspended(_ value: Bool) {
     queue.async {
       self.suspended = value
+      self.configureWiFi()
       if value { self.clockStates.close() }
       self.cache.releaseActiveViewState(
         module: self.storagePanelVisible ? .storage : self.networkPanelVisible ? .network : nil,
@@ -186,6 +188,14 @@ final class Collector {
     let result = CounterRate.rate(previous: counters[key], current: current)
     counters[key] = current
     return result
+  }
+  private func configureWiFi() {
+    if networkPanelVisible && !suspended {
+      if wifiReader == nil { wifiReader = WiFiReader() }
+      wifiReader?.configure(visible: true)
+    } else {
+      wifiReader?.configure(visible: false); wifiReader = nil; cache.wifi = nil
+    }
   }
   private func sample() {
     guard !suspended else { return }
@@ -339,13 +349,18 @@ final class Collector {
       let inventory = volumes()
       snapshot.volumes = inventory?.rows ?? []
       snapshot.mountedVolumePaths = inventory?.paths
-      snapshot.wifi = wifi()
       snapshot.power.peripherals = peripherals()
       inventoryTime = now
     } else {
       snapshot.power.peripherals = cache.power.peripherals
     }
     snapshot.connectivity = connection
+    if let wifiReader {
+      snapshot.wifi = wifiReader.current(
+        time: now, path: pathVersion, authorization: WiFiAccess.nativeAuthorization())
+    } else {
+      snapshot.wifi = nil
+    }
     snapshot.networkPathVersion = pathVersion
     let state = ProcessInfo.processInfo.thermalState
     snapshot.thermal = ["Nominal", "Fair", "Serious", "Critical"][min(3, state.rawValue)]
@@ -539,16 +554,6 @@ final class Collector {
       }
     }
     return result
-  }
-  private func wifi() -> [String: String] {
-    guard let interface = CWWiFiClient.shared().interface(), interface.powerOn() else { return [:] }
-    return [
-      "Interface": interface.interfaceName ?? "Wi-Fi",
-      "SSID": interface.ssid() ?? "Location permission required",
-      "Signal": "\(interface.rssiValue()) dBm", "Noise": "\(interface.noiseMeasurement()) dBm",
-      "Link rate": String(format: "%.0f Mbps", interface.transmitRate()),
-      "Channel": interface.wlanChannel().map { "\($0.channelNumber)" } ?? "Unavailable",
-    ]
   }
   private func sensorLabel(_ key: String) -> String {
     let known = [
