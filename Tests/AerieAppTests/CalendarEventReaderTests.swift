@@ -15,6 +15,7 @@ private final class SyntheticAccessState {
   func revoke() { lock.lock(); enabled = false; lock.unlock() }
 }
 private final class SyntheticEventSource: CalendarEventSource {
+  func configure(calendars: [String]?) { XCTAssertNil(calendars) }
   var count = 10_000, scanned = 0, closed = false
   var started: (() -> Void)?
   var beforeVisit: ((Int) -> Void)?

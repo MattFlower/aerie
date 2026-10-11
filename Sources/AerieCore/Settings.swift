@@ -107,6 +107,7 @@ public struct Settings: Codable, Equatable {
   public var clockFormat = "EEE d MMM HH:mm"
   public var weekStartsMonday = true
   public var showWeekNumbers = true
+  public var eventCalendars: [String]?
   public var clocks = [WorldClock(name: "UTC", zone: "Etc/UTC")]
   public var weather = WeatherConfiguration()
   public var rules: [ThresholdRule] = []
@@ -114,6 +115,7 @@ public struct Settings: Codable, Equatable {
   public var changeRules: [ChangeRule]?
   public init() {}
   public func validated() throws -> Settings {
+    guard EventCalendarSelection.valid(eventCalendars) else { throw SettingsError.invalid }
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
       networkSelection.valid, KeyboardShortcut.valid(shortcuts ?? []),
       menus.count <= Module.allCases.count,

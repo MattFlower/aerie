@@ -227,6 +227,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
   private func receive(_ reading: Snapshot) {
+    preferences?.validateCalendarAccess()
     var snapshot = reading; snapshot.networkSelection = settings.networkSelection
     snapshot.releaseActiveViewState(
       module: popover.isShown ? dashboard.module : nil, suspended: paused || sleeping)
@@ -864,7 +865,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       dashboard.refresh(); return
     }
     var rows: [DashboardRow] = [.calendar(month), .heading(month.selectedDayTitle)]
-    if !authorized {
+    if settings.eventCalendars?.isEmpty == true {
+      rows.append(
+        .note("No event calendars selected. Choose calendars in Time Settings to include events."))
+    } else if !authorized {
       rows.append(
         .note(
           "Enable Calendar Events in Settings → Permissions to show local events. Date selection works without access."
@@ -873,7 +877,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       rows.append(.note("Reading local events…"))
       let upcomingEnd = calendar.date(byAdding: .day, value: 7, to: now) ?? now
       let ranges = [month.dayInterval, DateInterval(start: now, end: upcomingEnd)]
-      calendarReader.load(ranges: ranges) { [weak self] result in
+      calendarReader.load(ranges: ranges, calendars: settings.eventCalendars) {
+        [weak self] result in
         guard let self, !self.paused, self.dashboard.module == .time, self.popover.isShown else {
           return
         }
@@ -882,6 +887,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         if result.denied {
           eventRows.append(.note("Calendar access is unavailable. No event details are retained."))
         } else {
+          if result.unavailableCalendars > 0 {
+            eventRows.append(
+              .note(
+                "\(result.unavailableCalendars) saved calendars are unavailable. Review the selection in Time Settings."
+              ))
+          }
           let formatter = DateFormatter(); formatter.calendar = calendar;
           formatter.timeZone = calendar.timeZone
           formatter.setLocalizedDateFormatFromTemplate("EEE jmm z")

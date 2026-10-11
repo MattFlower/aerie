@@ -489,14 +489,16 @@ final class DashboardController: NSViewController {
         ),
       ]
     case .cpu:
-      return [
+      var rows: [DashboardRow] = [
         DashboardRow.heading("Processor"),
         DashboardRow.metric("Total", Format.percent(s.cpu.total)),
         DashboardRow.metric("User", Format.percent(s.cpu.user)),
         DashboardRow.metric("System", Format.percent(s.cpu.system)),
         DashboardRow.chart("cpu", "CPU %", AeriePalette.cpu, 100),
         DashboardRow.heading("Logical cores"), DashboardRow.cores(s.cpu.cores),
-      ] + s.cpu.groups.map { DashboardRow.metric($0.0, "\($0.1) logical cores") } + [
+      ]
+      rows += s.cpu.groups.map { DashboardRow.metric($0.0, "\($0.1) logical cores") }
+      rows += [
         DashboardRow.metric(
           "Nominal frequency",
           s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
@@ -504,12 +506,16 @@ final class DashboardController: NSViewController {
           "Load 1 / 5 / 15 min",
           s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")),
         DashboardRow.metric("Uptime", Format.duration(s.cpu.uptime)),
-      ] + clockRows(kinds: [.cpuComplex, .cpuCore]) + [DashboardRow.heading("Top CPU processes")]
-        + top({ ($0.cpu ?? 0) > ($1.cpu ?? 0) }, value: { Format.percent($0.cpu) }) + [
-          DashboardRow.note(
-            "Logical-core bars show scheduler load. Clock-state residency reports separate hardware activity; channel names come from the system. Dynamic GHz remains unavailable for unnamed frequency states."
-          )
-        ]
+      ]
+      rows += clockRows(kinds: [.cpuComplex, .cpuCore])
+      rows.append(.heading("Top CPU processes"))
+      rows += top({ ($0.cpu ?? 0) > ($1.cpu ?? 0) }, value: { Format.percent($0.cpu) })
+      rows += [
+        DashboardRow.note(
+          "Logical-core bars show scheduler load. Clock-state residency reports separate hardware activity; channel names come from the system. Dynamic GHz remains unavailable for unnamed frequency states."
+        )
+      ]
+      return rows
     case .gpu:
       var rows: [DashboardRow] = [DashboardRow.chart("gpu", "GPU %", AeriePalette.cpu, 100)]
       for gpu in s.gpu {

@@ -18,6 +18,9 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var menuColors: [Module: NSTextField] = [:]
   private var clocksField = NSTextView()
   private var shortcutsField = NSTextView()
+  private var calendarPicker: CalendarPickerController?
+  private let calendarAccess = CalendarAccess()
+  private let calendarSelectionLabel = NSTextField(wrappingLabelWithString: "")
   private let rulesPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   private let ruleMetrics = [
     "cpu", "gpu", "memory", "battery", "temperature", "diskFree", "download", "upload", "thermal",
@@ -37,7 +40,10 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     window.center()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-  func windowWillClose(_ notification: Notification) { onClose?() }
+  func windowWillClose(_ notification: Notification) {
+    calendarPicker?.close(); calendarPicker = nil; onClose?()
+  }
+  func validateCalendarAccess() { calendarPicker?.validateAccess() }
   private func tab(_ title: String, in tabs: NSTabView) -> NSView {
     let item = NSTabViewItem(identifier: title)
     item.label = title
@@ -297,6 +303,13 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Calendar events remain local. Access is requested only through the Permissions tab. Lunar phase is an offline approximation; daylight times are shown from an opted-in weather forecast.",
       y: 434, in: time, height: 70)
+    let calendars = NSButton(
+      title: "Choose Event Calendars…", target: self,
+      action: #selector(chooseEventCalendars))
+    calendars.frame = NSRect(x: 18, y: 519, width: 240, height: 28); time.addSubview(calendars)
+    calendarSelectionLabel.frame = NSRect(x: 18, y: 559, width: 550, height: 48)
+    calendarSelectionLabel.font = .systemFont(ofSize: 12); time.addSubview(calendarSelectionLabel)
+    updateCalendarSelectionLabel()
 
     let rules = tab("Rules", in: tabs)
     label("Sustained threshold notifications", y: 18, in: rules)
@@ -537,6 +550,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     do {
       var s = try readSettings()
       s.weather = WeatherConfiguration()
+      s.eventCalendars = nil
       let panel = NSSavePanel()
       panel.nameFieldStringValue = "Aerie-settings.json"
       if panel.runModal() == .OK, let url = panel.url {
@@ -545,6 +559,26 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
         try encoder.encode(s).write(to: url, options: .atomic)
       }
     } catch { errorLabel.stringValue = "Could not export valid settings." }
+  }
+  private func updateCalendarSelectionLabel() {
+    calendarSelectionLabel.stringValue =
+      settings.eventCalendars.map {
+        $0.isEmpty
+          ? "No event calendars selected."
+          : "\($0.count) event calendars selected. Missing saved choices stay unavailable."
+      }
+      ?? "All event calendars. Names are read only when you open the selector with existing permission."
+  }
+  @objc private func chooseEventCalendars() {
+    calendarPicker?.close()
+    let picker = CalendarPickerController(
+      selection: settings.eventCalendars, access: calendarAccess)
+    calendarPicker = picker
+    picker.onChoose = { [weak self] selected in
+      self?.settings.eventCalendars = selected; self?.updateCalendarSelectionLabel()
+    }
+    picker.onClose = { [weak self] in self?.calendarPicker = nil }
+    picker.showWindow(nil)
   }
   @objc private func importSettings() {
     let panel = NSOpenPanel()
@@ -557,6 +591,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       s.weather.enabled = false
       s.weather.mapsEnabled = false
       s = try s.validated()
+      calendarPicker?.close(); calendarPicker = nil
       settings = s
       onApply?(s)
       for subview in window?.contentView?.subviews ?? [] { subview.removeFromSuperview() }

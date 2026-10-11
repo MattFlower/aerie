@@ -1,3 +1,4 @@
+import AerieCore
 import EventKit
 import Foundation
 
@@ -52,19 +53,41 @@ struct CalendarEventRecord {
   }
 }
 protocol CalendarEventSource: AnyObject {
+  func configure(calendars: [String]?)
+  var unavailableCalendars: Int { get }
   func enumerate(
     range: DateInterval, cancelled: @escaping () -> Bool,
     visit: @escaping (CalendarEventRecord) -> Bool)
   func close()
 }
+extension CalendarEventSource {
+  var unavailableCalendars: Int { 0 }
+}
 private final class NativeCalendarEventSource: CalendarEventSource {
   // Created, queried, reset and destroyed exclusively on the reader's serial queue.
   private let store = EKEventStore()
+  private var selected: [EKCalendar]?
+  private(set) var unavailableCalendars = 0
+  func configure(calendars: [String]?) {
+    unavailableCalendars = 0
+    selected = calendars.map { identifiers in
+      identifiers.compactMap { identifier in
+        guard let calendar = store.calendar(withIdentifier: identifier),
+          calendar.allowedEntityTypes.contains(.event)
+        else {
+          unavailableCalendars += 1; return nil
+        }
+        return calendar
+      }
+    }
+  }
   func enumerate(
     range: DateInterval, cancelled: @escaping () -> Bool,
     visit: @escaping (CalendarEventRecord) -> Bool
   ) {
-    let predicate = store.predicateForEvents(withStart: range.start, end: range.end, calendars: nil)
+    guard selected?.isEmpty != true else { return }
+    let predicate = store.predicateForEvents(
+      withStart: range.start, end: range.end, calendars: selected)
     store.enumerateEvents(matching: predicate) { event, stop in
       autoreleasepool {
         guard !cancelled(), let start = event.startDate, let end = event.endDate else {
@@ -78,7 +101,7 @@ private final class NativeCalendarEventSource: CalendarEventSource {
       }
     }
   }
-  func close() { store.reset() }
+  func close() { selected = nil; store.reset() }
 }
 struct CalendarEventRangeResult {
   var events: [CalendarEventRecord] = []
@@ -88,6 +111,7 @@ struct CalendarEventRangeResult {
 struct CalendarEventResult {
   var ranges: [CalendarEventRangeResult] = []
   var denied = false
+  var unavailableCalendars = 0
 }
 private final class CalendarQueryToken {
   private let lock = NSLock()
@@ -110,17 +134,24 @@ final class CalendarEventReader {
     self.access = access; self.factory = factory
   }
   func cancel() { lock.lock(); token?.cancel(); token = nil; lock.unlock() }
-  func load(ranges: [DateInterval], completion: @escaping (CalendarEventResult) -> Void) {
+  func load(
+    ranges: [DateInterval], calendars: [String]? = nil,
+    completion: @escaping (CalendarEventResult) -> Void
+  ) {
     let current = CalendarQueryToken()
     lock.lock(); token?.cancel(); token = current; lock.unlock()
     queue.async { [weak self] in
       guard let self, !current.cancelled else { return }
       var result = CalendarEventResult()
-      if !self.access.hasAccess {
+      if !self.access.hasAccess || !EventCalendarSelection.valid(calendars) {
         result.denied = true
+      } else if calendars?.isEmpty == true {
+        result.ranges = ranges.prefix(2).map { _ in CalendarEventRangeResult() }
       } else {
         let source = self.factory()
         defer { source.close() }
+        source.configure(calendars: calendars)
+        result.unavailableCalendars = source.unavailableCalendars
         for range in ranges.prefix(2) {
           guard !current.cancelled, self.access.hasAccess else { break }
           var section = CalendarEventRangeResult()
