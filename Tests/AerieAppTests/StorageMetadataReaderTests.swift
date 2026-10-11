@@ -81,4 +81,56 @@ final class StorageMetadataReaderTests: XCTestCase {
       _ = try await task.value; XCTFail("Cancelled query must not complete successfully")
     } catch StorageCommandError.cancelled {} catch { XCTFail("Unexpected failure: \(error)") }
   }
+  func testOutputOverflowStopsAndReapsOwnedHelper() async throws {
+    var records: [StorageCommandMeasurement] = []
+    let command = StorageCommand(
+      executable: URL(fileURLWithPath: "/usr/bin/head"), measurement: { records.append($0) })
+    do {
+      _ = try await Task.detached { try command.run(["-c", "2000001", "/dev/zero"]) }.value;
+      XCTFail("Oversized body accepted")
+    } catch StorageCommandError.oversized {}
+    XCTAssertEqual(records.first?.phase, "started"); XCTAssertEqual(records.last?.phase, "reaped")
+    XCTAssertEqual(records.last?.confirmedExit, true);
+    XCTAssertEqual(records.last?.helper.footprint, 0)
+    XCTAssertNotNil(records.first?.registeredPID)
+  }
+  func testSIGTERMResistantSyntheticChildIsKilledReapedAndFullyRegistered() async throws {
+    var records: [StorageCommandMeasurement] = []
+    let command = StorageCommand(
+      executable: URL(fileURLWithPath: "/bin/sh"), terminateAfter: 0.2, killAfter: 0.3,
+      measurement: { records.append($0) })
+    let start = ProcessInfo.processInfo.systemUptime
+    do {
+      _ = try await Task.detached { try command.run(["-c", "trap '' TERM; exec /bin/sleep 30"]) }
+        .value;
+      XCTFail("Timed out helper succeeded")
+    } catch StorageCommandError.failed {}
+    XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 3)
+    XCTAssertEqual(records.first?.phase, "started"); XCTAssertEqual(records.last?.phase, "reaped")
+    XCTAssertEqual(records.last?.exitStatus, 9); XCTAssertEqual(records.last?.confirmedExit, true)
+    XCTAssertTrue(records.contains { $0.phase == "running" && $0.helper.footprint != nil })
+    XCTAssertTrue(
+      records.allSatisfy {
+        $0.registeredPID == records[0].registeredPID
+          && $0.registeredBirth == records[0].registeredBirth
+      })
+    XCTAssertGreaterThan(records[0].registeredBirth, 0)
+  }
+  func testRapidReopenCannotPublishOldGenerationAndClearsLatestMetadata() async throws {
+    let old = SyntheticStorageCommand(), new = SyntheticStorageCommand()
+    let started = expectation(description: "Old query"), block = DispatchSemaphore(value: 0)
+    old.block = block; old.started = started
+    var created = 0
+    let reader = StorageMetadataReader(factory: {
+      created += 1; return created == 1 ? old : new
+    })
+    reader.configure(visible: true, time: 0); await fulfillment(of: [started], timeout: 1)
+    reader.configure(visible: false, time: 1); reader.configure(visible: true, time: 2)
+    try await ready(reader)
+    XCTAssertEqual(old.callCount, 1); XCTAssertEqual(new.callCount, 3)
+    XCTAssertEqual(reader.reading().drives["disk0"]?.smart, .verified)
+    reader.configure(visible: false, time: 3)
+    XCTAssertNil(reader.reading().topology); XCTAssertTrue(reader.reading().drives.isEmpty)
+  }
+
 }

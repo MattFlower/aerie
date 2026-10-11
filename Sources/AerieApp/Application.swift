@@ -17,7 +17,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var dashboard = DashboardController()
   private var popover = NSPopover()
   private var preferences: PreferencesController?
-  private var eventStore: EKEventStore?
+  private let calendarAccess = CalendarAccess()
+  private lazy var calendarReader = CalendarEventReader(access: calendarAccess)
+  private var calendarAuthorized = false
   private var selectedCalendarDate = Date()
   private var lastCalendarRefresh = Date.distantPast
   private var calendarDetails: [String: (title: String, text: String)] = [:]
@@ -30,6 +32,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var weatherMaps: WeatherMapWindowController?
   private var weatherDetails: WeatherDetailWindow?
   private var paused = false
+  private var sleeping = false
   private var selfCheckSamples = 0
   private var observers: [NSObjectProtocol] = []
   private lazy var ridgeMark = ridgeImage()
@@ -101,12 +104,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       forName: .EKEventStoreChanged, object: nil, queue: .main
     ) { [weak self] _ in
       self?.lastCalendarRefresh = .distantPast
+      self?.calendarReader.cancel()
+      self?.calendarDetails.removeAll()
+      self?.updateCalendar()
     }
     dashboard.onSettings = { [weak self] in self?.showSettings() }
     dashboard.onMaps = { [weak self] in self?.showMaps() }
     dashboard.onExportHistory = { [weak self] in self?.exportHistory(window: $0) }
     dashboard.onModule = { [weak self] module in
       self?.collector?.setVisibleModule(module)
+      self?.releaseViewMetadata(module: module)
       self?.updateCalendar()
     }
     rebuildItems()
@@ -131,11 +138,24 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         }
       }
     }
+    if CommandLine.arguments.contains("--storage-demand-cycles") {
+      for start in [3.0, 38.0, 73.0] {
+        DispatchQueue.main.asyncAfter(deadline: .now() + start) { [weak collector] in
+          collector?.setVisibleModule(.storage)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + start + 12) { [weak collector] in
+          collector?.setVisibleModule(nil)
+        }
+      }
+    }
     let center = NSWorkspace.shared.notificationCenter
     observers.append(
       center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) {
         [weak self] _ in
+        self?.sleeping = true
         self?.collector?.setSuspended(true)
+        self?.releaseViewMetadata(module: nil)
+        self?.clearCalendar()
         self?.rules.reset()
         self?.changeRules.reset()
       })
@@ -143,8 +163,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
         [weak self] _ in
         guard let self else { return }
+        self.sleeping = false
         self.collector?.setSuspended(self.paused)
         self.weatherFetchTime = .distantPast
+        if self.popover.isShown { self.updateCalendar() }
       })
     if !CommandLine.arguments.contains("--self-check"),
       !CommandLine.arguments.contains("--background"), !defaults.bool(forKey: "hasShownWelcome")
@@ -158,6 +180,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   func applicationWillTerminate(_ notification: Notification) {
     if let calendarObserver { NotificationCenter.default.removeObserver(calendarObserver) }
     clearCalendar()
+    calendarAccess.cancel()
     weatherTask?.cancel()
     weatherMaps?.releaseResources(); weatherMaps = nil
     weatherDetails?.close(); weatherDetails = nil
@@ -166,6 +189,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   }
   private func receive(_ reading: Snapshot) {
     var snapshot = reading; snapshot.networkSelection = settings.networkSelection
+    snapshot.releaseActiveViewState(
+      module: popover.isShown ? dashboard.module : nil, suspended: paused || sleeping)
     self.snapshot = snapshot
     let metrics = snapshot.metrics
     history.append(HistoryPoint(date: snapshot.date, values: metrics))
@@ -195,11 +220,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     updateWeather()
     if CommandLine.arguments.contains("--storage-self-check") {
       selfCheckSamples += 1
-      if (selfCheckSamples >= 12 && snapshot.storageMetadata.queriedAt != nil)
+      if (selfCheckSamples >= 12 && reading.storageMetadata.queriedAt != nil)
         || selfCheckSamples == 30
       {
         collector?.setVisibleModule(nil)
-        let topology = snapshot.storageMetadata.topology
+        let metadata = reading.storageMetadata
+        let topology = metadata.topology
         let output: [String: Any] = [
           "scenario": "headless read-only Storage demand; no actual open panel",
           "ioSources": snapshot.storageDevices.count,
@@ -209,10 +235,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
             volume.device.map { !(topology?.underlyingDisks(for: $0) ?? []).isEmpty } ?? false
           }.count,
           "physicalDrives": topology?.physicalDisks.count ?? 0,
-          "healthReports": snapshot.storageMetadata.drives.count,
-          "smartVerified": snapshot.storageMetadata.drives.values.filter { $0.smart == .verified }
+          "healthReports": metadata.drives.count,
+          "smartVerified": metadata.drives.values.filter { $0.smart == .verified }
             .count,
-          "status": snapshot.storageMetadata.status,
+          "status": metadata.status,
         ]
         selfCheckSamples = -1000
         DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
@@ -350,12 +376,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.contentViewController?.view.window?.makeKey()
   }
   func popoverDidClose(_ notification: Notification) {
-    collector?.setVisibleModule(nil); dashboard.snapshot.processes.removeAll();
-    dashboard.snapshot.networkProcesses.removeAll();
+    collector?.setVisibleModule(nil); releaseViewMetadata(module: nil)
     dashboard.history = HistoryStore(interval: settings.interval);
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
     clearCalendar(); dashboard.canvas.releaseInteractiveRows()
     selectedCalendarDate = Date()
+  }
+  private func releaseViewMetadata(module: Module?) {
+    snapshot.releaseActiveViewState(module: module, suspended: paused || sleeping)
+    dashboard.snapshot.releaseActiveViewState(module: module, suspended: paused || sleeping)
   }
   private func updateItems() {
     for (configuration, item) in items {
@@ -539,6 +568,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   @objc private func togglePaused() {
     paused.toggle()
     collector?.setSuspended(paused)
+    if paused {
+      releaseViewMetadata(module: nil); clearCalendar()
+    } else if popover.isShown {
+      updateCalendar()
+    }
     rules.reset()
     changeRules.reset()
     updateItems()
@@ -579,14 +613,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       UNNotificationRequest(identifier: event.rule.id.uuidString, content: content, trigger: nil))
   }
   private func requestCalendar() {
-    let store = eventStore ?? EKEventStore()
-    eventStore = store
-    store.requestFullAccessToEvents { granted, _ in
+    calendarAccess.request { [weak self] granted in
       DispatchQueue.main.async {
+        guard let self else { return }
         if granted {
           self.updateCalendar()
         } else {
-          self.notice("Calendar access remains unavailable.")
+          self.clearCalendar(); self.notice("Calendar access remains unavailable.")
         }
       }
     }
@@ -613,15 +646,21 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     return calendar
   }
   private func clearCalendar() {
-    eventStore = nil; calendarDetails.removeAll(); dashboard.calendarRows.removeAll()
+    calendarReader.cancel(); calendarDetails.removeAll(); dashboard.calendarRows.removeAll()
+    if dashboard.module == .time { dashboard.canvas.releaseInteractiveRows() }
     lastCalendarRefresh = .distantPast
   }
   private func updateCalendar(force: Bool = true, opening: Bool = false) {
-    guard dashboard.module == .time, popover.isShown || opening else {
+    guard !paused, !sleeping, dashboard.module == .time, popover.isShown || opening else {
       clearCalendar(); return
     }
     let now = Date(), calendar = menuCalendar
-    guard force || now.timeIntervalSince(lastCalendarRefresh) >= 60 else { return }
+    let authorized = calendarAccess.hasAccess
+    guard
+      force || authorized != calendarAuthorized || now.timeIntervalSince(lastCalendarRefresh) >= 60
+    else { return }
+    calendarAuthorized = authorized
+    calendarReader.cancel()
     lastCalendarRefresh = now
     calendarDetails.removeAll()
     guard
@@ -629,63 +668,72 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         displayedMonth: selectedCalendarDate, selected: selectedCalendarDate, now: now,
         calendar: calendar, showsWeekNumbers: settings.showWeekNumbers)
     else {
-      eventStore = nil
+      calendarReader.cancel()
       dashboard.calendarRows = [.note("The current calendar could not produce this month.")]
       dashboard.refresh(); return
     }
     var rows: [DashboardRow] = [.calendar(month), .heading(month.selectedDayTitle)]
-    let authorization = EKEventStore.authorizationStatus(for: .event)
-    if authorization == .fullAccess {
-      let store = eventStore ?? EKEventStore(); eventStore = store
-      let formatter = DateFormatter(); formatter.calendar = calendar;
-      formatter.timeZone = calendar.timeZone
-      formatter.setLocalizedDateFormatFromTemplate("EEE jmm z")
-      func appendEvents(start: Date, end: Date, empty: String) {
-        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
-        let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
-        if events.isEmpty { rows.append(.note(empty)); return }
-        for event in events.prefix(20) {
-          let identifier = UUID().uuidString
-          let title = String((event.title ?? "Event").prefix(256))
-          let time = event.isAllDay ? "All day" : formatter.string(from: event.startDate)
-          rows.append(.action(title, time, identifier))
-          let detailFormatter = DateFormatter(); detailFormatter.calendar = calendar;
-          detailFormatter.timeZone = calendar.timeZone
-          detailFormatter.setLocalizedDateFormatFromTemplate("EEE MMM d y jmm z")
-          var lines = [
-            "Starts: \(detailFormatter.string(from: event.startDate))",
-            "Ends: \(detailFormatter.string(from: event.endDate))",
-          ]
-          if event.isAllDay { lines.append("All-day event; the end date is exclusive.") }
-          if let name = event.calendar?.title {
-            lines.append("Calendar: " + String(name.prefix(128)))
-          }
-          if let location = event.location, !location.isEmpty {
-            lines.append("Location: " + String(location.prefix(512)))
-          }
-          if let notes = event.notes, !notes.isEmpty { lines.append(String(notes.prefix(2048))) }
-          calendarDetails[identifier] = (title, lines.joined(separator: "\n"))
-        }
-        if events.count > 20 {
-          rows.append(.note("Showing the first 20 of \(events.count) events in this range."))
-        }
-      }
-      appendEvents(
-        start: month.dayInterval.start, end: month.dayInterval.end, empty: "No events on this day.")
-      rows.append(.heading("Upcoming events · next seven days"))
-      if let end = calendar.date(byAdding: .day, value: 7, to: now) {
-        appendEvents(start: now, end: end, empty: "No events in the next seven days.")
-      }
-      rows.append(
-        .note(
-          "Events remain local. Select an event to read its details. Refreshes each minute while this menu is open."
-        ))
-    } else {
-      eventStore = nil
+    if !authorized {
       rows.append(
         .note(
           "Enable Calendar Events in Settings → Permissions to show local events. Date selection works without access."
         ))
+    } else {
+      rows.append(.note("Reading local events…"))
+      let upcomingEnd = calendar.date(byAdding: .day, value: 7, to: now) ?? now
+      let ranges = [month.dayInterval, DateInterval(start: now, end: upcomingEnd)]
+      calendarReader.load(ranges: ranges) { [weak self] result in
+        guard let self, !self.paused, self.dashboard.module == .time, self.popover.isShown else {
+          return
+        }
+        self.calendarDetails.removeAll()
+        var eventRows: [DashboardRow] = [.calendar(month), .heading(month.selectedDayTitle)]
+        if result.denied {
+          eventRows.append(.note("Calendar access is unavailable. No event details are retained."))
+        } else {
+          let formatter = DateFormatter(); formatter.calendar = calendar;
+          formatter.timeZone = calendar.timeZone
+          formatter.setLocalizedDateFormatFromTemplate("EEE jmm z")
+          let detailFormatter = DateFormatter(); detailFormatter.calendar = calendar;
+          detailFormatter.timeZone = calendar.timeZone
+          detailFormatter.setLocalizedDateFormatFromTemplate("EEE MMM d y jmm z")
+          for (index, section) in result.ranges.enumerated() {
+            if index == 1 { eventRows.append(.heading("Upcoming events · next seven days")) }
+            if section.events.isEmpty {
+              eventRows.append(
+                .note(index == 0 ? "No events on this day." : "No events in the next seven days."))
+            }
+            for event in section.events {
+              let identifier = UUID().uuidString
+              eventRows.append(
+                .action(
+                  event.title, event.allDay ? "All day" : formatter.string(from: event.start),
+                  identifier))
+              var lines = [
+                "Starts: " + detailFormatter.string(from: event.start),
+                "Ends: " + detailFormatter.string(from: event.end),
+              ]
+              if event.allDay { lines.append("All-day event; the end date is exclusive.") }
+              if !event.calendar.isEmpty { lines.append("Calendar: " + event.calendar) }
+              if !event.location.isEmpty { lines.append("Location: " + event.location) }
+              if !event.notes.isEmpty { lines.append(event.notes) }
+              self.calendarDetails[identifier] = (event.title, lines.joined(separator: "\n"))
+            }
+            if section.truncated {
+              eventRows.append(
+                .note(
+                  "Scan stopped at 2,000 events. Showing the earliest 20 within that scanned subset; more events may exist."
+                ))
+            } else if section.scanned > 20 {
+              eventRows.append(
+                .note("Showing the earliest 20 of \(section.scanned) scanned events."))
+            }
+          }
+          eventRows.append(
+            .note("Events remain local. Refreshes each minute while this menu is open."))
+        }
+        self.dashboard.calendarRows = eventRows; self.dashboard.refresh()
+      }
     }
     dashboard.calendarRows = rows
     dashboard.refresh()

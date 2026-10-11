@@ -144,6 +144,7 @@ final class Collector {
       self.sensorPanelVisible = module == .sensors
       self.storagePanelVisible = module == .storage
       self.storageMetadata.configure(visible: self.storagePanelVisible && !self.suspended)
+      self.cache.releaseActiveViewState(module: module, suspended: self.suspended)
       self.networkPanelVisible = module == .network
       self.processNetwork.configure(
         visible: self.networkPanelVisible && !self.suspended, interval: self.settings.interval)
@@ -156,6 +157,9 @@ final class Collector {
   func setSuspended(_ value: Bool) {
     queue.async {
       self.suspended = value
+      self.cache.releaseActiveViewState(
+        module: self.storagePanelVisible ? .storage : self.networkPanelVisible ? .network : nil,
+        suspended: value)
       self.storageMetadata.configure(visible: self.storagePanelVisible && !value)
       self.processNetwork.configure(
         visible: self.networkPanelVisible && !value, interval: self.settings.interval)

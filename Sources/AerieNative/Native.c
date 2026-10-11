@@ -180,6 +180,12 @@ int aerie_interfaces(AerieInterface *out, int capacity) {
     return count;
 }
 
+uint64_t aerie_process_birth(int pid) {
+    struct proc_bsdinfo bsd = {0};
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, sizeof(bsd)) != sizeof(bsd)) return 0;
+    return (uint64_t)bsd.pbi_start_tvsec * 1000000 + bsd.pbi_start_tvusec;
+}
+
 AerieProcess aerie_process(int pid) {
     AerieProcess out = {0}; out.pid = pid;
     struct proc_bsdinfo bsd = {0};

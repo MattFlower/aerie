@@ -14,8 +14,16 @@ final class StorageCommand: StorageCommandTransport {
   private var process: Process?
   private var cancelled = false
   private let executable: URL
-  init(executable: URL = URL(fileURLWithPath: "/usr/sbin/diskutil")) {
+  private let terminateAfter, killAfter: Double
+  private let measurement: ((StorageCommandMeasurement) -> Void)?
+  init(
+    executable: URL = URL(fileURLWithPath: "/usr/sbin/diskutil"),
+    terminateAfter: Double = 5, killAfter: Double = 6,
+    measurement: ((StorageCommandMeasurement) -> Void)? = nil
+  ) {
     self.executable = executable
+    self.terminateAfter = terminateAfter; self.killAfter = max(terminateAfter, killAfter)
+    self.measurement = measurement
   }
   func run(_ arguments: [String]) throws -> Data {
     let task = Process(), pipe = Pipe()
@@ -29,19 +37,26 @@ final class StorageCommand: StorageCommandTransport {
     do { try task.run() } catch { process = nil; lock.unlock(); throw error }
     lock.unlock()
     try? pipe.fileHandleForWriting.close()
-    let identity = aerie_process(task.processIdentifier).start_time
+    let identity = aerie_process_birth(task.processIdentifier)
+    let probe = measurement.map {
+      StorageCommandProbe(pid: task.processIdentifier, birth: identity, output: $0)
+    }
     let deadline = DispatchWorkItem { if task.isRunning { task.terminate() } }
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5, execute: deadline)
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) {
-      if task.isRunning, identity > 0, aerie_process(task.processIdentifier).start_time == identity
-      {
+    DispatchQueue.global(qos: .utility).asyncAfter(
+      deadline: .now() + terminateAfter, execute: deadline)
+    let killDeadline = DispatchWorkItem {
+      if task.isRunning, identity > 0, aerie_process_birth(task.processIdentifier) == identity {
         Darwin.kill(task.processIdentifier, SIGKILL)
       }
     }
+    DispatchQueue.global(qos: .utility).asyncAfter(
+      deadline: .now() + killAfter, execute: killDeadline)
     defer {
       deadline.cancel()
       if task.isRunning { task.terminate() }
       task.waitUntilExit()
+      killDeadline.cancel()
+      probe?.finish(status: task.terminationStatus)
       try? pipe.fileHandleForReading.close(); try? pipe.fileHandleForWriting.close()
       lock.lock(); process = nil; lock.unlock()
     }
@@ -77,7 +92,11 @@ final class StorageMetadataReader {
   private var visible = false
   private var lastStarted = -Double.infinity
   private var result = StorageMetadataReading()
-  init(factory: @escaping () -> StorageCommandTransport = { StorageCommand() }) {
+  init(
+    factory: @escaping () -> StorageCommandTransport = {
+      StorageCommand(measurement: StorageCommandProbe.cliOutput)
+    }
+  ) {
     self.factory = factory
   }
   func configure(visible: Bool, time: Double = ProcessInfo.processInfo.systemUptime) {

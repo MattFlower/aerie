@@ -34,6 +34,8 @@ int aerie_mib_interface_counters(const void *data, size_t size, AerieInterfaceCo
 void aerie_interfaces_invalidate(void);
 int aerie_processes(AerieProcess *processes, int capacity);
 AerieProcess aerie_process(int pid);
+// Independent BSD birth identity, available even when resource accounting is denied.
+uint64_t aerie_process_birth(int pid);
 int aerie_smc_open(void);
 int aerie_smc_keys(char *keys, int capacity);
 int aerie_smc_read(const char *key, AerieSensor *sensor);

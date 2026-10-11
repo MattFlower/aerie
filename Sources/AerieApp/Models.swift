@@ -131,6 +131,14 @@ struct Snapshot {
   var connectivity = "Checking"
   var sensorStatus = "Checking sensor access"
   var processDenied = 0
+  /// Every owner applies demand again, including late snapshots queued before a close/pause.
+  mutating func releaseActiveViewState(module: Module?, suspended: Bool) {
+    if suspended || module != .storage { storageMetadata = StorageMetadataReading() }
+    if suspended || module != .network { networkProcesses.removeAll() }
+    if suspended || !(module.map { ProcessDemand.required(module: $0, visible: true) } ?? false) {
+      processes.removeAll()
+    }
+  }
   var download: Double? {
     let values = interfaces.filter { networkSelection.includes(name: $0.name, active: $0.active) }
       .compactMap(\.download)
