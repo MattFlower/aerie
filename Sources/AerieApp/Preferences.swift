@@ -4,6 +4,7 @@ import AppKit
 final class PreferencesController: NSWindowController, NSWindowDelegate {
   private var settings: Settings
   var onApply: ((Settings) -> Void)?
+  var onProfileReview: ((SettingsProfile) -> Bool)?
   var onClose: (() -> Void)?
   var onDashboard: (() -> Void)?
   var onNotifications: (() -> Void)?
@@ -139,8 +140,12 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       title: "Import Settings…", target: self, action: #selector(importSettings))
     importButton.frame = NSRect(x: 195, y: 468, width: 170, height: 28)
     general.addSubview(importButton)
+    let restore = NSButton(
+      title: "Restore Defaults…", target: self, action: #selector(restoreDefaults))
+    restore.frame = NSRect(x: 372, y: 468, width: 193, height: 28)
+    general.addSubview(restore)
     label(
-      "Exports remove locations/calendar choices and clear forecast/map/public-IP consent. Imports keep external services off until you opt in again.",
+      "Format 1 profiles: import and defaults are reviewed and staged before Apply. Locations and calendar choices are cleared; current numeric archive preference is preserved.",
       y: 511, in: general, height: 45)
 
     let dashboard = NSButton(
@@ -752,17 +757,11 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   }
   @objc private func exportSettings() {
     do {
-      var s = try readSettings()
-      s.weather = WeatherConfiguration()
-      s.eventCalendars = nil
-      s.daylight = nil
-      s.publicAddress = nil
+      let data = try SettingsProfile.exported(readSettings())
       let panel = NSSavePanel()
       panel.nameFieldStringValue = "Aerie-settings.json"
       if panel.runModal() == .OK, let url = panel.url {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(s).write(to: url, options: .atomic)
+        try data.write(to: url, options: .atomic)
       }
     } catch { errorLabel.stringValue = "Could not export valid settings." }
   }
@@ -787,31 +786,46 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     picker.onClose = { [weak self] in self?.calendarPicker = nil }
     picker.showWindow(nil)
   }
+  @objc private func restoreDefaults() {
+    _ = reviewAndStage(.defaults(preservingHistory: settings.effectivePersistentHistory))
+  }
+  /// Testable without showing a confirmation or writing application preferences.
+  @discardableResult func reviewAndStage(_ profile: SettingsProfile) -> Bool {
+    let accepted: Bool
+    if let onProfileReview {
+      accepted = onProfileReview(profile)
+    } else {
+      let alert = NSAlert(); alert.messageText = profile.title
+      alert.informativeText = profile.summary; alert.alertStyle = .informational
+      alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Stage Changes")
+      accepted = alert.runModal() == .alertSecondButtonReturn
+    }
+    guard accepted else { return false }
+    calendarPicker?.close(); calendarPicker = nil
+    settings = profile.settings
+    for subview in window?.contentView?.subviews ?? [] { subview.removeFromSuperview() }
+    fields.removeAll(); toggles.removeAll(); choices.removeAll()
+    menuToggles.removeAll(); menuStyles.removeAll(); menuOrders.removeAll(); menuColors.removeAll()
+    build()
+    errorLabel.stringValue =
+      "Changes staged. Review the options, then Apply; closing discards this draft."
+    return true
+  }
   @objc private func importSettings() {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
-      let data = try Data(contentsOf: url)
-      guard data.count < 1_000_000 else { throw SettingsError.invalid }
-      var s = try JSONDecoder().decode(Settings.self, from: data)
-      s.weather.enabled = false
-      s.weather.mapsEnabled = false
-      s.publicAddress = nil
-      s = try s.validated()
-      calendarPicker?.close(); calendarPicker = nil
-      settings = s
-      onApply?(s)
-      for subview in window?.contentView?.subviews ?? [] { subview.removeFromSuperview() }
-      fields.removeAll()
-      toggles.removeAll()
-      choices.removeAll()
-      menuToggles.removeAll()
-      menuStyles.removeAll()
-      menuOrders.removeAll()
-      build()
-      errorLabel.stringValue = "Settings imported. Weather remains off."
-    } catch { errorLabel.stringValue = "This file does not contain valid Aerie settings." }
+      let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
+      let data = try file.read(upToCount: SettingsProfile.maximumBytes + 1) ?? Data()
+      let profile = try SettingsProfile.imported(
+        data, preservingHistory: settings.effectivePersistentHistory)
+      _ = reviewAndStage(profile)
+    } catch SettingsProfileError.unsupportedVersion(let version) {
+      errorLabel.stringValue = "Unsupported profile format \(version). Aerie supports format 1."
+    } catch {
+      errorLabel.stringValue = "This file does not contain valid Aerie settings (1 MB maximum)."
+    }
   }
 }
 private final class FlippedView: NSView { override var isFlipped: Bool { true } }
