@@ -218,6 +218,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
       defaults.set(true, forKey: "hasShownWelcome"); showSettings()
     }
   }
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
+  {
+    if !flag { showSettings() }
+    return true
+  }
   func applicationDidHide(_ notification: Notification) {
     cancelWiFiPermission()
     popover.performClose(nil); collector?.setVisibleModule(nil)

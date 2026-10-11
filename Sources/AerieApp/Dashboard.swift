@@ -30,6 +30,11 @@ enum AeriePalette {
   static let power = NSColor(red: 0.83, green: 0.61, blue: 0.20, alpha: 1)
 }
 
+private final class HistoryChartAccessibilityElement: NSAccessibilityElement {
+  weak var owner: DashboardView?
+  override func accessibilityPerformPress() -> Bool { owner?.selectHistory(fraction: 0.5) ?? false }
+}
+
 final class DashboardView: NSView {
   var rows: [DashboardRow] = []
   var points: [HistoryPoint] = []
@@ -38,6 +43,7 @@ final class DashboardView: NSView {
   private let chartFormatter = DateFormatter()
   private var calendarView: CalendarMonthView?
   private var actionButtons: [Int: NSButton] = [:]
+  private var textElements: [Int: NSAccessibilityElement] = [:]
   var onSelectDate: ((Date) -> Void)?
   var onMoveMonth: ((Int) -> Void)?
   var onToday: (() -> Void)?
@@ -61,6 +67,7 @@ final class DashboardView: NSView {
     var elements: [Any] = []
     var hasCalendar = false
     var actionIndexes: Set<Int> = []
+    var textIndexes: Set<Int> = []
     for (index, row) in rows.enumerated() {
       if case .calendar(let model) = row {
         let calendar = calendarView ?? CalendarMonthView(frame: .zero)
@@ -82,7 +89,7 @@ final class DashboardView: NSView {
         button.bezelStyle = .inline; button.alignment = .left
         button.font = .systemFont(ofSize: 11); button.lineBreakMode = .byTruncatingTail
         button.frame = NSRect(x: 14, y: y + 3, width: bounds.width - 28, height: 28)
-        button.setAccessibilityLabel("\(title), \(value), show event details")
+        button.setAccessibilityLabel("\(title), \(value), show details")
         if button.superview == nil { addSubview(button) }
         elements.append(button); y += row.height; continue
       }
@@ -90,16 +97,35 @@ final class DashboardView: NSView {
       switch row {
       case .heading(let s), .note(let s): label = s
       case .metric(let k, let v): label = "\(k): \(v)"
-      case .chart(_, let title, _, _):
-        label = "\(title) history, \(points.count) samples. Click to inspect a sample."
+      case .chart(let key, let title, _, _):
+        if let selectedPoint, let value = selectedPoint.values[key] {
+          chartFormatter.dateStyle = .short; chartFormatter.timeStyle = .medium
+          label =
+            "\(title) history, \(points.count) samples. Selected \(chartFormatter.string(from: selectedPoint.date)): \(String(format: "%.2f", value)). Activate to inspect the middle sample."
+        } else {
+          label =
+            "\(title) history, \(points.count) samples. Click to inspect a sample; activate to inspect the middle sample."
+        }
       case .cores(let c):
         label = c.enumerated().map { "Core \($0.offset + 1): \(Format.percent($0.element))" }
           .joined(separator: ", ")
       case .calendar, .action: label = ""
       }
-      let e = NSAccessibilityElement()
+      let chart: Bool
+      if case .chart = row { chart = true } else { chart = false }
+      let e: NSAccessibilityElement
+      if let existing = textElements[index], (existing is HistoryChartAccessibilityElement) == chart
+      {
+        e = existing
+      } else {
+        textElements[index]?.setAccessibilityParent(nil)
+        e = chart ? HistoryChartAccessibilityElement() : NSAccessibilityElement()
+        textElements[index] = e
+      }
+      textIndexes.insert(index)
+      if let e = e as? HistoryChartAccessibilityElement { e.owner = self }
       e.setAccessibilityParent(self)
-      e.setAccessibilityRole(.staticText)
+      e.setAccessibilityRole(chart ? .button : .staticText)
       e.setAccessibilityLabel(label)
       if let window {
         e.setAccessibilityFrame(
@@ -113,12 +139,16 @@ final class DashboardView: NSView {
     for index in Array(actionButtons.keys) where !actionIndexes.contains(index) {
       actionButtons.removeValue(forKey: index)?.removeFromSuperview()
     }
+    for index in Array(textElements.keys) where !textIndexes.contains(index) {
+      textElements.removeValue(forKey: index)?.setAccessibilityParent(nil)
+    }
     setAccessibilityChildren(elements)
   }
   func releaseInteractiveRows() {
     calendarView?.removeFromSuperview(); calendarView = nil
     actionButtons.values.forEach { $0.removeFromSuperview() }; actionButtons.removeAll()
-    rows.removeAll(); setAccessibilityChildren([])
+    textElements.values.forEach { $0.setAccessibilityParent(nil) }; textElements.removeAll()
+    rows.removeAll(); points.removeAll(); selectedPoint = nil; setAccessibilityChildren([])
   }
   @objc private func performRowAction(_ sender: NSButton) {
     guard rows.indices.contains(sender.tag), case .action(_, _, let identifier) = rows[sender.tag]
@@ -223,8 +253,13 @@ final class DashboardView: NSView {
       return false
     }
     guard clickedChart else { return }
-    selectedPoint = HistoryPlot.nearest(points, fraction: Double(fraction))
-    needsDisplay = true
+    _ = selectHistory(fraction: Double(fraction))
+  }
+  @discardableResult func selectHistory(fraction: Double) -> Bool {
+    guard !points.isEmpty, fraction.isFinite else { return false }
+    selectedPoint = HistoryPlot.nearest(points, fraction: max(0, min(1, fraction)))
+    update(rows: rows, points: points)
+    return selectedPoint != nil
   }
 }
 
