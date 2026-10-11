@@ -100,7 +100,9 @@ public enum WeatherCondition {
 public struct OpenMeteoProvider: WeatherProvider {
   public init() {}
   public static func requestURL(_ configuration: WeatherConfiguration) throws -> URL {
-    guard configuration.valid else { throw WeatherError.invalidConfiguration }
+    guard configuration.valid, configuration.provider == "openMeteo" else {
+      throw WeatherError.invalidConfiguration
+    }
     var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
     components.queryItems = [
       URLQueryItem(

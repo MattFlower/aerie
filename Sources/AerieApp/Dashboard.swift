@@ -8,6 +8,8 @@ enum DashboardRow {
   case note(String)
   case chart(String, String, NSColor, Double?)
   case cores([Double])
+  case calendar(CalendarMonth)
+  case action(String, String, String)
   var height: CGFloat {
     switch self {
     case .heading: return 34
@@ -15,6 +17,8 @@ enum DashboardRow {
     case .note: return 47
     case .chart: return 100
     case .cores(let c): return CGFloat((c.count + 11) / 12) * 42 + 18
+    case .calendar(let model): return CalendarMonthView.height(model)
+    case .action: return 34
     }
   }
 }
@@ -32,6 +36,12 @@ final class DashboardView: NSView {
   var selectedPoint: HistoryPoint?
   var expectedInterval = 1.0
   private let chartFormatter = DateFormatter()
+  private var calendarView: CalendarMonthView?
+  private var actionButtons: [Int: NSButton] = [:]
+  var onSelectDate: ((Date) -> Void)?
+  var onMoveMonth: ((Int) -> Void)?
+  var onToday: (() -> Void)?
+  var onAction: ((String) -> Void)?
   override var isFlipped: Bool { true }
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -48,8 +58,34 @@ final class DashboardView: NSView {
     frame.size.height = rows.reduce(16) { $0 + $1.height }
     needsDisplay = true
     var y: CGFloat = 8
-    var elements: [NSAccessibilityElement] = []
-    for row in rows {
+    var elements: [Any] = []
+    var hasCalendar = false
+    var actionIndexes: Set<Int> = []
+    for (index, row) in rows.enumerated() {
+      if case .calendar(let model) = row {
+        let calendar = calendarView ?? CalendarMonthView(frame: .zero)
+        calendarView = calendar; hasCalendar = true
+        calendar.frame = NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height)
+        calendar.onSelect = { [weak self] in self?.onSelectDate?($0) }
+        calendar.onMove = { [weak self] in self?.onMoveMonth?($0) }
+        calendar.onToday = { [weak self] in self?.onToday?() }
+        if calendar.superview == nil { addSubview(calendar) }
+        calendar.update(model); elements.append(calendar)
+        y += row.height; continue
+      }
+      if case .action(let title, let value, _) = row {
+        let button =
+          actionButtons[index]
+          ?? NSButton(title: "", target: self, action: #selector(performRowAction(_:)))
+        actionButtons[index] = button; actionIndexes.insert(index)
+        button.tag = index; button.title = "\(title) · \(value)"
+        button.bezelStyle = .inline; button.alignment = .left
+        button.font = .systemFont(ofSize: 11); button.lineBreakMode = .byTruncatingTail
+        button.frame = NSRect(x: 14, y: y + 3, width: bounds.width - 28, height: 28)
+        button.setAccessibilityLabel("\(title), \(value), show event details")
+        if button.superview == nil { addSubview(button) }
+        elements.append(button); y += row.height; continue
+      }
       let label: String
       switch row {
       case .heading(let s), .note(let s): label = s
@@ -59,6 +95,7 @@ final class DashboardView: NSView {
       case .cores(let c):
         label = c.enumerated().map { "Core \($0.offset + 1): \(Format.percent($0.element))" }
           .joined(separator: ", ")
+      case .calendar, .action: label = ""
       }
       let e = NSAccessibilityElement()
       e.setAccessibilityParent(self)
@@ -72,7 +109,21 @@ final class DashboardView: NSView {
       elements.append(e)
       y += row.height
     }
+    if !hasCalendar { calendarView?.removeFromSuperview(); calendarView = nil }
+    for index in Array(actionButtons.keys) where !actionIndexes.contains(index) {
+      actionButtons.removeValue(forKey: index)?.removeFromSuperview()
+    }
     setAccessibilityChildren(elements)
+  }
+  func releaseInteractiveRows() {
+    calendarView?.removeFromSuperview(); calendarView = nil
+    actionButtons.values.forEach { $0.removeFromSuperview() }; actionButtons.removeAll()
+    rows.removeAll(); setAccessibilityChildren([])
+  }
+  @objc private func performRowAction(_ sender: NSButton) {
+    guard rows.indices.contains(sender.tag), case .action(_, _, let identifier) = rows[sender.tag]
+    else { return }
+    onAction?(identifier)
   }
   override func draw(_ dirtyRect: NSRect) {
     NSColor.windowBackgroundColor.setFill()
@@ -157,6 +208,7 @@ final class DashboardView: NSView {
             "\(index + 1)", rect: NSRect(x: x, y: base.maxY + 3, width: width, height: 14),
             font: .systemFont(ofSize: 9), color: .secondaryLabelColor, alignment: .center)
         }
+      case .calendar, .action: break
       }
     }
   }

@@ -133,6 +133,18 @@ final class CoreTests: XCTestCase {
     c.latitude = 100
     XCTAssertThrowsError(try OpenMeteoProvider.requestURL(c))
   }
+  func testUnimplementedProviderNeverSilentlyUsesAnotherEndpoint() {
+    var configuration = WeatherConfiguration()
+    configuration.enabled = true; configuration.name = "Synthetic city"
+    configuration.latitude = 10; configuration.longitude = 20
+    for provider in ["nws", "unknown"] {
+      configuration.provider = provider
+      XCTAssertFalse(configuration.valid)
+      XCTAssertThrowsError(try OpenMeteoProvider.requestURL(configuration))
+      var settings = Settings(); settings.weather = configuration
+      XCTAssertThrowsError(try settings.validated())
+    }
+  }
   func testSyntheticForecastDecode() throws {
     let data = Data(
       """

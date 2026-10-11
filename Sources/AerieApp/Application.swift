@@ -18,6 +18,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private var popover = NSPopover()
   private var preferences: PreferencesController?
   private var eventStore: EKEventStore?
+  private var selectedCalendarDate = Date()
+  private var lastCalendarRefresh = Date.distantPast
+  private var calendarDetails: [String: (title: String, text: String)] = [:]
+  private var calendarObserver: NSObjectProtocol?
   private var weatherTask: Task<Void, Never>?
   private var weatherGeneration = 0
   private var weatherReport: WeatherReport?
@@ -48,6 +52,31 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.contentSize = NSSize(width: 416, height: 620)
     popover.contentViewController = dashboard
     popover.delegate = self
+    dashboard.canvas.onSelectDate = { [weak self] date in
+      self?.selectedCalendarDate = date; self?.updateCalendar()
+    }
+    dashboard.canvas.onMoveMonth = { [weak self] offset in
+      guard let self,
+        let date = CalendarMonth.movedSelection(
+          self.selectedCalendarDate, months: offset, calendar: self.menuCalendar)
+      else { return }
+      self.selectedCalendarDate = date; self.updateCalendar()
+    }
+    dashboard.canvas.onToday = { [weak self] in
+      self?.selectedCalendarDate = Date(); self?.updateCalendar()
+    }
+    dashboard.canvas.onAction = { [weak self] identifier in
+      guard let self, let detail = self.calendarDetails[identifier],
+        EKEventStore.authorizationStatus(for: .event) == .fullAccess
+      else { return }
+      let alert = NSAlert(); alert.messageText = detail.title; alert.informativeText = detail.text
+      alert.addButton(withTitle: "Close"); alert.runModal()
+    }
+    calendarObserver = NotificationCenter.default.addObserver(
+      forName: .EKEventStoreChanged, object: nil, queue: .main
+    ) { [weak self] _ in
+      self?.lastCalendarRefresh = .distantPast
+    }
     dashboard.onSettings = { [weak self] in self?.showSettings() }
     dashboard.onMaps = { [weak self] in self?.showMaps() }
     dashboard.onExportHistory = { [weak self] in self?.exportHistory(window: $0) }
@@ -102,6 +131,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     popover.performClose(nil); collector?.setVisibleModule(nil)
   }
   func applicationWillTerminate(_ notification: Notification) {
+    if let calendarObserver { NotificationCenter.default.removeObserver(calendarObserver) }
+    clearCalendar()
     weatherTask?.cancel()
     weatherMaps?.releaseResources(); weatherMaps = nil
     collector = nil
@@ -127,6 +158,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     }
     updateItems()
     if popover.isShown {
+      if dashboard.module == .time { updateCalendar(force: false) }
       dashboard.snapshot = snapshot
       dashboard.history = history
       dashboard.settings = settings
@@ -286,7 +318,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     dashboard.weatherStatus = weatherStatus
     _ = dashboard.view
     dashboard.show(module)
-    updateCalendar()
+    updateCalendar(opening: true)
     collector?.setVisibleModule(module)
     popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     popover.contentViewController?.view.window?.makeKey()
@@ -296,6 +328,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     dashboard.snapshot.networkProcesses.removeAll();
     dashboard.history = HistoryStore(interval: settings.interval);
     dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
+    clearCalendar(); dashboard.canvas.releaseInteractiveRows()
+    selectedCalendarDate = Date()
   }
   private func updateItems() {
     for (configuration, item) in items {
@@ -433,6 +467,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     collector?.configure(valid)
     rebuildItems()
     applyAppearance()
+    lastCalendarRefresh = .distantPast
+    if popover.isShown { updateCalendar() }
     rules.reset()
     changeRules.reset()
     if weatherChanged {
@@ -537,52 +573,88 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     alert.informativeText = message
     alert.runModal()
   }
-  private func updateCalendar() {
-    let now = Date()
+  private var menuCalendar: Calendar {
     var calendar = Calendar.current
     calendar.firstWeekday = settings.weekStartsMonday ? 2 : 1
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMMM yyyy"
-    var rows: [DashboardRow] = [.metric(formatter.string(from: now), "")]
-    if let start = calendar.dateInterval(of: .month, for: now)?.start,
-      let days = calendar.range(of: .day, in: .month, for: now)
-    {
-      let offset = (calendar.component(.weekday, from: start) - calendar.firstWeekday + 7) % 7
-      let names =
-        settings.weekStartsMonday
-        ? "Mo   Tu   We   Th   Fr   Sa   Su" : "Su   Mo   Tu   We   Th   Fr   Sa"
-      rows.append(.metric(names, settings.showWeekNumbers ? "Week" : ""))
-      let cells = Array(repeating: "   ", count: offset) + days.map { String(format: "%2d ", $0) }
-      for index in stride(from: 0, to: cells.count, by: 7) {
-        let string = cells[index..<min(index + 7, cells.count)].joined(separator: " ")
-        let date = calendar.date(byAdding: .day, value: index - offset, to: start) ?? start
-        rows.append(
-          .metric(
-            string,
-            settings.showWeekNumbers ? String(calendar.component(.weekOfYear, from: date)) : ""))
-      }
+    return calendar
+  }
+  private func clearCalendar() {
+    eventStore = nil; calendarDetails.removeAll(); dashboard.calendarRows.removeAll()
+    lastCalendarRefresh = .distantPast
+  }
+  private func updateCalendar(force: Bool = true, opening: Bool = false) {
+    guard dashboard.module == .time, popover.isShown || opening else {
+      clearCalendar(); return
     }
+    let now = Date(), calendar = menuCalendar
+    guard force || now.timeIntervalSince(lastCalendarRefresh) >= 60 else { return }
+    lastCalendarRefresh = now
+    calendarDetails.removeAll()
+    guard
+      let month = CalendarMonth.make(
+        displayedMonth: selectedCalendarDate, selected: selectedCalendarDate, now: now,
+        calendar: calendar, showsWeekNumbers: settings.showWeekNumbers)
+    else {
+      eventStore = nil
+      dashboard.calendarRows = [.note("The current calendar could not produce this month.")]
+      dashboard.refresh(); return
+    }
+    var rows: [DashboardRow] = [.calendar(month), .heading(month.selectedDayTitle)]
     let authorization = EKEventStore.authorizationStatus(for: .event)
     if authorization == .fullAccess {
-      let store = eventStore ?? EKEventStore()
-      eventStore = store
-      let end = calendar.date(byAdding: .day, value: 7, to: now) ?? now
-      let predicate = store.predicateForEvents(withStart: now, end: end, calendars: nil)
-      let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }.prefix(
-        20)
-      formatter.dateFormat = "EEE HH:mm"
-      rows += [.heading("Upcoming events")]
-      rows +=
-        events.isEmpty
-        ? [.note("No events in the next seven days.")]
-        : events.map {
-          .metric(
-            $0.title ?? "Event", $0.isAllDay ? "All day" : formatter.string(from: $0.startDate))
+      let store = eventStore ?? EKEventStore(); eventStore = store
+      let formatter = DateFormatter(); formatter.calendar = calendar;
+      formatter.timeZone = calendar.timeZone
+      formatter.setLocalizedDateFormatFromTemplate("EEE jmm z")
+      func appendEvents(start: Date, end: Date, empty: String) {
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+        if events.isEmpty { rows.append(.note(empty)); return }
+        for event in events.prefix(20) {
+          let identifier = UUID().uuidString
+          let title = String((event.title ?? "Event").prefix(256))
+          let time = event.isAllDay ? "All day" : formatter.string(from: event.startDate)
+          rows.append(.action(title, time, identifier))
+          let detailFormatter = DateFormatter(); detailFormatter.calendar = calendar;
+          detailFormatter.timeZone = calendar.timeZone
+          detailFormatter.setLocalizedDateFormatFromTemplate("EEE MMM d y jmm z")
+          var lines = [
+            "Starts: \(detailFormatter.string(from: event.startDate))",
+            "Ends: \(detailFormatter.string(from: event.endDate))",
+          ]
+          if event.isAllDay { lines.append("All-day event; the end date is exclusive.") }
+          if let name = event.calendar?.title {
+            lines.append("Calendar: " + String(name.prefix(128)))
+          }
+          if let location = event.location, !location.isEmpty {
+            lines.append("Location: " + String(location.prefix(512)))
+          }
+          if let notes = event.notes, !notes.isEmpty { lines.append(String(notes.prefix(2048))) }
+          calendarDetails[identifier] = (title, lines.joined(separator: "\n"))
         }
+        if events.count > 20 {
+          rows.append(.note("Showing the first 20 of \(events.count) events in this range."))
+        }
+      }
+      appendEvents(
+        start: month.dayInterval.start, end: month.dayInterval.end, empty: "No events on this day.")
+      rows.append(.heading("Upcoming events · next seven days"))
+      if let end = calendar.date(byAdding: .day, value: 7, to: now) {
+        appendEvents(start: now, end: end, empty: "No events in the next seven days.")
+      }
+      rows.append(
+        .note(
+          "Events remain local. Select an event to read its details. Refreshes each minute while this menu is open."
+        ))
     } else {
-      rows += [.note("Enable Calendar Events in Settings → Permissions to show local events.")]
+      eventStore = nil
+      rows.append(
+        .note(
+          "Enable Calendar Events in Settings → Permissions to show local events. Date selection works without access."
+        ))
     }
     dashboard.calendarRows = rows
+    dashboard.refresh()
   }
   private func updateWeather() {
     guard settings.weather.valid, weatherTask == nil,
