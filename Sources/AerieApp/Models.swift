@@ -64,6 +64,7 @@ struct InterfaceData {
   var upload: Double?
   var errors: UInt64
   var counterBits = 64
+  var session: NetworkSessionReading?
 }
 struct ProcessData {
   var pid: Int
@@ -106,6 +107,7 @@ struct Snapshot {
   var mountedVolumePaths: [String]?
   var interfaces = [InterfaceData]()
   var networkAvailable = false
+  var networkSelection = NetworkSelection()
   var sensors = [SensorData]()
   var power = PowerData()
   var processes = [ProcessData]()
@@ -119,11 +121,13 @@ struct Snapshot {
   var sensorStatus = "Checking sensor access"
   var processDenied = 0
   var download: Double? {
-    let values = interfaces.filter(\.active).compactMap(\.download)
+    let values = interfaces.filter { networkSelection.includes(name: $0.name, active: $0.active) }
+      .compactMap(\.download)
     return values.isEmpty ? nil : values.reduce(0, +)
   }
   var upload: Double? {
-    let values = interfaces.filter(\.active).compactMap(\.upload)
+    let values = interfaces.filter { networkSelection.includes(name: $0.name, active: $0.active) }
+      .compactMap(\.upload)
     return values.isEmpty ? nil : values.reduce(0, +)
   }
   var metrics: [String: Double] {

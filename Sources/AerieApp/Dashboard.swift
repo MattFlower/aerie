@@ -436,6 +436,8 @@ final class DashboardController: NSViewController {
         DashboardRow.metric("Upload", rate(s.upload, domain: .network)),
         DashboardRow.chart("download", "Download bytes/s", AeriePalette.incoming, nil),
         DashboardRow.chart("upload", "Upload bytes/s", AeriePalette.outgoing, nil),
+        DashboardRow.note(
+          s.networkSelection.description + ". Collection still includes every reported interface."),
       ]
       if !s.networkAvailable {
         rows.append(.note("Interface counters are unavailable; no rates or totals are inferred."))
@@ -449,14 +451,26 @@ final class DashboardController: NSViewController {
             "Download / upload",
             "\(rate(i.download, domain: .network)) / \(rate(i.upload, domain: .network))"),
           DashboardRow.metric(
-            i.counterBits == 64 ? "Received since boot" : "Received · limited counter",
+            i.counterBits == 64 ? "OS cumulative received" : "Received · limited counter",
             bytes(Double(i.received))),
           DashboardRow.metric(
-            i.counterBits == 64 ? "Sent since boot" : "Sent · limited counter",
+            i.counterBits == 64 ? "OS cumulative sent" : "Sent · limited counter",
             bytes(Double(i.sent))),
           DashboardRow.metric("Errors", "\(i.errors)"),
           DashboardRow.note(i.addresses.isEmpty ? "No assigned IP address" : i.addresses),
         ]
+        if let session = i.session {
+          rows += [
+            DashboardRow.metric(
+              "Observed session received",
+              session.received.map { bytes(Double($0)) } ?? "Unavailable"),
+            DashboardRow.metric(
+              "Observed session sent", session.sent.map { bytes(Double($0)) } ?? "Unavailable"),
+            DashboardRow.note(
+              "Session baseline: \(session.started.formatted(date: .abbreviated, time: .standard))"
+                + (session.rebased ? " · counter/source rebase" : "")),
+          ]
+        }
         if i.counterBits != 64 {
           rows.append(
             .note(
@@ -471,7 +485,7 @@ final class DashboardController: NSViewController {
       }
       rows.append(
         DashboardRow.note(
-          "Virtual tunnels may count the same traffic again; aggregate totals include active interfaces. Public IP lookup is off. Per-process traffic collection remains unimplemented."
+          "Virtual tunnels may count the same traffic again. Choose aggregate interfaces in Network Settings; all interfaces remain sampled and displayed. Observed sessions rebase after unavailable/reset/disappearing counters. Public IP lookup is off. Per-process traffic collection remains unimplemented."
         ))
       return rows
     case .sensors:
@@ -608,10 +622,12 @@ final class DashboardController: NSViewController {
           "Pressure", w.pressure.map { String(format: "%.0f hPa", $0) } ?? "Unavailable"),
         DashboardRow.metric(
           "Cloud cover", w.cloud.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
+        DashboardRow.note(w.timeContext.description),
         DashboardRow.heading("Next 24 hours"),
       ]
       let f = DateFormatter()
       f.dateFormat = "EEE HH:mm"
+      f.timeZone = w.timeContext.instantZone
       for h in w.hours.filter({ $0.date >= Date().addingTimeInterval(-3600) }).prefix(24) {
         rows += [
           DashboardRow.metric(
@@ -622,6 +638,7 @@ final class DashboardController: NSViewController {
       }
       rows += [DashboardRow.heading("Daily forecast")]
       f.dateFormat = "EEE d MMM"
+      f.timeZone = w.timeContext.dailyZone
       for d in w.days {
         rows += [
           DashboardRow.metric(
@@ -633,6 +650,7 @@ final class DashboardController: NSViewController {
         ]
         let t = DateFormatter()
         t.timeStyle = .short
+        t.timeZone = w.timeContext.instantZone
         if let sunrise = d.sunrise, let sunset = d.sunset {
           rows += [
             DashboardRow.metric(

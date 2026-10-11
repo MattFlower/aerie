@@ -9,16 +9,19 @@ private final class SyntheticMapProtocol: URLProtocol {
   static var stopped: XCTestExpectation?
   static var payload: Data?
   static var status = 200
+  static var chunks: [Data]?
+  static var headers: [String: String]?
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
   override func startLoading() {
     Self.started?.fulfill()
     if let data = Self.payload, let url = request.url,
       let response = HTTPURLResponse(
-        url: url, statusCode: Self.status, httpVersion: nil, headerFields: nil)
+        url: url, statusCode: Self.status, httpVersion: nil, headerFields: Self.headers)
     {
       client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-      client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+      for chunk in Self.chunks ?? [data] { client?.urlProtocol(self, didLoad: chunk) }
+      client?.urlProtocolDidFinishLoading(self)
     }
   }
   override func stopLoading() { Self.stopped?.fulfill() }
@@ -26,7 +29,8 @@ private final class SyntheticMapProtocol: URLProtocol {
 final class MapClientTests: XCTestCase {
   override func tearDown() {
     SyntheticMapProtocol.started = nil; SyntheticMapProtocol.stopped = nil
-    SyntheticMapProtocol.payload = nil; SyntheticMapProtocol.status = 200; super.tearDown()
+    SyntheticMapProtocol.payload = nil; SyntheticMapProtocol.status = 200
+    SyntheticMapProtocol.chunks = nil; SyntheticMapProtocol.headers = nil; super.tearDown()
   }
   @MainActor func testCloseCancelsInflightRequestAndRejectsFurtherRequests() async {
     let configuration = URLSessionConfiguration.ephemeral;
@@ -89,6 +93,39 @@ final class MapClientTests: XCTestCase {
       } catch {}
       client.close()
     }
+  }
+  @MainActor func testChunkedBodiesAreBoundedBeforeAccumulationAndDoNotPoisonNextRequest()
+    async throws
+  {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [SyntheticMapProtocol.self]
+    let client = MapHTTPClient(configuration: configuration); defer { client.close() }
+    SyntheticMapProtocol.payload = Data()
+    SyntheticMapProtocol.chunks = [
+      Data(repeating: 1, count: 1_500_000), Data(repeating: 2, count: 500_001),
+    ]
+    do {
+      _ = try await client.data(WeatherMapKind.radar.endpoint);
+      XCTFail("Unknown-length body must stop at the byte limit")
+    } catch MapError.oversized {} catch { XCTFail("Unexpected failure: \(error)") }
+    SyntheticMapProtocol.chunks = [Data("first".utf8), Data("second".utf8)]
+    let resumed = try await client.data(WeatherMapKind.radar.endpoint)
+    XCTAssertEqual(resumed, Data("firstsecond".utf8))
+  }
+  @MainActor func testAdvertisedOversizedBodyIsRejectedAndExactLimitIsAccepted() async throws {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [SyntheticMapProtocol.self]
+    let client = MapHTTPClient(configuration: configuration); defer { client.close() }
+    SyntheticMapProtocol.payload = Data("small body".utf8)
+    SyntheticMapProtocol.headers = ["Content-Length": "2000001"]
+    do {
+      _ = try await client.data(WeatherMapKind.radar.endpoint);
+      XCTFail("Oversized header must fail")
+    } catch MapError.oversized {} catch { XCTFail("Unexpected failure: \(error)") }
+    SyntheticMapProtocol.headers = nil
+    SyntheticMapProtocol.payload = Data(repeating: 0, count: MapHTTPClient.maximumResponseBytes)
+    let data = try await client.data(WeatherMapKind.radar.endpoint)
+    XCTAssertEqual(data.count, MapHTTPClient.maximumResponseBytes)
   }
   func testRedirectsCannotEscapeProviderHTTPSAllowlist() {
     let client = MapHTTPClient(); let session = URLSession(configuration: .ephemeral)

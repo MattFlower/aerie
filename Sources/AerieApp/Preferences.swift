@@ -172,6 +172,23 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       "Assign each item a different order. You can also Command-drag visible items in the macOS menu bar. Hiding an item does not remove its data from the combined dashboard.",
       y: 492, in: menus, height: 60)
 
+    let network = tab("Network", in: tabs)
+    label(
+      "Interface collection stays complete. Choose which active interfaces feed aggregate bandwidth, history and download/upload rules.",
+      y: 18, in: network, height: 60)
+    toggle(
+      "networkAll", title: "Aggregate all active interfaces",
+      value: settings.networkInterfaces == nil, y: 92, in: network)
+    field(
+      "networkNames", title: "Selected interface names",
+      value: settings.networkInterfaces?.joined(separator: ", ") ?? "", y: 136, in: network)
+    label(
+      "Enter comma-separated names from the Network dashboard, for example en0. Virtual tunnels can duplicate physical-interface traffic; select one side when you want to avoid summing the same traffic twice. Inactive or missing selected interfaces do not contribute. All interfaces are still read at the chosen interval and remain visible.",
+      y: 185, in: network, height: 110)
+    label(
+      "Changing aggregate selection clears only the download/upload history series and resets rule sustain state, so old scope cannot be presented as the new scope. Other histories remain. Per-interface session totals start at first observation and rebase on counter resets, source changes, interface disappearance or a failed read.",
+      y: 310, in: network, height: 100)
+
     let weather = tab("Weather", in: tabs)
     label("Optional Open-Meteo weather", y: 18, in: weather)
     label(
@@ -324,6 +341,11 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.normalizedProcessCPU = toggles["normalizedCPU"]!.state == .on
     s.binaryBytes = toggles["binary"]!.state == .on
     s.networkBits = toggles["bits"]!.state == .on
+    s.networkInterfaces =
+      toggles["networkAll"]!.state == .on
+      ? nil
+      : fields["networkNames"]!.stringValue.split(separator: ",", omittingEmptySubsequences: false)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     s.compactSpacing = toggles["spacing"]!.state == .on
     s.sensorSampling = choices["sensors"]!.indexOfSelectedItem == 0 ? .all : .whenNeeded
     s.combined = toggles["combined"]!.state == .on

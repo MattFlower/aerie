@@ -22,10 +22,41 @@ public struct WeatherDay: Equatable {
   public var uv: Double?
   public var precipitation: Double?
 }
+/// Unix timestamps are instants; daily boundaries retain the provider's response offset.
+public struct WeatherTimeContext: Equatable {
+  public let identifier: String?
+  public let offsetSeconds: Int?
+  public init(identifier: String?, offsetSeconds: Int?) {
+    self.identifier = identifier.flatMap {
+      $0.utf8.count <= 128 && TimeZone(identifier: $0) != nil ? $0 : nil
+    }
+    self.offsetSeconds = offsetSeconds.flatMap { (-64800...64800).contains($0) ? $0 : nil }
+  }
+  public var instantZone: TimeZone {
+    identifier.flatMap(TimeZone.init(identifier:))
+      ?? offsetSeconds.flatMap(TimeZone.init(secondsFromGMT:)) ?? TimeZone(secondsFromGMT: 0)!
+  }
+  public var dailyZone: TimeZone {
+    offsetSeconds.flatMap(TimeZone.init(secondsFromGMT:)) ?? instantZone
+  }
+  public var description: String {
+    if let identifier {
+      return "Forecast times in \(identifier). Daily dates follow the provider's forecast days."
+    }
+    if let offsetSeconds {
+      let minutes = abs(offsetSeconds) / 60
+      let offset = String(
+        format: "UTC%@%02d:%02d", offsetSeconds < 0 ? "−" : "+", minutes / 60, minutes % 60)
+      return "Forecast times use \(offset). Daylight saving adjustments unavailable."
+    }
+    return "Forecast timezone unavailable; times shown in UTC."
+  }
+}
 public struct WeatherReport {
   public var source: String
   public var attributionURL: String
   public var fetched: Date
+  public var timeContext: WeatherTimeContext
   public var temperature: Double?
   public var apparent: Double?
   public var humidity: Double?
@@ -153,12 +184,16 @@ public struct OpenMeteoProvider: WeatherProvider {
     }
     return WeatherReport(
       source: "Open-Meteo", attributionURL: "https://open-meteo.com/", fetched: fetched,
+      timeContext: WeatherTimeContext(
+        identifier: payload.timezone, offsetSeconds: payload.utc_offset_seconds),
       temperature: temperature, apparent: c.apparent_temperature, humidity: c.relative_humidity_2m,
       wind: c.wind_speed_10m, gusts: c.wind_gusts_10m, direction: c.wind_direction_10m,
       pressure: c.surface_pressure, cloud: c.cloud_cover, code: c.weather_code,
       hours: hours, days: days, alerts: [])
   }
   private struct Payload: Decodable {
+    var timezone: String?
+    var utc_offset_seconds: Int?
     var current: Current
     var hourly: Hourly?
     var daily: Daily?

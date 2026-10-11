@@ -87,6 +87,8 @@ public struct Settings: Codable, Equatable {
   public var temperature = TemperatureUnit.celsius
   public var binaryBytes = true
   public var networkBits = false
+  public var networkInterfaces: [String]?
+  public var networkSelection: NetworkSelection { NetworkSelection(names: networkInterfaces) }
   public var compactSpacing = false
   // Optional for old configurations. Full sampling remains the default until explicitly changed.
   public var sensorSampling: SensorSamplingMode?
@@ -102,6 +104,7 @@ public struct Settings: Codable, Equatable {
   public init() {}
   public func validated() throws -> Settings {
     guard schema == 1, [0.5, 1, 2, 3, 5].contains(interval), (1...20).contains(processCount),
+      networkSelection.valid,
       menus.count <= Module.allCases.count,
       Set(menus.map(\.module)).count == menus.count,
       menus.contains(where: \.visible), clockFormat.count <= 80,

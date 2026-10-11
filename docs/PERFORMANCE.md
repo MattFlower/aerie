@@ -25,6 +25,12 @@ Raw output contains process names and should stay outside the repository. `footp
 
 Report median, 95th percentile, and peak physical footprint, CPU, and wakeup rate. Match scenario conditions across runs. Background workload and system compression can affect measurements. A favorable early sample does not satisfy feature-complete acceptance.
 
+## Network scope and counter continuity
+
+Native interface collection remains complete at the chosen system interval. Network Settings can select which active interfaces feed aggregate bandwidth, history and download/upload rules; unselected interfaces are still sampled and displayed. The default sums all active interfaces, which can duplicate traffic through virtual tunnels. Choosing one side avoids that aggregation duplication without reducing collection. Changing scope clears only download/upload history and their pending aggregates, preserving CPU, temperature and other series.
+
+Observed session totals begin at zero at each interface's first reading; prelaunch cumulative traffic is not credited. Counter rollback/wrap or a 32/64-bit source change rebases that interface at zero and shows a new baseline time. Disappearance or a failed complete interface read clears its observation session. These are per-interface observed sessions, not a permanent whole-machine usage ledger. Source failures stay unavailable. Synthetic tests cover large 64-bit cumulative values, source continuity, missing interfaces, scope changes and isolated history clearing. Full-interface native regressions remain mandatory for every build.
+
 ## Sensor sampling configuration
 
 Full hardware-sensor sampling remains the default for new and legacy settings. Every supported source is read at the chosen system interval; failed readings stay in the inventory with unavailable values. An explicit General Settings option can defer fans, power, voltage and current until the Sensors panel needs them. It always samples every temperature at the original interval because maximum-temperature history and threshold rules require them. Opening Sensors restores all families at that same cadence; closing it removes deferred live values instead of reusing stale values or treating them as zero. There is no automatic battery/low-power sampling reduction.
@@ -34,3 +40,5 @@ Disclose this option in every measurement. A run using on-demand sensor families
 ## CI cost boundary
 
 As verified on 2026-10-11, [GitHub documentation](https://docs.github.com/en/billing/concepts/product-billing/github-actions) makes standard GitHub-hosted runners free for public repositories. Larger runners are billed. CI uses `macos-15`, read-only repository permissions, no Actions artifact/cache uploads, a timeout, and concurrency cancellation. It skips when the repository is private. Account billing APIs may require an additional scope; no credentials or budgets are changed to obtain it.
+
+Map HTTP transfers enforce their response byte budget while receiving chunks, including unknown-length responses. A rejected body does not enter the raster cache; suspension cancels in-flight and paced work. Synthetic tests cover exact-limit responses, oversize headers, chunk overflow, cancellation and subsequent recovery. Real active/post-close peaks remain pending.

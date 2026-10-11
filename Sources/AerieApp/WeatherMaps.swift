@@ -2,7 +2,27 @@ import AerieCore
 import AppKit
 import ImageIO
 
-final class MapHTTPClient: NSObject, URLSessionTaskDelegate {
+private final class MapRequestCancellation {
+  private let lock = NSLock()
+  private var task: URLSessionTask?
+  private var cancelled = false
+  func bind(_ task: URLSessionTask) {
+    lock.lock(); self.task = task; let shouldCancel = cancelled; lock.unlock()
+    if shouldCancel { task.cancel() }
+  }
+  func cancel() {
+    lock.lock(); cancelled = true; let task = task; lock.unlock(); task?.cancel()
+  }
+}
+final class MapHTTPClient: NSObject, URLSessionDataDelegate {
+  private final class Pending {
+    var data = Data()
+    let continuation: CheckedContinuation<Data, Error>
+    init(_ continuation: CheckedContinuation<Data, Error>) { self.continuation = continuation }
+  }
+  static let maximumResponseBytes = 2_000_000
+  private let pendingLock = NSLock()
+  private var pending: [ObjectIdentifier: Pending] = [:]
   private var session: URLSession?
   private var closed = false
   private var generation = 0
@@ -31,13 +51,57 @@ final class MapHTTPClient: NSObject, URLSessionTaskDelegate {
     var request = URLRequest(url: url)
     request.setValue(
       "Aerie/0.1 (+https://github.com/MattFlower/aerie)", forHTTPHeaderField: "User-Agent")
-    let (data, response) = try await session.data(for: request)
+    let cancellation = MapRequestCancellation()
+    let data: Data = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let task = session.dataTask(with: request)
+        pendingLock.lock(); pending[ObjectIdentifier(task)] = Pending(continuation);
+        pendingLock.unlock()
+        cancellation.bind(task); task.resume()
+      }
+    } onCancel: {
+      cancellation.cancel()
+    }
     try Task.checkCancellation()
     guard !closed, generation == token else { throw CancellationError() }
+    return data
+  }
+  private func finish(_ task: URLSessionTask, result: Result<Data, Error>) {
+    pendingLock.lock(); let entry = pending.removeValue(forKey: ObjectIdentifier(task));
+    pendingLock.unlock()
+    entry?.continuation.resume(with: result)
+  }
+  func urlSession(
+    _ session: URLSession, dataTask: URLSessionDataTask,
+    didReceive response: URLResponse,
+    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+  ) {
     guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-      throw MapError.invalidResponse
+      finish(dataTask, result: .failure(MapError.invalidResponse)); completionHandler(.cancel);
+      return
     }
-    guard data.count <= 2_000_000 else { throw MapError.oversized }; return data
+    guard response.expectedContentLength <= Int64(Self.maximumResponseBytes) else {
+      finish(dataTask, result: .failure(MapError.oversized)); completionHandler(.cancel); return
+    }
+    completionHandler(.allow)
+  }
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    pendingLock.lock()
+    let entry = pending[ObjectIdentifier(dataTask)]
+    let oversized = entry.map { data.count > Self.maximumResponseBytes - $0.data.count } ?? false
+    if !oversized { entry?.data.append(data) }
+    pendingLock.unlock()
+    if oversized { finish(dataTask, result: .failure(MapError.oversized)); dataTask.cancel() }
+  }
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    pendingLock.lock(); let entry = pending.removeValue(forKey: ObjectIdentifier(task));
+    pendingLock.unlock()
+    guard let entry else { return }
+    if let error {
+      entry.continuation.resume(throwing: error)
+    } else {
+      entry.continuation.resume(returning: entry.data)
+    }
   }
   func urlSession(
     _ session: URLSession, task: URLSessionTask,

@@ -74,6 +74,22 @@ public struct HistoryStore {
     recent = RingBuffer<HistoryPoint>(capacity: max(1, Int(600 / max(0.5, interval))))
     for value in values.suffix(recent.capacity) { recent.append(value) }
   }
+  /// Changing an aggregate's source scope invalidates that series, while preserving unrelated metrics.
+  public mutating func removeMetrics(_ keys: Set<String>) {
+    func cleaned(_ ring: RingBuffer<HistoryPoint>) -> RingBuffer<HistoryPoint> {
+      var result = RingBuffer<HistoryPoint>(capacity: ring.capacity)
+      for point in ring.values {
+        result.append(
+          HistoryPoint(date: point.date, values: point.values.filter { !keys.contains($0.key) }))
+      }
+      return result
+    }
+    recent = cleaned(recent); minutes = cleaned(minutes); hours = cleaned(hours)
+    for key in keys {
+      minuteSums.removeValue(forKey: key); minuteCounts.removeValue(forKey: key)
+      hourSums.removeValue(forKey: key); hourCounts.removeValue(forKey: key)
+    }
+  }
   public mutating func append(_ point: HistoryPoint) {
     let minute = Int(point.date.timeIntervalSince1970 / 60)
     let hour = minute / 60

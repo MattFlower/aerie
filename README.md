@@ -22,7 +22,7 @@ The build is ad-hoc signed for local development. It is not notarized or submitt
 - Driver-exposed GPU utilization, rendering/tiling activity, and shared-memory use.
 - Memory categories, OS pressure state, compression, swap, paging, and top process footprints.
 - Local/removable/network volume capacity, physical disk activity, and process disk I/O.
-- Interface throughput, cumulative totals, local addresses, errors, passive connectivity, and available Wi-Fi details.
+- Complete interface throughput, cumulative and observed-session totals, aggregate interface selection, local addresses, errors, passive connectivity, and available Wi-Fi details.
 - Read-only firmware temperature, fan, power, voltage, and current sensors where exposed by the hardware; full sampling by default with an explicit on-demand option for non-temperature families.
 - Battery charge, time, health, cycles, electrical details, and supported peripheral batteries.
 - Local/world clocks, monthly calendar, optional local calendar events, and approximate lunar phase.

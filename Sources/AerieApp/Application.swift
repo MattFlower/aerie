@@ -86,7 +86,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
     collector = nil
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
-  private func receive(_ snapshot: Snapshot) {
+  private func receive(_ reading: Snapshot) {
+    var snapshot = reading; snapshot.networkSelection = settings.networkSelection
     self.snapshot = snapshot
     let metrics = snapshot.metrics
     history.append(HistoryPoint(date: snapshot.date, values: metrics))
@@ -329,7 +330,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
   private func apply(_ settings: Settings) {
     guard let valid = try? settings.validated() else { return }
     let weatherChanged = self.settings.weather != valid.weather
+    let networkChanged = self.settings.networkSelection != valid.networkSelection
     self.settings = valid
+    snapshot.networkSelection = valid.networkSelection
+    if networkChanged { history.removeMetrics(["download", "upload"]) }
     history.configure(interval: valid.interval)
     if let data = try? JSONEncoder().encode(valid) { defaults.set(data, forKey: "settings") }
     collector?.configure(valid)

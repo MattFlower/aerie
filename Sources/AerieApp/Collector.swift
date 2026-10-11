@@ -48,6 +48,7 @@ final class Collector {
   }
   private var previousCPU: [UInt64] = []
   private var counters: [String: CounterSample] = [:]
+  private var networkSession = NetworkSessionTracker()
   private var previousProcesses: [Int32: AerieProcess] = [:]
   private var processTime: Double?
   private var sensorSources:
@@ -215,6 +216,7 @@ final class Collector {
     var interfaces = [AerieInterface](repeating: AerieInterface(), count: 128)
     let networkCount = Int(aerie_interfaces(&interfaces, 128))
     snapshot.networkAvailable = networkCount >= 0
+    snapshot.networkSelection = settings.networkSelection
     snapshot.interfaces = interfaces.prefix(max(0, networkCount)).map {
       let name = text($0.name)
       if let previous = cache.interfaces.first(where: { $0.name == name }),
@@ -229,9 +231,18 @@ final class Collector {
         counterBits: Int($0.counter_bits))
     }
     if networkCount < 0 {
+      networkSession.reset()
       for key in counters.keys where key.hasSuffix(".in") || key.hasSuffix(".out") {
         counters.removeValue(forKey: key)
       }
+    }
+    let sessions = networkSession.update(
+      snapshot.interfaces.map {
+        NetworkCounterRecord(
+          name: $0.name, received: $0.received, sent: $0.sent, bits: $0.counterBits)
+      }, date: snapshot.date)
+    for index in snapshot.interfaces.indices {
+      snapshot.interfaces[index].session = sessions[snapshot.interfaces[index].name]
     }
     var reads: UInt64 = 0
     var writes: UInt64 = 0
