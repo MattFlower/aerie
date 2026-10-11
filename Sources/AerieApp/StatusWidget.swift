@@ -223,4 +223,38 @@ extension MenuRenderer {
     image.isTemplate = descriptor.colorHex == nil
     return image
   }
+  /// A combined dashboard retains one action while its network component uses reserved columns.
+  static func combinedWidgets(
+    _ descriptors: [StatusWidget], compactSpacing: Bool,
+    leading: NSImage? = nil
+  ) -> NSImage {
+    let widgets = Array(descriptors.prefix(6))
+    let padding: CGFloat = compactSpacing ? 1 : 4, gap: CGFloat = compactSpacing ? 2 : 6
+    let images = widgets.map { widget($0, padding: padding) }
+    let leadingWidth = leading.map { min(24, max(0, $0.size.width)) } ?? 0
+    let prefix = leadingWidth > 0 ? leadingWidth + gap : 0
+    let width = max(
+      20, prefix + images.reduce(0) { $0 + $1.size.width } + CGFloat(max(0, images.count - 1)) * gap
+    )
+    let image = NSImage(size: NSSize(width: width, height: 20), flipped: true) { _ in
+      if let leading, leadingWidth > 0 {
+        let rect = NSRect(x: 0, y: 1, width: leadingWidth, height: 18)
+        leading.draw(in: rect)
+        if let color = color(widgets.first?.colorHex),
+          let context = NSGraphicsContext.current?.cgContext
+        {
+          context.saveGState(); context.setBlendMode(.sourceAtop)
+          context.setFillColor(color.cgColor); context.fill(rect); context.restoreGState()
+        }
+      }
+      var x = prefix
+      for part in images {
+        part.draw(in: NSRect(x: x, y: 0, width: part.size.width, height: 20));
+        x += part.size.width + gap
+      }
+      return true
+    }
+    image.isTemplate = widgets.allSatisfy { $0.colorHex == nil }; return image
+  }
+
 }

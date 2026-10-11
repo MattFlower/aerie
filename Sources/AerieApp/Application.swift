@@ -11,6 +11,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private var items: [(MenuConfiguration, NSStatusItem)] = []
   private var groupedStatus: GroupedStatusView?
   private var widgetValues: [Module: StatusWidget] = [:]
+  private var combinedWidgetValues: [StatusWidget] = []
   private var currentMenuModule: Module?
   private var collector: Collector?
   private var snapshot = Snapshot()
@@ -499,7 +500,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   }
   private func rebuildItems() {
     groupedStatus?.releaseContent(); groupedStatus?.removeFromSuperview(); groupedStatus = nil;
-    widgetValues.removeAll()
+    widgetValues.removeAll(); combinedWidgetValues.removeAll()
     for (_, item) in items { NSStatusBar.system.removeStatusItem(item) }
     items.removeAll()
     graphValues.removeAll(); stackedValues.removeAll()
@@ -645,6 +646,27 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         }
         continue
       }
+      if settings.visibleCombinedModules.contains(.network) {
+        let descriptors = settings.visibleCombinedModules.map { selected in
+          widget(
+            MenuConfiguration(
+              module: selected, style: configuration.style,
+              colorHex: configuration.colorHex,
+              labelPlacement: settings.menus.first(where: { $0.module == selected })?.labelPlacement
+            ))
+        }
+        if combinedWidgetValues != descriptors {
+          let image = MenuRenderer.combinedWidgets(
+            descriptors,
+            compactSpacing: settings.compactSpacing, leading: ridgeMark)
+          button.title = ""; button.image = image; item.length = image.size.width
+          button.contentTintColor = MenuRenderer.color(configuration.colorHex)
+          let accessible = descriptors.map(\.accessibility).joined(separator: " · ")
+          button.setAccessibilityValue(accessible); button.toolTip = "Aerie: " + accessible
+          combinedWidgetValues = descriptors
+        }
+        continue
+      }
       let components = (settings.combined ? settings.visibleCombinedModules : [module]).map {
         menuValue($0)
       }
@@ -726,11 +748,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         compact: snapshot.volumes.first.map { Format.percent($0.usedFraction) } ?? "—",
         secondary: "R " + shortRate(snapshot.diskRead) + " W " + shortRate(snapshot.diskWrite))
     case .network:
-      return MenuValue(
-        full: "Download " + networkMenuRate(snapshot.download) + ", upload "
-          + networkMenuRate(snapshot.upload),
-        secondary: "↑" + networkMenuRate(snapshot.upload),
-        stackedPrimary: "↓" + networkMenuRate(snapshot.download))
+      return MenuValue.network(
+        download: networkMenuRate(snapshot.download),
+        upload: networkMenuRate(snapshot.upload))
     case .sensors:
       let temperatures = snapshot.sensors.filter { $0.unit == "°C" && $0.state == .live }
         .compactMap(\.value)

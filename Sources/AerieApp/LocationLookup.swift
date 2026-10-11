@@ -4,13 +4,13 @@ import Foundation
 struct LocationChoice: Equatable {
   let name: String
   let latitude, longitude: Double
-  let zone: String
+  let zone: String?
   var valid: Bool {
     !name.isEmpty && name.utf8.count <= 256
       && !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
       && latitude.isFinite && longitude.isFinite
       && (-90...90).contains(latitude) && (-180...180).contains(longitude)
-      && TimeZone(identifier: zone) != nil
+      && (zone == nil || zone.flatMap(TimeZone.init(identifier:)) != nil)
   }
 }
 enum LocationLookupError: Error {
@@ -111,7 +111,7 @@ final class NativeLocationLookup: NSObject, LocationLookupProvider, CLLocationMa
           let choice = LocationChoice(
             name: String((name.isEmpty ? text : name).prefix(64)),
             latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
-            zone: placemark.timeZone?.identifier ?? TimeZone.autoupdatingCurrent.identifier)
+            zone: placemark.timeZone?.identifier)
           return choice.valid ? choice : nil
         }
         self.finish(error == nil && !choices.isEmpty ? .success(choices) : .failure(.unavailable))
@@ -141,6 +141,7 @@ final class LocationLookupSession {
   private let factory: () -> LocationLookupProvider
   private var provider: LocationLookupProvider?
   private var generation = 0
+  var isPending: Bool { provider != nil }
   init(factory: @escaping () -> LocationLookupProvider = { NativeLocationLookup() }) {
     self.factory = factory
   }

@@ -51,4 +51,14 @@ final class MenuPresentationTests: XCTestCase {
     let triple = MenuPresentation.stacked([cpu, memory, network]);
     XCTAssertEqual(triple.0, "CPU 20% · MEM 40%"); XCTAssertEqual(triple.1, "↓10K ↑2K")
   }
+  func testNetworkBriefAndAccessibleValuesStayDistinctForLegacyCombinedConsumers() {
+    let value = MenuValue.network(download: "12 KiB/s", upload: "34 MiB/s")
+    XCTAssertEqual(value.full, "Download 12 KiB/s, upload 34 MiB/s")
+    XCTAssertEqual(value.compact, "↓12 KiB/s ↑34 MiB/s")
+    XCTAssertEqual(MenuPresentation.combined([value], compact: true), "↓12 KiB/s ↑34 MiB/s")
+    XCTAssertEqual(MenuPresentation.stacked([value]).0, "↓12 KiB/s")
+    XCTAssertEqual(MenuPresentation.stacked([value]).1, "↑34 MiB/s")
+    XCTAssertEqual(MenuValue.network(download: "—", upload: "—").compact, "↓— ↑—")
+  }
+
 }

@@ -102,4 +102,136 @@ final class LocationLookupTests: XCTestCase {
     ] { XCTAssertFalse(point.valid) }
   }
 
+  func testManualLocationEditCancelsLookupAndLateResultCannotReplaceTheDraft() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      var settings = Settings(); settings.weather.name = "Original public fixture";
+      settings.weather.latitude = 10; settings.weather.longitude = 20
+      let controller = PreferencesController(settings: settings); defer { controller.close() }
+      let provider = Provider(); controller.locationSession = LocationLookupSession { provider }
+      let controls = try preferenceControls(controller)
+      let find = try XCTUnwrap(
+        controls.compactMap { $0 as? NSButton }.first { $0.title == "Find Location" })
+      find.performClick(nil); XCTAssertTrue(controller.locationSession.isPending)
+      let latitude = try XCTUnwrap(
+        controls.compactMap { $0 as? NSTextField }.first {
+          $0.accessibilityLabel() == "Latitude (−90…90)"
+        })
+      latitude.stringValue = "11"
+      controller.controlTextDidChange(
+        Notification(name: NSControl.textDidChangeNotification, object: latitude))
+      XCTAssertFalse(controller.locationSession.isPending); XCTAssertEqual(provider.cancelled, 1)
+      provider.callback?(
+        .success([
+          LocationChoice(name: "Late public fixture", latitude: 44, longitude: 55, zone: "Etc/UTC")
+        ]))
+      XCTAssertEqual(latitude.stringValue, "11")
+      var applied: Settings?; controller.onApply = { applied = $0 }
+      try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first { $0.title == "Apply" })
+        .performClick(nil)
+      XCTAssertEqual(applied?.weather.latitude, 11);
+      XCTAssertEqual(applied?.weather.name, "Original public fixture")
+      XCTAssertFalse(applied?.weather.enabled ?? true);
+      XCTAssertFalse(applied?.weather.mapsEnabled ?? true)
+    }
+  }
+  func testApplyCancelsPendingLookupBeforeSavingAndRejectsItsLateResult() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      var settings = Settings(); settings.weather.name = "Original public fixture";
+      settings.weather.latitude = 10; settings.weather.longitude = 20
+      let controller = PreferencesController(settings: settings); defer { controller.close() }
+      let provider = Provider(); controller.locationSession = LocationLookupSession { provider }
+      let controls = try preferenceControls(controller)
+      try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first { $0.title == "Find Location" })
+        .performClick(nil)
+      var applied: Settings?; controller.onApply = { applied = $0 }
+      try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first { $0.title == "Apply" })
+        .performClick(nil)
+      XCTAssertFalse(controller.locationSession.isPending); XCTAssertEqual(provider.cancelled, 1)
+      provider.callback?(
+        .success([
+          LocationChoice(name: "Late public fixture", latitude: 44, longitude: 55, zone: "Etc/UTC")
+        ]))
+      XCTAssertEqual(applied?.weather.latitude, 10)
+      let latitude = try XCTUnwrap(
+        controls.compactMap { $0 as? NSTextField }.first {
+          $0.accessibilityLabel() == "Latitude (−90…90)"
+        })
+      XCTAssertEqual(Double(latitude.stringValue), 10)
+    }
+  }
+  func testUnknownGeocoderZoneStagesWeatherAndRequiresAnExplicitDaylightZone() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let controller = PreferencesController(settings: Settings()); defer { controller.close() }
+      let point = LocationChoice(
+        name: "Synthetic remote city", latitude: 10, longitude: 20, zone: nil)
+      XCTAssertTrue(point.valid); controller.stageLocation(point)
+      let controls = try preferenceControls(controller)
+      let zone = try XCTUnwrap(
+        controls.compactMap { $0 as? NSTextField }.first {
+          $0.accessibilityLabel() == "Daylight time zone"
+        })
+      XCTAssertTrue(zone.stringValue.isEmpty)
+      XCTAssertTrue(
+        controls.compactMap { $0 as? NSTextField }.contains {
+          $0.stringValue.contains("Daylight time zone unavailable")
+        })
+      let apply = try XCTUnwrap(
+        controls.compactMap { $0 as? NSButton }.first { $0.title == "Apply" })
+      var applied: Settings?; controller.onApply = { applied = $0 }; apply.performClick(nil)
+      XCTAssertEqual(applied?.weather.latitude, 10); XCTAssertNil(applied?.daylight)
+      try XCTUnwrap(
+        controls.compactMap { $0 as? NSButton }.first {
+          $0.title == "Show offline sunrise, sunset and twilight estimates"
+        }
+      ).state = .on
+      applied = nil; apply.performClick(nil); XCTAssertNil(applied)
+      XCTAssertTrue(
+        controls.compactMap { $0 as? NSTextField }.contains {
+          $0.accessibilityLabel() == "Settings error"
+            && $0.stringValue.contains("Choose a daylight time zone")
+        })
+      zone.stringValue = "Etc/UTC"; apply.performClick(nil)
+      XCTAssertEqual(applied?.daylight?.zone, "Etc/UTC");
+      XCTAssertEqual(applied?.daylight?.latitude, 10)
+      XCTAssertFalse(applied?.weather.enabled ?? true);
+      XCTAssertFalse(applied?.weather.mapsEnabled ?? true)
+    }
+  }
+  func testUnrelatedFormatEditKeepsPendingLookupAndOptOutPreservesDaylightPoint() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let controller = PreferencesController(settings: Settings()); defer { controller.close() }
+      let provider = Provider(); controller.locationSession = LocationLookupSession { provider }
+      let controls = try preferenceControls(controller)
+      try XCTUnwrap(controls.compactMap { $0 as? NSButton }.first { $0.title == "Find Location" })
+        .performClick(nil)
+      let format = try XCTUnwrap(
+        controls.compactMap { $0 as? NSTextField }.first {
+          $0.accessibilityLabel() == "Date format"
+        })
+      controller.controlTextDidChange(
+        Notification(name: NSControl.textDidChangeNotification, object: format))
+      XCTAssertTrue(controller.locationSession.isPending)
+      try XCTUnwrap(
+        controls.compactMap { $0 as? NSButton }.first {
+          $0.title == "Use the chosen location for offline daylight too"
+        }
+      ).state = .off
+      let zone = try XCTUnwrap(
+        controls.compactMap { $0 as? NSTextField }.first {
+          $0.accessibilityLabel() == "Daylight time zone"
+        })
+      zone.stringValue = "Etc/UTC"
+      provider.callback?(
+        .success([
+          LocationChoice(name: "Synthetic remote city", latitude: 10, longitude: 20, zone: nil)
+        ]))
+      XCTAssertEqual(zone.stringValue, "Etc/UTC");
+      XCTAssertFalse(controller.locationSession.isPending)
+    }
+  }
+
 }

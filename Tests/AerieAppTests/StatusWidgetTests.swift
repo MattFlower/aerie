@@ -136,4 +136,63 @@ final class StatusWidgetTests: XCTestCase {
     }
   }
 
+  func testCombinedNetworkWidthStaysFixedAcrossStylesUnitsDigitsPauseAndUnavailable() async throws {
+    try await MainActor.run {
+      let leading = NSImage(size: NSSize(width: 14, height: 18))
+      for style in [DisplayStyle.text, .compact, .stacked] {
+        for compactSpacing in [false, true] {
+          for color in [Optional<String>.none, "#123ABC"] {
+            for modules in [[Module.network], [.cpu, .network, .memory]] {
+              var expected: NSSize?
+              for rate in [
+                "0 B/s", "9.9 KiB/s", "99.9 MiB/s", "999.9 Gbit/s", "—",
+                String(repeating: "9", count: 256) + " TiB/s",
+              ] {
+                for paused in [false, true] {
+                  let descriptors = modules.map { module in
+                    StatusWidget(
+                      module: module,
+                      value: module == .network
+                        ? MenuValue.network(download: rate, upload: rate)
+                        : MenuValue(full: module.title + " 20%", compact: "20%", secondary: "30%"),
+                      style: style, label: .automatic, colorHex: color, paused: paused)
+                  }
+                  let image = MenuRenderer.combinedWidgets(
+                    descriptors, compactSpacing: compactSpacing, leading: leading)
+                  if let expected {
+                    XCTAssertEqual(image.size, expected)
+                  } else {
+                    expected = image.size
+                  }
+                  XCTAssertEqual(image.size.height, 20);
+                  XCTAssertEqual(image.isTemplate, color == nil)
+                  XCTAssertLessThan(image.size.width, 400)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  func testCombinedNetworkRasterRetainsBothRatesAndBoundedSelectedModules() async throws {
+    try await MainActor.run {
+      let descriptors = [Module.cpu, .network, .memory, .storage, .power, .time].map { module in
+        StatusWidget(
+          module: module,
+          value: module == .network
+            ? MenuValue.network(download: "12 KiB/s", upload: "34 MiB/s")
+            : MenuValue(full: module.title + " 20%", compact: "20%", secondary: "30%"),
+          style: .stacked, label: .automatic, colorHex: nil)
+      }
+      XCTAssertTrue(descriptors[1].accessibility.contains("Download 12 KiB/s, upload 34 MiB/s"))
+      let image = MenuRenderer.combinedWidgets(descriptors, compactSpacing: true)
+      XCTAssertGreaterThan(image.size.width, 150); XCTAssertLessThan(image.size.width, 800)
+      XCTAssertNotNil(image.tiffRepresentation)
+      XCTAssertEqual(
+        MenuRenderer.combinedWidgets(descriptors + descriptors, compactSpacing: true).size,
+        image.size)
+    }
+  }
+
 }

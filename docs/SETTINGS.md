@@ -12,6 +12,6 @@ Aerie's resizable Settings window has a left sidebar and scrolling native forms.
 - **Shortcuts:** configure optional native global combinations, with conflicts reported after Apply.
 - **Permissions:** explicit notifications, calendar, Wi-Fi identity and launch-at-login actions. These choices are independent of forecast/map consent.
 
-Network menu numbers use reserved right-aligned columns, with download and upload stacked. Graphs reuse existing history. Native gauges distinguish a valid zero from unavailable data. Provider-reported weather codes or recognized NWS icon metadata choose condition icons; a missing day/night flag never implies daytime. Grouped modules retain individual mouse, keyboard and accessibility actions.
+Network menu numbers use reserved right-aligned columns, with download and upload stacked in every supported layout, including Combined dashboard. Graphs reuse existing history. Native gauges distinguish a valid zero from unavailable data. Provider-reported weather codes or recognized NWS icon metadata choose condition icons; a missing day/night flag never implies daytime. Grouped modules retain individual mouse, keyboard and accessibility actions.
 
 This presentation is a development preview. Synthetic controls and drawing tests do not establish real rendering or the memory target; see [release acceptance](ACCEPTANCE.md).

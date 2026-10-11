@@ -13,6 +13,12 @@ public enum MenuColor {
 }
 public struct MenuValue: Equatable {
   public let full, compact, secondary, stackedPrimary: String
+  public static func network(download: String, upload: String) -> MenuValue {
+    MenuValue(
+      full: "Download " + download + ", upload " + upload,
+      compact: "↓" + download + " ↑" + upload,
+      secondary: "↑" + upload, stackedPrimary: "↓" + download)
+  }
   public init(
     full: String, compact: String? = nil, secondary: String = "", stackedPrimary: String? = nil
   ) {

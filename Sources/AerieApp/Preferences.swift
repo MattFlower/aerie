@@ -1,6 +1,8 @@
 import AerieCore
 import AppKit
 
+private enum PreferencesValidationError: Error { case daylightTimeZoneRequired }
+
 final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate,
   NSTextViewDelegate
 {
@@ -146,6 +148,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     for view in [draftLabel, spacer, close, apply] { footer.addArrangedSubview(view) }
     errorLabel = NSTextField(wrappingLabelWithString: "")
     errorLabel.font = .systemFont(ofSize: 12); errorLabel.textColor = .systemRed
+    errorLabel.setAccessibilityLabel("Settings error")
     errorLabel.translatesAutoresizingMaskIntoConstraints = false; detail.view.addSubview(errorLabel)
     NSLayoutConstraint.activate([
       tabs.leadingAnchor.constraint(equalTo: detail.view.leadingAnchor),
@@ -699,11 +702,13 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
       fields["daylightName"]?.stringValue = String(point.name.prefix(64))
       fields["daylightLatitude"]?.stringValue = String(point.latitude);
       fields["daylightLongitude"]?.stringValue = String(point.longitude)
-      fields["daylightZone"]?.stringValue = point.zone
+      fields["daylightZone"]?.stringValue = point.zone ?? ""
     }
     locationPicker.isHidden = true
     locationStatus.stringValue =
-      "Location staged. Forecasts, maps and daylight each stay under their own switch. Apply to save."
+      point.zone == nil && toggles["reuseDaylightLocation"]?.state == .on
+      ? "Location staged. Daylight time zone unavailable; choose it in Date & Time before enabling daylight. Forecasts and maps remain under their own switches."
+      : "Location staged. Forecasts, maps and daylight each stay under their own switch. Apply to save."
     draftChanged()
   }
   func windowDidMiniaturize(_ notification: Notification) {
@@ -731,7 +736,24 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     }
     updateDateExample(); draftChanged()
   }
-  func controlTextDidChange(_ notification: Notification) { updateDateExample(); draftChanged() }
+  private func cancelPendingLocation() {
+    let pending = locationSession.isPending; locationSession.cancel()
+    if pending {
+      locationChoices.removeAll(); locationPicker.isHidden = true
+      locationStatus.stringValue = "Location lookup cancelled to keep your current draft."
+    }
+  }
+  func controlTextDidChange(_ notification: Notification) {
+    if let edited = notification.object as? NSTextField,
+      [
+        "locationQuery", "weatherName", "latitude", "longitude", "daylightName", "daylightLatitude",
+        "daylightLongitude", "daylightZone",
+      ].contains(where: { fields[$0] === edited })
+    {
+      cancelPendingLocation()
+    }
+    updateDateExample(); draftChanged()
+  }
   func textDidChange(_ notification: Notification) { draftChanged() }
   private func ruleSummary(_ rule: ThresholdRule) -> String {
     let key = SensorIdentity.key(metric: rule.metric)
@@ -870,6 +892,9 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
       point.latitude = latitude; point.longitude = longitude
       point.zone = fields["daylightZone"]!.stringValue.trimmingCharacters(
         in: .whitespacesAndNewlines)
+      guard TimeZone(identifier: point.zone) != nil else {
+        throw PreferencesValidationError.daylightTimeZoneRequired
+      }
       s.daylight = point
     } else {
       s.daylight = nil
@@ -915,11 +940,14 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     return try s.validated()
   }
   @objc private func applySettings() {
+    cancelPendingLocation()
     do {
       let s = try readSettings()
       settings = s
       onApply?(s)
       errorLabel.stringValue = ""; draftLabel.stringValue = "Settings applied."
+    } catch PreferencesValidationError.daylightTimeZoneRequired {
+      errorLabel.stringValue = "Choose a daylight time zone in Date & Time, or turn off daylight."
     } catch {
       errorLabel.stringValue =
         "Check values, clock names/time zones, rule cooldowns, unique menu order, #RRGGBB colors, and a visible or combined item."
