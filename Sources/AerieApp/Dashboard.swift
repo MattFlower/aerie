@@ -298,148 +298,164 @@ final class DashboardController: NSViewController {
     switch module {
     case .overview:
       return [
-        .heading("System"), .metric("CPU", Format.percent(s.cpu.total)),
-        .metric("GPU", Format.percent(s.gpu.first?.utilization)),
-        .metric("Memory used", Format.percent(s.memory.usedFraction)),
-        .metric("Memory pressure", s.memory.pressure),
-        .metric("Download", rate(s.download)), .metric("Upload", rate(s.upload)),
-        .metric("Disk read", rate(s.diskRead)), .metric("Disk write", rate(s.diskWrite)),
-        .metric("Thermal state", s.thermal),
-        .metric("Power", s.power.present ? Format.percent(s.power.percent) : "No battery"),
-        .chart("cpu", "CPU %", AeriePalette.cpu, 100),
-        .chart("memory", "Memory %", AeriePalette.memory, 100),
-        .heading("Storage"),
-      ] + s.volumes.prefix(4).map { .metric($0.name, bytes($0.free) + " free") } + [
-        .heading("Monitoring"), .metric("Refresh interval", "\(settings.interval)s"),
-        .note(
+        DashboardRow.heading("System"), DashboardRow.metric("CPU", Format.percent(s.cpu.total)),
+        DashboardRow.metric("GPU", Format.percent(s.gpu.first?.utilization)),
+        DashboardRow.metric("Memory used", Format.percent(s.memory.usedFraction)),
+        DashboardRow.metric("Memory pressure", s.memory.pressure),
+        DashboardRow.metric("Download", rate(s.download)),
+        DashboardRow.metric("Upload", rate(s.upload)),
+        DashboardRow.metric("Disk read", rate(s.diskRead)),
+        DashboardRow.metric("Disk write", rate(s.diskWrite)),
+        DashboardRow.metric("Thermal state", s.thermal),
+        DashboardRow.metric(
+          "Power", s.power.present ? Format.percent(s.power.percent) : "No battery"),
+        DashboardRow.chart("cpu", "CPU %", AeriePalette.cpu, 100),
+        DashboardRow.chart("memory", "Memory %", AeriePalette.memory, 100),
+        DashboardRow.heading("Storage"),
+      ] + s.volumes.prefix(4).map { DashboardRow.metric($0.name, bytes($0.free) + " free") } + [
+        DashboardRow.heading("Monitoring"),
+        DashboardRow.metric("Refresh interval", "\(settings.interval)s"),
+        DashboardRow.note(
           "All enabled system collectors share one scheduler. History is bounded to ten minutes, one day of minute averages, and one week of hourly averages."
         ),
       ]
     case .cpu:
       return [
-        .heading("Processor"), .metric("Total", Format.percent(s.cpu.total)),
-        .metric("User", Format.percent(s.cpu.user)),
-        .metric("System", Format.percent(s.cpu.system)),
-        .chart("cpu", "CPU %", AeriePalette.cpu, 100),
-        .heading("Logical cores"), .cores(s.cpu.cores),
-      ] + s.cpu.groups.map { .metric($0.0, "\($0.1) logical cores") } + [
-        .metric(
+        DashboardRow.heading("Processor"),
+        DashboardRow.metric("Total", Format.percent(s.cpu.total)),
+        DashboardRow.metric("User", Format.percent(s.cpu.user)),
+        DashboardRow.metric("System", Format.percent(s.cpu.system)),
+        DashboardRow.chart("cpu", "CPU %", AeriePalette.cpu, 100),
+        DashboardRow.heading("Logical cores"), DashboardRow.cores(s.cpu.cores),
+      ] + s.cpu.groups.map { DashboardRow.metric($0.0, "\($0.1) logical cores") } + [
+        DashboardRow.metric(
           "Frequency", s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
-        .metric(
+        DashboardRow.metric(
           "Load 1 / 5 / 15 min",
           s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")),
-        .metric("Uptime", Format.duration(s.cpu.uptime)), .heading("Top CPU processes"),
+        DashboardRow.metric("Uptime", Format.duration(s.cpu.uptime)),
+        DashboardRow.heading("Top CPU processes"),
       ] + top({ ($0.cpu ?? 0) > ($1.cpu ?? 0) }, value: { Format.percent($0.cpu) }) + [
-        .note(
+        DashboardRow.note(
           "Dynamic core frequencies and group residency require telemetry this OS may restrict. Counts above describe topology; individual bars show actual logical-core utilization."
         )
       ]
     case .gpu:
-      var rows: [DashboardRow] = [.chart("gpu", "GPU %", AeriePalette.cpu, 100)]
+      var rows: [DashboardRow] = [DashboardRow.chart("gpu", "GPU %", AeriePalette.cpu, 100)]
       for gpu in s.gpu {
         rows += [
-          .heading(gpu.name), .metric("Device utilization", Format.percent(gpu.utilization)),
-          .metric("Renderer", Format.percent(gpu.renderer)),
-          .metric("Tiler", Format.percent(gpu.tiler)),
-          .metric("In-use shared memory", gpu.memory.map(bytes) ?? "Unavailable"),
-          .metric(
+          DashboardRow.heading(gpu.name),
+          DashboardRow.metric("Device utilization", Format.percent(gpu.utilization)),
+          DashboardRow.metric("Renderer", Format.percent(gpu.renderer)),
+          DashboardRow.metric("Tiler", Format.percent(gpu.tiler)),
+          DashboardRow.metric(
+            "In-use shared memory", gpu.memory.map { self.bytes($0) } ?? "Unavailable"),
+          DashboardRow.metric(
             "Temperature",
             gpu.temperature.map { Format.temperature($0, unit: settings.temperature) }
               ?? "Unavailable"),
-          .metric(
+          DashboardRow.metric(
             "Frequency", gpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
-          .metric("Frame rate", gpu.fps.map { String(format: "%.0f FPS", $0) } ?? "Unavailable"),
+          DashboardRow.metric(
+            "Frame rate", gpu.fps.map { String(format: "%.0f FPS", $0) } ?? "Unavailable"),
         ]
       }
       rows.append(
-        .note(
+        DashboardRow.note(
           "Driver-exposed statistics vary by GPU. Global FPS and per-process GPU utilization are unavailable when the driver does not publish them."
         ))
       return rows
     case .memory:
       let m = s.memory
       return [
-        .heading("Memory"), .metric("Pressure", m.pressure),
-        .metric("Used", Format.percent(m.usedFraction)),
-        .chart("memory", "Used memory %", AeriePalette.memory, 100),
-        .metric("Physical", bytes(m.total)),
-        .metric("App", bytes(m.app)), .metric("Wired", bytes(m.wired)),
-        .metric("Compressed", bytes(m.compressed)),
-        .metric("Free", bytes(m.free)), .metric("File cache", bytes(m.cached)),
-        .metric("Purgeable", bytes(m.purgeable)),
-        .heading("Virtual memory"), .metric("Swap", "\(bytes(m.swap)) / \(bytes(m.swapTotal))"),
-        .metric("Page in", rate(m.pageIn)), .metric("Page out", rate(m.pageOut)),
-        .metric("Swap in", rate(m.swapIn)), .metric("Swap out", rate(m.swapOut)),
-        .heading("Top memory processes"),
+        DashboardRow.heading("Memory"), DashboardRow.metric("Pressure", m.pressure),
+        DashboardRow.metric("Used", Format.percent(m.usedFraction)),
+        DashboardRow.chart("memory", "Used memory %", AeriePalette.memory, 100),
+        DashboardRow.metric("Physical", bytes(m.total)),
+        DashboardRow.metric("App", bytes(m.app)), DashboardRow.metric("Wired", bytes(m.wired)),
+        DashboardRow.metric("Compressed", bytes(m.compressed)),
+        DashboardRow.metric("Free", bytes(m.free)),
+        DashboardRow.metric("File cache", bytes(m.cached)),
+        DashboardRow.metric("Purgeable", bytes(m.purgeable)),
+        DashboardRow.heading("Virtual memory"),
+        DashboardRow.metric("Swap", "\(bytes(m.swap)) / \(bytes(m.swapTotal))"),
+        DashboardRow.metric("Page in", rate(m.pageIn)),
+        DashboardRow.metric("Page out", rate(m.pageOut)),
+        DashboardRow.metric("Swap in", rate(m.swapIn)),
+        DashboardRow.metric("Swap out", rate(m.swapOut)),
+        DashboardRow.heading("Top memory processes"),
       ] + top({ $0.memory > $1.memory }, value: { bytes($0.memory) })
     case .storage:
       var rows: [DashboardRow] = [
-        .heading("Disk activity"), .metric("Read", rate(s.diskRead)),
-        .metric("Write", rate(s.diskWrite)),
-        .chart("diskRead", "Read bytes/s", AeriePalette.incoming, nil),
-        .chart("diskWrite", "Write bytes/s", AeriePalette.outgoing, nil),
+        DashboardRow.heading("Disk activity"), DashboardRow.metric("Read", rate(s.diskRead)),
+        DashboardRow.metric("Write", rate(s.diskWrite)),
+        DashboardRow.chart("diskRead", "Read bytes/s", AeriePalette.incoming, nil),
+        DashboardRow.chart("diskWrite", "Write bytes/s", AeriePalette.outgoing, nil),
       ]
       for v in s.volumes {
         rows += [
-          .heading(v.name), .metric("Capacity", bytes(v.total)),
-          .metric("Available", bytes(v.free)),
-          .metric("Used", Format.percent(v.usedFraction)),
-          .metric("Important-use capacity", v.important.map(bytes) ?? "Unavailable"),
-          .metric(
+          DashboardRow.heading(v.name), DashboardRow.metric("Capacity", bytes(v.total)),
+          DashboardRow.metric("Available", bytes(v.free)),
+          DashboardRow.metric("Used", Format.percent(v.usedFraction)),
+          DashboardRow.metric(
+            "Important-use capacity", v.important.map { self.bytes($0) } ?? "Unavailable"),
+          DashboardRow.metric(
             "Kind",
             "\(v.local ? "Local" : "Network")\(v.removable ? ", removable" : "")\(v.readOnly ? ", read only" : "")"
           ),
         ]
       }
-      return rows + [.heading("Top process I/O")]
+      return rows + [DashboardRow.heading("Top process I/O")]
         + top(
           { ($0.read ?? 0) + ($0.write ?? 0) > ($1.read ?? 0) + ($1.write ?? 0) },
           value: { "R \(rate($0.read))  W \(rate($0.write))" }) + [
-          .note(
+          DashboardRow.note(
             "Disk rates are physical-device totals; process I/O uses OS accounting. Volume health and temperature depend on an accessible drive telemetry interface and are not yet collected."
           )
         ]
     case .network:
       var rows: [DashboardRow] = [
-        .heading("Traffic"), .metric("Connectivity", s.connectivity),
-        .metric("Download", rate(s.download)),
-        .metric("Upload", rate(s.upload)),
-        .chart("download", "Download bytes/s", AeriePalette.incoming, nil),
-        .chart("upload", "Upload bytes/s", AeriePalette.outgoing, nil),
+        DashboardRow.heading("Traffic"), DashboardRow.metric("Connectivity", s.connectivity),
+        DashboardRow.metric("Download", rate(s.download)),
+        DashboardRow.metric("Upload", rate(s.upload)),
+        DashboardRow.chart("download", "Download bytes/s", AeriePalette.incoming, nil),
+        DashboardRow.chart("upload", "Upload bytes/s", AeriePalette.outgoing, nil),
       ]
       for i in s.interfaces.sorted(by: { $0.active && !$1.active }) {
         rows += [
-          .heading(i.name + (i.active ? " · active" : " · inactive")),
-          .metric("Download / upload", "\(rate(i.download)) / \(rate(i.upload))"),
-          .metric("Received since boot", bytes(Double(i.received))),
-          .metric("Sent since boot", bytes(Double(i.sent))),
-          .metric("Errors", "\(i.errors)"),
-          .note(i.addresses.isEmpty ? "No assigned IP address" : i.addresses),
+          DashboardRow.heading(i.name + (i.active ? " · active" : " · inactive")),
+          DashboardRow.metric("Download / upload", "\(rate(i.download)) / \(rate(i.upload))"),
+          DashboardRow.metric("Received since boot", bytes(Double(i.received))),
+          DashboardRow.metric("Sent since boot", bytes(Double(i.sent))),
+          DashboardRow.metric("Errors", "\(i.errors)"),
+          DashboardRow.note(i.addresses.isEmpty ? "No assigned IP address" : i.addresses),
         ]
       }
       if !s.wifi.isEmpty {
         rows +=
-          [.heading("Wi-Fi")] + s.wifi.sorted { $0.key < $1.key }.map { .metric($0.key, $0.value) }
+          [DashboardRow.heading("Wi-Fi")]
+          + s.wifi.sorted { $0.key < $1.key }.map { DashboardRow.metric($0.key, $0.value) }
       }
       rows.append(
-        .note(
+        DashboardRow.note(
           "Virtual tunnels may count the same traffic again; aggregate totals include active interfaces. Public IP lookup is off. Per-process traffic collection remains unimplemented."
         ))
       return rows
     case .sensors:
       var rows: [DashboardRow] = [
-        .heading("Hardware"), .metric("Thermal state", s.thermal), .note(s.sensorStatus),
+        DashboardRow.heading("Hardware"), DashboardRow.metric("Thermal state", s.thermal),
+        DashboardRow.note(s.sensorStatus),
       ]
       for unit in ["°C", "rpm", "W", "V", "A"] {
         let sensors = s.sensors.filter { $0.unit == unit }
         guard !sensors.isEmpty else { continue }
         rows += [
-          .heading(
+          DashboardRow.heading(
             ["°C": "Temperature", "rpm": "Fans", "W": "Power", "V": "Voltage", "A": "Current"][
               unit]!)
         ]
         rows += sensors.map {
-          .metric(
+          DashboardRow.metric(
             $0.label,
             unit == "°C"
               ? Format.temperature($0.value, unit: settings.temperature)
@@ -447,7 +463,7 @@ final class DashboardController: NSViewController {
         }
       }
       rows += [
-        .note(
+        DashboardRow.note(
           "Firmware key names appear when a sensor label is unknown. Aerie only reads sensors. Fan profiles require a separately approved and safety-tested control implementation."
         )
       ]
@@ -455,36 +471,40 @@ final class DashboardController: NSViewController {
     case .power:
       let p = s.power
       var rows: [DashboardRow] = [
-        .heading("Power"),
-        .metric(
+        DashboardRow.heading("Power"),
+        DashboardRow.metric(
           "Source", p.present ? (p.external ? "Power adapter" : "Battery") : "No battery reported"),
-        .metric("Low Power Mode", s.lowPower ? "On" : "Off"), .metric("Thermal state", s.thermal),
+        DashboardRow.metric("Low Power Mode", s.lowPower ? "On" : "Off"),
+        DashboardRow.metric("Thermal state", s.thermal),
       ]
       if p.present {
         rows += [
-          .metric("Charge", Format.percent(p.percent)),
-          .metric("Charging", p.charging ? "Yes" : "No"),
-          .metric(
+          DashboardRow.metric("Charge", Format.percent(p.percent)),
+          DashboardRow.metric("Charging", p.charging ? "Yes" : "No"),
+          DashboardRow.metric(
             p.charging ? "Time to full" : "Time remaining",
             p.minutes.map { Format.duration(Double($0 * 60)) } ?? "Calculating"),
-          .chart("battery", "Battery %", AeriePalette.power, 100),
-          .metric("Health", Format.percent(p.health)),
-          .metric("Cycles", p.cycles.map(String.init) ?? "Unavailable"),
-          .metric("Battery power", p.watts.map { String(format: "%.2f W", $0) } ?? "Unavailable"),
-          .metric("Voltage", p.voltage.map { String(format: "%.2f V", $0) } ?? "Unavailable"),
-          .metric("Current", p.amperage.map { String(format: "%.2f A", $0) } ?? "Unavailable"),
+          DashboardRow.chart("battery", "Battery %", AeriePalette.power, 100),
+          DashboardRow.metric("Health", Format.percent(p.health)),
+          DashboardRow.metric("Cycles", p.cycles.map { String($0) } ?? "Unavailable"),
+          DashboardRow.metric(
+            "Battery power", p.watts.map { String(format: "%.2f W", $0) } ?? "Unavailable"),
+          DashboardRow.metric(
+            "Voltage", p.voltage.map { String(format: "%.2f V", $0) } ?? "Unavailable"),
+          DashboardRow.metric(
+            "Current", p.amperage.map { String(format: "%.2f A", $0) } ?? "Unavailable"),
         ]
       }
-      rows += [.heading("Peripheral batteries")]
+      rows += [DashboardRow.heading("Peripheral batteries")]
       rows +=
         p.peripherals.isEmpty
-        ? [.note("No supported peripheral battery is exposed by the device registry.")]
-        : p.peripherals.map { .metric($0.0, Format.percent($0.1)) }
-      return rows + [.heading("Process wakeups")]
+        ? [DashboardRow.note("No supported peripheral battery is exposed by the device registry.")]
+        : p.peripherals.map { DashboardRow.metric($0.0, Format.percent($0.1)) }
+      return rows + [DashboardRow.heading("Process wakeups")]
         + top(
           { ($0.wakeups ?? 0) > ($1.wakeups ?? 0) },
           value: { $0.wakeups.map { String(format: "%.1f /s", $0) } ?? "Unavailable" }) + [
-          .note(
+          DashboardRow.note(
             "Wakeups are interrupt wakeups, not a whole-system energy score. Changing power modes is not implemented."
           )
         ]
@@ -493,83 +513,93 @@ final class DashboardController: NSViewController {
       let formatter = DateFormatter()
       formatter.dateFormat = settings.clockFormat
       var rows: [DashboardRow] = [
-        .heading("Local time"),
-        .metric(formatter.string(from: now), TimeZone.current.abbreviation() ?? "Local"),
-        .metric("Moon phase (approx.)", Astronomy.moonName(at: now)),
-        .metric("Lunar age", String(format: "%.1f days", Astronomy.moonAge(at: now))),
-        .heading("World clocks"),
+        DashboardRow.heading("Local time"),
+        DashboardRow.metric(
+          formatter.string(from: now), TimeZone.current.abbreviation() ?? "Local"),
+        DashboardRow.metric("Moon phase (approx.)", Astronomy.moonName(at: now)),
+        DashboardRow.metric("Lunar age", String(format: "%.1f days", Astronomy.moonAge(at: now))),
+        DashboardRow.heading("World clocks"),
       ]
       for clock in settings.clocks {
         formatter.timeZone = TimeZone(identifier: clock.zone)
-        rows += [.metric(clock.name, formatter.string(from: now))]
+        rows += [DashboardRow.metric(clock.name, formatter.string(from: now))]
         if let next = formatter.timeZone.nextDaylightSavingTimeTransition(after: now) {
           let f = DateFormatter()
           f.dateStyle = .medium
           f.timeZone = formatter.timeZone
-          rows += [.metric("Next daylight saving change", f.string(from: next))]
+          rows += [DashboardRow.metric("Next daylight saving change", f.string(from: next))]
         }
       }
-      rows += [.heading("Calendar")] + calendarRows
+      rows += [DashboardRow.heading("Calendar")] + calendarRows
       return rows
     case .weather:
       guard settings.weather.valid else {
         return [
-          .heading("Weather is off"),
-          .note(
+          DashboardRow.heading("Weather is off"),
+          DashboardRow.note(
             "Choose a provider and a manual location in Settings to enable weather. No device location, IP geolocation, or background city search is used."
           ),
         ]
       }
-      var rows: [DashboardRow] = [.heading(settings.weather.name), .note(weatherStatus)]
+      var rows: [DashboardRow] = [
+        DashboardRow.heading(settings.weather.name), DashboardRow.note(weatherStatus),
+      ]
       guard let w = weather else { return rows }
       rows += [
-        .metric("Conditions", WeatherCondition.describe(w.code)),
-        .metric(
+        DashboardRow.metric("Conditions", WeatherCondition.describe(w.code)),
+        DashboardRow.metric(
           "Temperature",
           w.temperature.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable"),
-        .metric(
+        DashboardRow.metric(
           "Feels like",
           w.apparent.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable"),
-        .metric("Humidity", w.humidity.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
-        .metric(
+        DashboardRow.metric(
+          "Humidity", w.humidity.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
+        DashboardRow.metric(
           "Wind / gusts",
           "\(w.wind.map { String(format: "%.1f", $0) } ?? "—") / \(w.gusts.map { String(format: "%.1f km/h", $0) } ?? "—")"
         ),
-        .metric("Direction", w.direction.map { String(format: "%.0f°", $0) } ?? "Unavailable"),
-        .metric("Pressure", w.pressure.map { String(format: "%.0f hPa", $0) } ?? "Unavailable"),
-        .metric("Cloud cover", w.cloud.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
-        .heading("Next 24 hours"),
+        DashboardRow.metric(
+          "Direction", w.direction.map { String(format: "%.0f°", $0) } ?? "Unavailable"),
+        DashboardRow.metric(
+          "Pressure", w.pressure.map { String(format: "%.0f hPa", $0) } ?? "Unavailable"),
+        DashboardRow.metric(
+          "Cloud cover", w.cloud.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
+        DashboardRow.heading("Next 24 hours"),
       ]
       let f = DateFormatter()
       f.dateFormat = "EEE HH:mm"
       for h in w.hours.filter({ $0.date >= Date().addingTimeInterval(-3600) }).prefix(24) {
         rows += [
-          .metric(
+          DashboardRow.metric(
             f.string(from: h.date),
             "\(Format.temperature(h.temperature, unit: settings.temperature))  \(h.precipitation.map { String(format: "%.0f%% rain", $0) } ?? "")"
           )
         ]
       }
-      rows += [.heading("Daily forecast")]
+      rows += [DashboardRow.heading("Daily forecast")]
       f.dateFormat = "EEE d MMM"
       for d in w.days {
         rows += [
-          .metric(
+          DashboardRow.metric(
             f.string(from: d.date),
             "\(Format.temperature(d.low, unit: settings.temperature)) / \(Format.temperature(d.high, unit: settings.temperature))"
           ),
-          .metric(
+          DashboardRow.metric(
             WeatherCondition.describe(d.code), d.uv.map { String(format: "UV %.1f", $0) } ?? ""),
         ]
         let t = DateFormatter()
         t.timeStyle = .short
         if let sunrise = d.sunrise, let sunset = d.sunset {
-          rows += [.metric("Daylight", "\(t.string(from: sunrise)) – \(t.string(from: sunset))")]
+          rows += [
+            DashboardRow.metric(
+              "Daylight", "\(t.string(from: sunrise)) – \(t.string(from: sunset))")
+          ]
         }
       }
       rows += [
-        .heading("Source"),
-        .note(
+        DashboardRow.heading("Source"),
+        DashboardRow.note(
           "Weather data: \(w.source). Open-Meteo data is CC BY 4.0. https://open-meteo.com/ · Model-derived forecasts. Official severe alerts and radar are not available from this provider."
         ),
       ]

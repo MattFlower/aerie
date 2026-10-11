@@ -60,7 +60,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSPopoverDeleg
         self.collector?.setSuspended(self.paused)
         self.weatherFetchTime = .distantPast
       })
-    if !CommandLine.arguments.contains("--self-check"), !defaults.bool(forKey: "hasShownWelcome") {
+    if !CommandLine.arguments.contains("--self-check"),
+      !CommandLine.arguments.contains("--background"), !defaults.bool(forKey: "hasShownWelcome")
+    {
       defaults.set(true, forKey: "hasShownWelcome"); showSettings()
     }
   }
