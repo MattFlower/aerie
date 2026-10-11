@@ -88,4 +88,107 @@ final class SettingsProfilePreferencesTests: XCTestCase {
       controller.close(); XCTAssertEqual(applications, 0)
     }
   }
+  @MainActor private func field(_ title: String, in controller: PreferencesController) throws
+    -> NSTextField
+  {
+    try XCTUnwrap(
+      try controls(controller).compactMap { $0 as? NSTextField }.first {
+        $0.accessibilityLabel() == title
+      })
+  }
+  func
+    testImportedChangeRulesPreserveIndependentCooldownsDisabledStateIdentityAndOrderThroughApplyAndExport()
+    async throws
+  {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      var incoming = Settings()
+      var disabled = ChangeRule(kind: .charging, cooldown: 10); disabled.enabled = false
+      incoming.changeRules = [
+        ChangeRule(kind: .timeZone, cooldown: 4320.5), disabled,
+        ChangeRule(kind: .connectivity, cooldown: 604800),
+        ChangeRule(kind: .thermal, cooldown: 1440.75),
+      ]
+      let expected = try XCTUnwrap(incoming.changeRules)
+      let profile = try SettingsProfile.imported(
+        SettingsProfile.exported(incoming), preservingHistory: false)
+      let controller = PreferencesController(settings: Settings()); defer { controller.close() }
+      var applied: Settings?; controller.onApply = { applied = $0 };
+      controller.onProfileReview = { _ in true }
+      XCTAssertTrue(controller.reviewAndStage(profile)); XCTAssertNil(applied)
+      for rule in expected {
+        XCTAssertEqual(
+          try field(rule.kind.title + " cooldown seconds (10–604800)", in: controller).stringValue,
+          String(rule.cooldown))
+      }
+      try button("Apply", in: controller).performClick(nil)
+      let result = try XCTUnwrap(applied)
+      XCTAssertEqual(result.changeRules, expected)
+      let transferred = try SettingsProfile.imported(
+        SettingsProfile.exported(result), preservingHistory: false)
+      XCTAssertEqual(transferred.settings.changeRules, expected)
+    }
+  }
+  func testEditingOneCooldownLeavesOthersIntactAndNewEnabledKindsUseTheirOwnField() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      var original = Settings()
+      original.changeRules = [
+        ChangeRule(kind: .thermal, cooldown: 400), ChangeRule(kind: .connectivity, cooldown: 50),
+      ]
+      let controller = PreferencesController(settings: original); defer { controller.close() }
+      var applied: Settings?; controller.onApply = { applied = $0 }
+      try field(ChangeKind.thermal.title + " cooldown seconds (10–604800)", in: controller)
+        .stringValue = "777.5"
+      try field(ChangeKind.volumes.title + " cooldown seconds (10–604800)", in: controller)
+        .stringValue = "25"
+      try button(ChangeKind.volumes.title, in: controller).state = .on
+      try button("Apply", in: controller).performClick(nil)
+      let rules = try XCTUnwrap(applied?.changeRules)
+      XCTAssertEqual(rules.map(\.kind), [.thermal, .connectivity, .volumes])
+      XCTAssertEqual(rules.prefix(2).map(\.id), original.changeRules?.map(\.id))
+      XCTAssertEqual(rules.map(\.cooldown), [777.5, 50, 25])
+      applied = nil
+      for invalid in ["NaN", "9", "604801"] {
+        try field(ChangeKind.volumes.title + " cooldown seconds (10–604800)", in: controller)
+          .stringValue = invalid
+        try button("Apply", in: controller).performClick(nil); XCTAssertNil(applied)
+      }
+    }
+  }
+  func testImportedSpecialClockNamesSurviveStagingApplyAndAnotherProfileRoundTrip() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      var incoming = Settings()
+      incoming.clocks = [
+        WorldClock(name: "Home | office", zone: "Etc/UTC"),
+        WorldClock(name: "Line\nbreak", zone: "Asia/Tokyo"),
+        WorldClock(name: "  padded ", zone: "Etc/UTC"),
+        WorldClock(name: "Quoted \"name\"", zone: "Etc/UTC"),
+      ]
+      let profile = try SettingsProfile.imported(
+        SettingsProfile.exported(incoming), preservingHistory: false)
+      let controller = PreferencesController(settings: Settings()); defer { controller.close() }
+      controller.onProfileReview = { _ in true }; var applied: Settings?;
+      controller.onApply = { applied = $0 }
+      XCTAssertTrue(controller.reviewAndStage(profile))
+      let editor = try XCTUnwrap(
+        try controls(controller).compactMap { $0 as? NSTextView }.first {
+          $0.accessibilityLabel() == "World clocks"
+        })
+      XCTAssertFalse(editor.isAutomaticQuoteSubstitutionEnabled)
+      XCTAssertEqual(try WorldClockForm.parse(editor.string), incoming.clocks)
+      try button("Apply", in: controller).performClick(nil)
+      XCTAssertEqual(applied?.clocks, incoming.clocks)
+      let exported = try SettingsProfile.exported(XCTUnwrap(applied))
+      XCTAssertEqual(
+        try SettingsProfile.imported(exported, preservingHistory: false).settings.clocks,
+        incoming.clocks)
+      editor.string = "User edited | Etc/UTC\nHome | office | Asia/Tokyo"
+      try button("Apply", in: controller).performClick(nil)
+      XCTAssertEqual(applied?.clocks.map(\.name), ["User edited", "Home | office"])
+      XCTAssertEqual(applied?.clocks.map(\.zone), ["Etc/UTC", "Asia/Tokyo"])
+    }
+  }
+
 }

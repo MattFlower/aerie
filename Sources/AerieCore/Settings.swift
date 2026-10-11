@@ -146,10 +146,7 @@ public struct Settings: Codable, Equatable {
       !effectiveCombinedModules.contains(.overview),
       Set(effectiveCombinedModules).count == effectiveCombinedModules.count,
       combinedStyle != .graph, MenuColor.valid(combinedColorHex),
-      clocks.count <= 20,
-      clocks.allSatisfy({
-        !$0.name.isEmpty && $0.name.count <= 64 && TimeZone(identifier: $0.zone) != nil
-      }),
+      WorldClockForm.valid(clocks),
       rules.count <= 50, rules.allSatisfy(\.valid), Set(rules.map(\.id)).count == rules.count,
       (changeRules ?? []).count <= ChangeKind.allCases.count,
       (changeRules ?? []).allSatisfy(\.valid),

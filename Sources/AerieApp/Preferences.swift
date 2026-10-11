@@ -357,14 +357,19 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       "weeks", title: "Show calendar week numbers", value: settings.showWeekNumbers, y: 99, in: time
     )
     label("World clocks: one Name | IANA time zone per line", y: 147, in: time)
-    label("Examples: UTC | Etc/UTC and Tokyo | Asia/Tokyo", y: 177, in: time)
+    label(
+      "Examples: UTC | Etc/UTC and \"Home | office\" | Etc/UTC. Quoted names support escapes such as \\n for a line break.",
+      y: 177, in: time, height: 34)
     let clockScroll = NSScrollView(frame: NSRect(x: 18, y: 216, width: 545, height: 195))
     clockScroll.hasVerticalScroller = true
     clockScroll.borderType = .bezelBorder
     clocksField = NSTextView(frame: clockScroll.bounds)
     clocksField.isRichText = false
     clocksField.font = .systemFont(ofSize: 13)
-    clocksField.string = settings.clocks.map { "\($0.name) | \($0.zone)" }.joined(separator: "\n")
+    clocksField.isAutomaticQuoteSubstitutionEnabled = false
+    clocksField.isAutomaticDashSubstitutionEnabled = false
+    clocksField.isAutomaticTextReplacementEnabled = false
+    clocksField.string = (try? WorldClockForm.text(settings.clocks)) ?? ""
     clocksField.setAccessibilityLabel("World clocks")
     clockScroll.documentView = clocksField
     time.addSubview(clockScroll)
@@ -484,15 +489,26 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     label(
       "Each enabled rule establishes a baseline first. Missing data, pausing and sleep reset it. Changes during cooldown are suppressed. Mounted-volume detection refreshes every 30 seconds; other states use the selected system interval. Enable notifications in Permissions, then Apply.",
       y: 52, in: changes, height: 100)
+    let cooldownHeader = NSTextField(labelWithString: "Cooldown seconds")
+    cooldownHeader.font = .systemFont(ofSize: 12)
+    cooldownHeader.frame = NSRect(x: 425, y: 145, width: 150, height: 22)
+    changes.addSubview(cooldownHeader)
     for (index, kind) in ChangeKind.allCases.enumerated() {
+      let y = CGFloat(176 + index * 40)
       toggle(
         "change.\(kind.rawValue)", title: kind.title,
         value: settings.changeRules?.first(where: { $0.kind == kind })?.enabled ?? false,
-        y: CGFloat(168 + index * 36), in: changes)
+        y: y, in: changes)
+      toggles["change.\(kind.rawValue)"]?.frame.size.width = 390
+      let cooldown = NSTextField(
+        string: String(settings.changeRules?.first(where: { $0.kind == kind })?.cooldown ?? 300))
+      cooldown.frame = NSRect(x: 425, y: y, width: 140, height: 26)
+      cooldown.setAccessibilityLabel(kind.title + " cooldown seconds (10–604800)")
+      changes.addSubview(cooldown); fields["changeCooldown.\(kind.rawValue)"] = cooldown
     }
-    field(
-      "changeCooldown", title: "Cooldown seconds (each rule)",
-      value: String(settings.changeRules?.first?.cooldown ?? 300), y: 480, in: changes)
+    label(
+      "Each rule keeps its own cooldown (10–604800 seconds). Editing one leaves the others unchanged.",
+      y: 515, in: changes, height: 45)
 
     let permissions = tab("Permissions", in: tabs)
     label("Aerie does not request permissions at launch.", y: 18, in: permissions)
@@ -608,13 +624,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     } else {
       s.daylight = nil
     }
-    s.clocks = try clocksField.string.split(separator: "\n").map { line in
-      let parts = line.split(separator: "|", maxSplits: 1).map {
-        $0.trimmingCharacters(in: .whitespaces)
-      }
-      guard parts.count == 2, !parts[0].isEmpty else { throw SettingsError.invalid }
-      return WorldClock(name: parts[0], zone: parts[1])
-    }
+    s.clocks = try WorldClockForm.parse(clocksField.string)
     s.hourlyForecastHours = [24, 48, 72, 168][choices["hourlyForecastHours"]!.indexOfSelectedItem]
     s.weather.enabled = toggles["weather"]!.state == .on
     s.weather.provider = choices["weatherProvider"]!.indexOfSelectedItem == 1 ? "nws" : "openMeteo"
@@ -623,16 +633,26 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     s.weather.name = fields["weatherName"]!.stringValue
     s.weather.latitude = latitude
     s.weather.longitude = longitude
-    guard let changeCooldown = Double(fields["changeCooldown"]!.stringValue),
-      changeCooldown.isFinite, (10...604800).contains(changeCooldown)
-    else { throw SettingsError.invalid }
-    s.changeRules = ChangeKind.allCases.compactMap { kind in
-      let enabled = toggles["change.\(kind.rawValue)"]!.state == .on
-      if var rule = settings.changeRules?.first(where: { $0.kind == kind }) {
-        rule.enabled = enabled; rule.cooldown = changeCooldown; return rule
-      }
-      return enabled ? ChangeRule(kind: kind, cooldown: changeCooldown) : nil
+    var changeCooldowns: [ChangeKind: Double] = [:]
+    for kind in ChangeKind.allCases {
+      guard let value = Double(fields["changeCooldown.\(kind.rawValue)"]!.stringValue),
+        value.isFinite, (10...604800).contains(value)
+      else { throw SettingsError.invalid }
+      changeCooldowns[kind] = value
     }
+    // Keep imported identities and order, including disabled rules. Add only newly enabled kinds.
+    var changes = settings.changeRules ?? []
+    for index in changes.indices {
+      let kind = changes[index].kind
+      changes[index].enabled = toggles["change.\(kind.rawValue)"]!.state == .on
+      changes[index].cooldown = changeCooldowns[kind]!
+    }
+    for kind in ChangeKind.allCases where !changes.contains(where: { $0.kind == kind }) {
+      if toggles["change.\(kind.rawValue)"]!.state == .on {
+        changes.append(ChangeRule(kind: kind, cooldown: changeCooldowns[kind]!))
+      }
+    }
+    s.changeRules = changes.isEmpty ? nil : changes
     let order = settings.menus.map { ($0.module, menuOrders[$0.module]!.indexOfSelectedItem) }
     guard Set(order.map(\.1)).count == order.count else { throw SettingsError.invalid }
     s.menus = order.sorted { $0.1 < $1.1 }.map {
@@ -651,7 +671,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
       errorLabel.stringValue = "Settings applied"
     } catch {
       errorLabel.stringValue =
-        "Check values, time zones, unique menu order/modules, #RRGGBB colors, and a visible or combined item."
+        "Check values, clock names/time zones, rule cooldowns, unique menu order, #RRGGBB colors, and a visible or combined item."
     }
   }
   private func ruleFromForm() -> ThresholdRule? {
