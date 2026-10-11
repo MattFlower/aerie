@@ -22,5 +22,9 @@ final class WeatherDetailWindow: NSWindowController, NSWindowDelegate {
     scroll.documentView = text; window.contentView?.addSubview(scroll); window.center()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-  func windowWillClose(_ notification: Notification) { text.string = ""; onClose?() }
+  func windowWillClose(_ notification: Notification) {
+    text.string = ""
+    if let window { MenuPanel.releaseContent(of: window) }
+    onClose?()
+  }
 }

@@ -3,6 +3,19 @@ import XCTest
 @testable import AerieApp
 
 final class MenuPanelTests: XCTestCase {
+  func testClosedSettingsAndDetailWindowsDetachTheirNativeContent() async {
+    await MainActor.run {
+      _ = NSApplication.shared
+      let settings = PreferencesController(settings: .init())
+      let detail = WeatherDetailWindow(title: "Synthetic detail", message: "Fixture")
+      settings.windowWillClose(
+        Notification(name: NSWindow.willCloseNotification, object: settings.window))
+      detail.windowWillClose(
+        Notification(name: NSWindow.willCloseNotification, object: detail.window))
+      XCTAssertNil(settings.window?.contentView)
+      XCTAssertNil(detail.window?.contentView)
+    }
+  }
   func testClosedNativeContentDetachesWhileTheReusableControllerSurvives() async {
     await MainActor.run {
       _ = NSApplication.shared

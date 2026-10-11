@@ -24,6 +24,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private let samplingProfiler: SamplingProfiler? =
     CommandLine.arguments.contains("--sampling-profile")
     ? SamplingProfiler(scope: "presentation") : nil
+  private let windowLifecycle: WindowLifecycle? =
+    CommandLine.arguments.contains("--window-lifecycle-measurements") ? WindowLifecycle() : nil
   private var wifiAccess: WiFiAccess?
   private let calendarAccess = CalendarAccess()
   private lazy var calendarReader = CalendarEventReader(access: calendarAccess)
@@ -52,6 +54,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
+    configureApplicationMenu()
+    windowLifecycle?.start()
     if let data = defaults.data(forKey: "settings"),
       let decoded = try? JSONDecoder().decode(Settings.self, from: data),
       let valid = try? decoded.validated()
@@ -69,6 +73,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     menuPanel.contentSize = NSSize(width: 416, height: 620)
     menuPanel.contentViewController = dashboard
     menuPanel.onClose = { [weak self] in self?.dashboardDidClose() }
+    menuPanel.onCreate = { [weak self] in self?.windowLifecycle?.register($0, role: .dashboard) }
+    menuPanel.onShow = { [weak self] in self?.windowLifecycle?.capture(.shown, window: $0) }
     dashboard.canvas.onSelectDate = { [weak self] date in
       self?.calendarSelection.select(date); self?.updateCalendar()
     }
@@ -219,6 +225,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
   {
+    windowLifecycle?.capture(.reopened)
     if !flag && !menuPanel.isShown { showSettings() }
     return true
   }
@@ -227,6 +234,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     menuPanel.performClose(nil); collector?.setVisibleModule(nil)
   }
   func applicationWillTerminate(_ notification: Notification) {
+    windowLifecycle?.capture(.terminating)
     if let calendarObserver { NotificationCenter.default.removeObserver(calendarObserver) }
     for observer in clockObservers { NotificationCenter.default.removeObserver(observer) }
     clockObservers.removeAll()
@@ -245,6 +253,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
   }
   private func receive(_ reading: Snapshot) {
+    if let windowLifecycle {
+      for (_, item) in items { windowLifecycle.register(item.button?.window, role: .statusBar) }
+      windowLifecycle.capture(.tick)
+    }
     samplingProfiler?.begin(.appReceive)
     defer { samplingProfiler?.finish() }
     dashboard.suspended = paused || sleeping
@@ -491,6 +503,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       let menu = NSMenu()
       for (title, action) in [
         ("Aerie Settings…", #selector(showSettings)),
+        ("Close All Aerie Windows", #selector(closeAllWindows)),
         (paused ? "Resume Sampling" : "Pause Sampling", #selector(togglePaused)),
         ("Open Activity Monitor", #selector(activityMonitor)), ("Quit Aerie", #selector(quit)),
       ] {
@@ -711,6 +724,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       preferences.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
     }
     preferences = PreferencesController(settings: settings)
+    windowLifecycle?.register(preferences?.window, role: .settings)
+    preferences?.onWindowCreated = { [weak self] in
+      self?.windowLifecycle?.register($0, role: .calendar)
+    }
     preferences?.onApply = { [weak self] in self?.apply($0) }
     preferences?.onClose = { [weak self] in
       self?.cancelWiFiPermission(); self?.preferences = nil
@@ -724,6 +741,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     preferences?.onWiFiPermission = { [weak self] in self?.requestWiFiPermission() }
     preferences?.onLogin = { [weak self] in self?.requestLogin() }
     preferences?.showWindow(nil)
+    windowLifecycle?.capture(.shown, window: preferences?.window)
     NSApp.activate(ignoringOtherApps: true)
   }
   private func apply(_ settings: Settings) {
@@ -814,16 +832,49 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     do {
       let controller = try WeatherMapWindowController(configuration: settings.weather)
       weatherMaps = controller
+      windowLifecycle?.register(controller.window, role: .maps)
       controller.onClose = { [weak self] in self?.weatherMaps = nil }
       controller.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
+      windowLifecycle?.capture(.shown, window: controller.window)
     } catch { notice("Enable NOAA maps and choose a manual location in Weather Settings.") }
   }
   private func showWeatherDetail(title: String, message: String) {
     weatherDetails?.close()
     let controller = WeatherDetailWindow(title: title, message: message)
+    windowLifecycle?.register(controller.window, role: .detail)
     controller.onClose = { [weak self] in self?.weatherDetails = nil }
     weatherDetails = controller; controller.showWindow(nil)
+    windowLifecycle?.capture(.shown, window: controller.window)
     NSApp.activate(ignoringOtherApps: true)
+  }
+  private func configureApplicationMenu() {
+    let main = NSMenu()
+    let application = NSMenuItem(title: "Aerie", action: nil, keyEquivalent: "")
+    application.submenu = NSMenu(title: "Aerie")
+    let settings = NSMenuItem(
+      title: "Aerie Settings…", action: #selector(showSettings), keyEquivalent: ",")
+    settings.target = self; application.submenu?.addItem(settings)
+    application.submenu?.addItem(.separator())
+    let quit = NSMenuItem(title: "Quit Aerie", action: #selector(self.quit), keyEquivalent: "q")
+    quit.target = self; application.submenu?.addItem(quit); main.addItem(application)
+    let windows = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+    windows.submenu = NSMenu(title: "Window")
+    windows.submenu?.addItem(
+      NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+    let closeAll = NSMenuItem(
+      title: "Close All Aerie Windows", action: #selector(closeAllWindows), keyEquivalent: "w")
+    closeAll.keyEquivalentModifierMask = [.command, .option]; closeAll.target = self
+    windows.submenu?.addItem(closeAll); main.addItem(windows)
+    NSApp.mainMenu = main; NSApp.windowsMenu = windows.submenu
+  }
+  @objc private func closeAllWindows() {
+    windowLifecycle?.capture(.closeAll)
+    menuPanel.performClose(nil)
+    preferences?.close(); preferences = nil
+    weatherDetails?.close(); weatherDetails = nil
+    weatherMaps?.close(); weatherMaps = nil
+    cancelWiFiPermission(); clearCalendar()
+    windowLifecycle?.capture(.closeAll)
   }
   private func applyAppearance() {
     switch settings.theme {

@@ -11,6 +11,8 @@ final class MenuPanel: NSObject, NSWindowDelegate {
   var contentViewController: NSViewController?
   var contentSize = NSSize(width: 416, height: 620)
   var onClose: (() -> Void)?
+  var onCreate: ((NSWindow) -> Void)?
+  var onShow: ((NSWindow) -> Void)?
   private var panel: MenuDashboardWindow?
   private var deactivationObserver: NSObjectProtocol?
   var isShown: Bool { panel?.isVisible == true }
@@ -38,11 +40,13 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     window.setFrameOrigin(
       Self.origin(anchor: anchor, visibleFrame: screen.visibleFrame, size: window.frame.size))
     panel = window
+    onCreate?(window)
     deactivationObserver = NotificationCenter.default.addObserver(
       forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main
     ) { [weak self] _ in self?.performClose(nil) }
     NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
+    onShow?(window)
   }
   deinit {
     if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }

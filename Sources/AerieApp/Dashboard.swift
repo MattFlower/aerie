@@ -44,6 +44,8 @@ final class DashboardView: NSView {
   private var calendarView: CalendarMonthView?
   private var actionButtons: [Int: NSButton] = [:]
   private var textElements: [Int: NSAccessibilityElement] = [:]
+  private var accessibilityGroups: [Int: NSAccessibilityElement] = [:]
+  static let accessibilityGroupSize = 64
   var onSelectDate: ((Date) -> Void)?
   var onMoveMonth: ((Int) -> Void)?
   var onToday: (() -> Void)?
@@ -51,6 +53,7 @@ final class DashboardView: NSView {
   override var isFlipped: Bool { true }
   override init(frame: NSRect) {
     super.init(frame: frame)
+    setAccessibilityElement(true)
     setAccessibilityRole(.group)
     setAccessibilityLabel("System statistics")
   }
@@ -136,19 +139,90 @@ final class DashboardView: NSView {
       elements.append(e)
       y += row.height
     }
-    if !hasCalendar { calendarView?.removeFromSuperview(); calendarView = nil }
+    if !hasCalendar {
+      calendarView?.setAccessibilityParent(nil)
+      calendarView?.removeFromSuperview(); calendarView = nil
+    }
     for index in Array(actionButtons.keys) where !actionIndexes.contains(index) {
-      actionButtons.removeValue(forKey: index)?.removeFromSuperview()
+      let button = actionButtons.removeValue(forKey: index)
+      button?.setAccessibilityParent(nil); button?.removeFromSuperview()
     }
     for index in Array(textElements.keys) where !textIndexes.contains(index) {
       textElements.removeValue(forKey: index)?.setAccessibilityParent(nil)
     }
-    setAccessibilityChildren(elements)
+    updateAccessibilityHierarchy(elements)
+  }
+  private func updateAccessibilityHierarchy(_ elements: [Any]) {
+    // A bounded hierarchy lets native clients traverse a long inventory without losing any rows.
+    guard elements.count > Self.accessibilityGroupSize * 2 else {
+      clearAccessibilityGroups()
+      for element in elements { Self.setParent(self, of: element) }
+      setAccessibilityChildren(elements)
+      return
+    }
+    var groups: [NSAccessibilityElement] = []
+    for start in stride(from: 0, to: elements.count, by: Self.accessibilityGroupSize) {
+      let index = start / Self.accessibilityGroupSize
+      let end = min(elements.count, start + Self.accessibilityGroupSize)
+      let group = accessibilityGroups[index] ?? NSAccessibilityElement()
+      accessibilityGroups[index] = group
+      group.setAccessibilityRole(.group); group.setAccessibilityParent(self)
+      group.setAccessibilityLabel("Statistics rows \(start + 1)–\(end)")
+      let children = Array(elements[start..<end])
+      var frame = NSRect.null
+      for child in children {
+        Self.setParent(group, of: child)
+        if let childFrame = Self.frame(of: child) { frame = frame.union(childFrame) }
+      }
+      group.setAccessibilityChildren(children)
+      group.setAccessibilityFrame(frame.isNull ? .zero : frame)
+      groups.append(group)
+    }
+    for index in Array(accessibilityGroups.keys) where index >= groups.count {
+      let group = accessibilityGroups.removeValue(forKey: index)
+      group?.setAccessibilityChildren([]); group?.setAccessibilityParent(nil)
+    }
+    setAccessibilityChildren(groups)
+  }
+  private func clearAccessibilityGroups() {
+    accessibilityGroups.values.forEach {
+      $0.setAccessibilityChildren([]); $0.setAccessibilityParent(nil)
+    }
+    accessibilityGroups.removeAll()
+  }
+  private static func setParent(_ parent: Any?, of element: Any) {
+    if let element = element as? NSAccessibilityElement {
+      element.setAccessibilityParent(parent)
+    } else if let view = element as? NSView {
+      view.setAccessibilityParent(parent)
+    }
+  }
+  private static func frame(of element: Any) -> NSRect? {
+    if let element = element as? NSAccessibilityElement { return element.accessibilityFrame() }
+    if let view = element as? NSView { return view.accessibilityFrame() }
+    return nil
+  }
+  override func accessibilityFrame() -> NSRect {
+    guard let window else { return super.accessibilityFrame() }
+    // The scroll document can be thousands of points tall; its visible root is the viewport.
+    return window.convertToScreen(convert(visibleRect, to: nil))
+  }
+  override func accessibilityVisibleChildren() -> [Any]? {
+    guard window != nil else { return accessibilityChildren() }
+    let viewport = accessibilityFrame()
+    return accessibilityChildren()?.filter {
+      guard let frame = Self.frame(of: $0) else { return true }
+      return frame.intersects(viewport)
+    }
   }
   func releaseInteractiveRows() {
-    calendarView?.removeFromSuperview(); calendarView = nil
-    actionButtons.values.forEach { $0.removeFromSuperview() }; actionButtons.removeAll()
+    calendarView?.setAccessibilityParent(nil); calendarView?.removeFromSuperview();
+    calendarView = nil
+    actionButtons.values.forEach {
+      $0.setAccessibilityParent(nil); $0.removeFromSuperview()
+    }; actionButtons.removeAll()
     textElements.values.forEach { $0.setAccessibilityParent(nil) }; textElements.removeAll()
+    clearAccessibilityGroups()
     rows.removeAll(); points.removeAll(); selectedPoint = nil; setAccessibilityChildren([])
     // A large inventory must not leave a tall, empty native document backing after close.
     frame.size.height = 16

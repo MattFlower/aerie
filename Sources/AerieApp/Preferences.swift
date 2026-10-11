@@ -10,6 +10,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   var onCalendar: (() -> Void)?
   var onWiFiPermission: (() -> Void)?
   var onLogin: (() -> Void)?
+  var onWindowCreated: ((NSWindow) -> Void)?
   private var fields: [String: NSTextField] = [:]
   private var toggles: [String: NSButton] = [:]
   private var choices: [String: NSPopUpButton] = [:]
@@ -44,7 +45,9 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   func windowWillClose(_ notification: Notification) {
-    calendarPicker?.close(); calendarPicker = nil; onClose?()
+    calendarPicker?.close(); calendarPicker = nil
+    if let window { MenuPanel.releaseContent(of: window) }
+    onClose?()
   }
   func validateCalendarAccess() { calendarPicker?.validateAccess() }
   private func tab(_ title: String, in tabs: NSTabView) -> NSView {
@@ -679,6 +682,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate {
     let picker = CalendarPickerController(
       selection: settings.eventCalendars, access: calendarAccess)
     calendarPicker = picker
+    if let window = picker.window { onWindowCreated?(window) }
     picker.onChoose = { [weak self] selected in
       self?.settings.eventCalendars = selected; self?.updateCalendarSelectionLabel()
     }
