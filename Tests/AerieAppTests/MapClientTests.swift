@@ -28,6 +28,56 @@ private final class SyntheticMapProtocol: URLProtocol {
   override func stopLoading() { Self.stopped?.fulfill() }
 }
 final class MapClientTests: XCTestCase {
+  @MainActor func testWindCanvasKeepsBlackBarbsAndWhiteBoundariesLegibleInDarkAppearance()
+    throws
+  {
+    func stripe(_ range: Range<Int>, white: Bool) throws -> NSImage {
+      var pixels = [UInt8](repeating: 0, count: 32 * 32 * 4)
+      for y in 0..<32 {
+        for x in range {
+          let offset = (y * 32 + x) * 4
+          if white {
+            pixels[offset] = 255; pixels[offset + 1] = 255; pixels[offset + 2] = 255
+          }
+          pixels[offset + 3] = 255
+        }
+      }
+      let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
+      let image = try XCTUnwrap(
+        CGImage(
+          width: 32, height: 32, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 128,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+          provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+      return NSImage(cgImage: image, size: NSSize(width: 32, height: 32))
+    }
+    func luminance(_ color: NSColor) -> Double {
+      func linear(_ value: CGFloat) -> Double {
+        let value = Double(value)
+        return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+      }
+      return 0.2126 * linear(color.redComponent) + 0.7152 * linear(color.greenComponent)
+        + 0.0722 * linear(color.blueComponent)
+    }
+    let view = MapRasterView(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+    view.appearance = NSAppearance(named: .darkAqua); view.kind = .wind
+    view.raster = try stripe(8..<16, white: false)
+    view.base = try stripe(24..<32, white: true)
+    let output = try XCTUnwrap(
+      NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32, bitsPerSample: 8,
+        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+        bytesPerRow: 0, bitsPerPixel: 0))
+    NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: output)
+    view.draw(view.bounds)
+    let background = try XCTUnwrap(output.colorAt(x: 4, y: 16)?.usingColorSpace(.deviceRGB))
+    let black = try XCTUnwrap(output.colorAt(x: 12, y: 16)?.usingColorSpace(.deviceRGB))
+    let white = try XCTUnwrap(output.colorAt(x: 28, y: 16)?.usingColorSpace(.deviceRGB))
+    XCTAssertGreaterThan((luminance(background) + 0.05) / (luminance(black) + 0.05), 3)
+    XCTAssertGreaterThan((luminance(white) + 0.05) / (luminance(background) + 0.05), 3)
+    XCTAssertNil(view.window)
+  }
   @MainActor func testLegendDrawsBothEndsOfSyntheticHorizontalRampWithoutWindow() throws {
     var pixels = [UInt8](repeating: 0, count: 500 * 30 * 4)
     for y in 0..<30 {

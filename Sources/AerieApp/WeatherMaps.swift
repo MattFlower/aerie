@@ -183,13 +183,20 @@ final class MapLegendView: NSView {
 
 final class MapRasterView: NSView {
   override var isFlipped: Bool { true }
+  var kind: WeatherMapKind = .radar
   var base: NSImage?
   var raster: NSImage?
   var alerts: NSImage?
   var onPan: ((Double, Double) -> Void)?
   private var dragStart: NSPoint?
   override func draw(_ dirtyRect: NSRect) {
-    NSColor.controlBackgroundColor.setFill(); bounds.fill()
+    // Line-only wind products use black strokes; the boundary overlay uses white strokes.
+    // A neutral canvas preserves contrast for both without changing either provider image.
+    let background =
+      kind == .wind
+      ? NSColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+      : NSColor.controlBackgroundColor
+    background.setFill(); bounds.fill()
     for image in [raster, base, alerts].compactMap({ $0 }) {
       image.draw(
         in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
@@ -414,7 +421,8 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   }
   private func load(metadataNeeded: Bool) {
     guard activity.active else { return }
-    stopAnimation(); canvas.clear(); clearLegend(); alertTimestamp.stringValue = "";
+    stopAnimation(); canvas.kind = kind; canvas.clear(); clearLegend();
+    alertTimestamp.stringValue = "";
     boundariesAvailable = false
     cache.clear()
     timestamp.stringValue = "Loading valid times…"
