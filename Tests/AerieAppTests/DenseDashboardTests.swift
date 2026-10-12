@@ -4,6 +4,23 @@ import XCTest
 @testable import AerieApp
 
 final class DenseDashboardTests: XCTestCase {
+  func testPickerSelectionUpdatesWindowDescriptionAlongWithTheVisibleModule() async {
+    await MainActor.run {
+      _ = NSApplication.shared
+      let controller = DashboardController()
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 416, height: 600),
+        styleMask: [], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false; window.contentViewController = controller
+      for module in [Module.cpu, .gpu, .memory, .overview] {
+        controller.modules.selectItem(at: Module.allCases.firstIndex(of: module)!)
+        _ = controller.modules.sendAction(controller.modules.action, to: controller.modules.target)
+        XCTAssertEqual(controller.module, module)
+        XCTAssertEqual(window.accessibilityLabel(), "Aerie \(module.title) detail")
+      }
+      MenuPanel.releaseContent(of: window); controller.releasePresentation()
+    }
+  }
   func testRelativeAxesRetainSecondsAndNotesGrowToPreserveTheirFullText() {
     XCTAssertEqual(relativeHistorySpan(19), "19s")
     XCTAssertEqual(relativeHistorySpan(599), "9m 59s")

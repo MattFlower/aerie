@@ -656,6 +656,7 @@ final class DashboardController: NSViewController {
   @objc private func selectModule() {
     canvas.selectedPoint = nil; setHistoryExpanded(false)
     module = Module.allCases[modules.indexOfSelectedItem]
+    view.window?.setAccessibilityLabel("Aerie \(module.title) detail")
     onModule?(module)
     refresh()
     if let scroll = canvas.enclosingScrollView {
