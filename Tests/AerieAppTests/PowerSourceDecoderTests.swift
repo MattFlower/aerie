@@ -54,8 +54,12 @@ final class PowerSourceDecoderTests: XCTestCase {
       let dashboard = DashboardController(); dashboard.snapshot.power = power
       _ = dashboard.view
       dashboard.show(.power)
-      let values = dashboard.canvas.rows.compactMap { row -> String? in
-        if case .metric("Time remaining", let value) = row { return value }; return nil
+      let values = dashboard.canvas.rows.flatMap { row -> [String] in
+        if case .metric("Time remaining", let value) = row { return [value] }
+        if case .facts(let items) = row {
+          return items.filter { $0.0 == "Time remaining" }.map(\.1)
+        }
+        return []
       }
       XCTAssertEqual(values, ["Not discharging", "Not discharging"])
       dashboard.canvas.releaseInteractiveRows()

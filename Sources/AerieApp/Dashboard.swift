@@ -8,17 +8,28 @@ enum DashboardRow {
   case gauge(String, String, Double?, NSColor)
   case note(String)
   case chart(String, String, NSColor, Double?)
+  case trend(String, String, [DashboardSeries])
+  case facts([(String, String)])
+  case coreGrid([Double], String)
   case cores([Double])
   case calendar(CalendarMonth)
   case clock(WorldClockReading, WorldClockStyle)
   case action(String, String, String)
   var height: CGFloat {
     switch self {
-    case .heading: return 34
-    case .metric: return 27
+    case .heading: return 24
+    case .metric: return 23
     case .gauge: return 54
-    case .note: return 47
+    case .note(let text):
+      let bounds = (text as NSString).boundingRect(
+        with: NSSize(width: 388, height: CGFloat.greatestFiniteMagnitude),
+        options: [.usesLineFragmentOrigin, .usesFontLeading],
+        attributes: [.font: NSFont.systemFont(ofSize: 11)])
+      return max(28, ceil(bounds.height) + 12)
     case .chart: return 100
+    case .trend: return 104
+    case .facts(let items): return CGFloat((items.count + 1) / 2) * 32
+    case .coreGrid(let values, _): return 22 + CGFloat((values.count + 11) / 12) * 28
     case .cores(let c): return CGFloat((c.count + 11) / 12) * 42 + 18
     case .calendar(let model): return CalendarMonthView.height(model)
     case .clock(_, let style): return style == .compact ? 58 : 100
@@ -103,6 +114,26 @@ final class DashboardView: NSView {
       let label: String
       switch row {
       case .heading(let s), .note(let s): label = s
+      case .facts(let items): label = items.map { "\($0.0): \($0.1)" }.joined(separator: "; ")
+      case .coreGrid(let values, let detail):
+        label =
+          detail + "; "
+          + values.enumerated().map {
+            "Core \($0.offset + 1): \(Format.percent($0.element))"
+          }.joined(separator: ", ")
+      case .trend(let title, let detail, let series):
+        let inspected =
+          selectedPoint.map { point in
+            chartFormatter.dateStyle = .short; chartFormatter.timeStyle = .medium
+            return " Selected " + chartFormatter.string(from: point.date) + ": "
+              + series.map {
+                $0.title + " "
+                  + (point.values[$0.key].map { String(format: "%.2f", $0) } ?? "Unavailable")
+              }.joined(separator: ", ")
+          } ?? ""
+        label =
+          title + ": " + detail + ". History, \(points.count) samples." + inspected
+          + " Activate to inspect the middle sample."
       case .metric(let k, let v), .gauge(let k, let v, _, _): label = "\(k): \(v)"
       case .chart(let key, let title, _, _):
         if let selectedPoint, let value = selectedPoint.values[key] {
@@ -120,7 +151,10 @@ final class DashboardView: NSView {
       case .calendar, .action: label = ""
       }
       let chart: Bool
-      if case .chart = row { chart = true } else { chart = false }
+      switch row {
+      case .chart, .trend: chart = true;
+      default: chart = false
+      }
       let e: NSAccessibilityElement
       if let existing = textElements[index], (existing is HistoryChartAccessibilityElement) == chart
       {
@@ -310,6 +344,12 @@ final class DashboardView: NSView {
       defer { y += row.height }
       guard rect.intersects(dirtyRect) else { continue }
       switch row {
+      case .trend(let title, let detail, let series):
+        drawCompactTrend(
+          title, detail: detail, series: series, points: points,
+          selected: selectedPoint, interval: expectedInterval, formatter: chartFormatter, in: rect)
+      case .facts(let items): drawCompactFacts(items, in: rect)
+      case .coreGrid(let values, let detail): drawCompactCores(values, detail: detail, in: rect)
       case .heading(let title):
         NSColor.separatorColor.setStroke()
         let line = NSBezierPath()
@@ -317,7 +357,7 @@ final class DashboardView: NSView {
         line.line(to: NSPoint(x: bounds.width - 14, y: y + 1))
         line.stroke()
         drawText(
-          title, rect: rect.insetBy(dx: 0, dy: 10),
+          title, rect: rect.insetBy(dx: 0, dy: 5),
           font: .systemFont(ofSize: 12, weight: .semibold), color: .secondaryLabelColor)
       case .metric(let key, let value):
         drawText(
@@ -415,8 +455,11 @@ final class DashboardView: NSView {
     var y: CGFloat = 8
     let clickedChart = rows.contains { row in
       defer { y += row.height }
-      if case .chart = row { return point.y >= y + 31 && point.y <= y + 83 }
-      return false
+      switch row {
+      case .chart: return point.y >= y + 31 && point.y <= y + 83
+      case .trend: return point.y >= y + 37 && point.y <= y + 87
+      default: return false
+      }
     }
     guard clickedChart else { return }
     _ = selectHistory(fraction: Double(fraction))
@@ -501,6 +544,9 @@ final class DashboardController: NSViewController {
   let zoomPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   let historyPosition = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
   private let zoomReset = NSButton(title: "Reset", target: nil, action: nil)
+  private let historyButton = NSButton(title: "History…", target: nil, action: nil)
+  private let exportButton = NSButton(title: "Export…", target: nil, action: nil)
+  private(set) var historyExpanded = false
   let stateLabel = NSTextField(labelWithString: "Sampling")
   var onSettings: (() -> Void)?
   var onMaps: (() -> Void)?
@@ -539,64 +585,76 @@ final class DashboardController: NSViewController {
   }
   override func loadView() {
     presentationReleased = false
-    view = NSView(frame: NSRect(x: 0, y: 0, width: 416, height: 620))
-    let title = NSTextField(labelWithString: "Aerie")
-    title.font = .systemFont(ofSize: 18, weight: .semibold)
-    title.frame = NSRect(x: 16, y: 580, width: 90, height: 26)
-    view.addSubview(title)
+    view = NSView(frame: NSRect(x: 0, y: 0, width: 416, height: 600))
     modules.removeAllItems()
     modules.addItems(withTitles: Module.allCases.map(\.title))
-    modules.target = self
-    modules.action = #selector(selectModule)
-    modules.frame = NSRect(x: 245, y: 580, width: 155, height: 28)
+    modules.target = self; modules.action = #selector(selectModule)
+    modules.frame = NSRect(x: 54, y: 568, width: 216, height: 26)
+    modules.setAccessibilityLabel("Detail module")
     view.addSubview(modules)
-    let scroll = NSScrollView(frame: NSRect(x: 0, y: 45, width: 416, height: 490))
-    scroll.hasVerticalScroller = true
-    scroll.autohidesScrollers = true
-    scroll.documentView = canvas
-    scroll.drawsBackground = false
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 34, width: 416, height: 530))
+    scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+    scroll.documentView = canvas; scroll.drawsBackground = false
     view.addSubview(scroll)
     let selectedZoom = max(0, zoomPicker.indexOfSelectedItem)
     zoomPicker.removeAllItems()
     zoomPicker.addItems(withTitles: ["Full range", "Zoom 2×", "Zoom 4×", "Zoom 8×"])
     zoomPicker.selectItem(at: selectedZoom)
-    zoomPicker.frame = NSRect(x: 16, y: 543, width: 114, height: 26)
+    zoomPicker.frame = NSRect(x: 14, y: 42, width: 105, height: 26)
     zoomPicker.target = self; zoomPicker.action = #selector(changeZoom)
     zoomPicker.setAccessibilityLabel("History zoom")
-    historyPosition.frame = NSRect(x: 140, y: 546, width: 174, height: 22)
+    historyPosition.frame = NSRect(x: 124, y: 44, width: 130, height: 22)
     historyPosition.target = self; historyPosition.action = #selector(changeZoom)
     historyPosition.isContinuous = true
     historyPosition.setAccessibilityLabel("History position, oldest to latest")
-    historyPosition.toolTip =
-      "Pan from the oldest retained time to the latest; right edge follows new readings."
-    zoomReset.frame = NSRect(x: 325, y: 543, width: 72, height: 26)
+    historyPosition.toolTip = "Pan from oldest to latest; the right edge follows new readings."
+    zoomReset.frame = NSRect(x: 258, y: 42, width: 60, height: 26)
     zoomReset.target = self; zoomReset.action = #selector(resetZoom)
-    [zoomPicker, historyPosition, zoomReset].forEach { view.addSubview($0) }
+    exportButton.frame = NSRect(x: 320, y: 42, width: 82, height: 26)
+    exportButton.target = self; exportButton.action = #selector(exportHistory)
+    exportButton.toolTip = "Export the selected retained system history as CSV"
+    [zoomPicker, historyPosition, zoomReset, exportButton].forEach { view.addSubview($0) }
     let settingsButton = NSButton(title: "Settings…", target: self, action: #selector(openSettings))
-    settingsButton.frame = NSRect(x: 12, y: 9, width: 95, height: 28)
+    settingsButton.frame = NSRect(x: 10, y: 4, width: 85, height: 26)
     view.addSubview(settingsButton)
     let selectedWindow = max(0, windowPicker.indexOfSelectedItem)
     windowPicker.removeAllItems()
     windowPicker.addItems(withTitles: ["10 minutes", "24 hours", "7 days"])
     windowPicker.selectItem(at: selectedWindow)
-    windowPicker.frame = NSRect(x: 110, y: 9, width: 122, height: 28)
-    windowPicker.target = self
-    windowPicker.action = #selector(changeWindow)
+    windowPicker.frame = NSRect(x: 275, y: 568, width: 127, height: 26)
+    windowPicker.target = self; windowPicker.action = #selector(changeWindow)
+    windowPicker.setAccessibilityLabel("History range")
     view.addSubview(windowPicker)
-    mapsButton.frame = NSRect(x: 110, y: 9, width: 122, height: 28)
+    mapsButton.frame = NSRect(x: 100, y: 4, width: 108, height: 26)
     mapsButton.target = self; mapsButton.action = #selector(openMaps); mapsButton.isHidden = true
     view.addSubview(mapsButton)
-    stateLabel.font = .systemFont(ofSize: 10)
-    stateLabel.textColor = .secondaryLabelColor
+    historyButton.frame = NSRect(x: 100, y: 4, width: 108, height: 26)
+    historyButton.target = self; historyButton.action = #selector(toggleHistory)
+    historyButton.setAccessibilityLabel("Show history tools: zoom, pan, reset and export")
+    view.addSubview(historyButton)
+    stateLabel.font = .systemFont(ofSize: 10); stateLabel.textColor = .secondaryLabelColor
     stateLabel.alignment = .right
-    let export = NSButton(title: "Export…", target: self, action: #selector(exportHistory))
-    export.frame = NSRect(x: 236, y: 9, width: 75, height: 28)
-    export.toolTip = "Export the visible system series and time range as CSV"
-    view.addSubview(export)
-    stateLabel.frame = NSRect(x: 313, y: 16, width: 87, height: 16)
+    stateLabel.frame = NSRect(x: 214, y: 9, width: 188, height: 16)
     view.addSubview(stateLabel)
+    setHistoryExpanded(historyExpanded)
   }
+  @objc private func toggleHistory() { setHistoryExpanded(!historyExpanded) }
+  func setHistoryExpanded(_ expanded: Bool) {
+    historyExpanded = expanded
+    historyButton.title = expanded ? "Hide Tools" : "History…"
+    historyButton.setAccessibilityLabel(
+      expanded ? "Hide history tools" : "Show history tools: zoom, pan, reset and export")
+    let supported = module != .weather && module != .time && module != .sensors
+    [zoomPicker, historyPosition, zoomReset, exportButton].forEach {
+      $0.isHidden = !expanded || !supported
+    }
+    canvas.enclosingScrollView?.frame = NSRect(
+      x: 0, y: expanded && supported ? 78 : 34,
+      width: 416, height: expanded && supported ? 486 : 530)
+  }
+
   @objc private func selectModule() {
+    canvas.selectedPoint = nil; setHistoryExpanded(false)
     module = Module.allCases[modules.indexOfSelectedItem]
     onModule?(module)
     refresh()
@@ -626,15 +684,21 @@ final class DashboardController: NSViewController {
   func show(_ module: Module) {
     if presentationReleased { loadView() } else { _ = view }
     if module != .time { releaseDaylight() }
+    let changed = self.module != module
     self.module = module
+    if changed {
+      canvas.selectedPoint = nil; setHistoryExpanded(false)
+      canvas.enclosingScrollView?.contentView.scroll(to: .zero)
+    }
     modules.selectItem(at: Module.allCases.firstIndex(of: module) ?? 0)
     refresh()
   }
   func refresh() {
     guard isPresentationLoaded else { return }
-    mapsButton.isHidden = module != .weather; windowPicker.isHidden = module == .weather
-    zoomPicker.isHidden = module == .weather
-    historyPosition.isHidden = module == .weather; zoomReset.isHidden = module == .weather
+    let hasHistory = module != .weather && module != .time && module != .sensors
+    mapsButton.isHidden = module != .weather; windowPicker.isHidden = !hasHistory
+    historyButton.isHidden = !hasHistory
+    setHistoryExpanded(historyExpanded)
     historyPosition.isEnabled = zoomPicker.indexOfSelectedItem > 0
     mapsButton.title = settings.weather.mapsValid ? "Maps…" : "Enable Maps…"
     let age = max(0, Date().timeIntervalSince(snapshot.date))
@@ -821,6 +885,21 @@ final class DashboardController: NSViewController {
     }
     return rows
   }
+  private func gpuSummaryRows() -> [DashboardRow] {
+    guard !snapshot.gpu.isEmpty else {
+      return [.heading("GPU"), .metric("Driver telemetry", "Unavailable")]
+    }
+    return snapshot.gpu.flatMap { gpu in
+      [
+        DashboardRow.heading("GPU · " + gpu.name),
+        .facts([
+          ("Utilization", Format.percent(gpu.utilization)),
+          ("Renderer / tiler", Format.percent(gpu.renderer) + " / " + Format.percent(gpu.tiler)),
+          ("In-use shared memory", gpu.memory.map { self.bytes($0) } ?? "Unavailable"),
+        ]),
+      ]
+    }
+  }
   private func makeRows() -> [DashboardRow] {
     let s = snapshot
     switch module {
@@ -848,60 +927,84 @@ final class DashboardController: NSViewController {
         ),
       ]
     case .cpu:
+      let processes = top({ ($0.cpu ?? 0) > ($1.cpu ?? 0) }, value: { Format.percent($0.cpu) })
+      let primaryCount = min(5, processes.count)
+      let groups = s.cpu.groups.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
       var rows: [DashboardRow] = [
-        DashboardRow.heading("Processor"),
-        DashboardRow.gauge("Total", Format.percent(s.cpu.total), s.cpu.total, AeriePalette.cpu),
-        DashboardRow.metric("User", Format.percent(s.cpu.user)),
-        DashboardRow.metric("System", Format.percent(s.cpu.system)),
-        DashboardRow.chart("cpu", "CPU %", AeriePalette.cpu, 100),
-        DashboardRow.heading("Logical cores"), DashboardRow.cores(s.cpu.cores),
+        .trend(
+          "CPU " + Format.percent(s.cpu.total),
+          "User " + Format.percent(s.cpu.user) + " · System " + Format.percent(s.cpu.system),
+          [DashboardSeries(key: "cpu", title: "CPU %", color: AeriePalette.cpu, maximum: 100)]),
+        .coreGrid(
+          s.cpu.cores, "\(s.cpu.cores.count) logical cores" + (groups.isEmpty ? "" : " · " + groups)
+        ),
+        .heading("Top CPU processes"),
       ]
-      rows += s.cpu.groups.map { DashboardRow.metric($0.0, "\($0.1) logical cores") }
+      rows += processes.prefix(primaryCount)
+      rows += gpuSummaryRows()
+      rows.append(
+        .facts([
+          (
+            "Load · 1 / 5 / 15 min",
+            s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")
+          ),
+          ("Uptime", Format.duration(s.cpu.uptime)),
+        ]))
       rows += [
-        DashboardRow.metric(
+        .heading("Processor details"),
+        .metric(
           "Nominal frequency",
           s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Load 1 / 5 / 15 min",
-          s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")),
-        DashboardRow.metric("Uptime", Format.duration(s.cpu.uptime)),
       ]
+      if processes.count > primaryCount {
+        rows += [.heading("Process accounting")] + processes.dropFirst(primaryCount)
+      }
       rows += clockRows(kinds: [.cpuComplex, .cpuCore])
-      rows.append(.heading("Top CPU processes"))
-      rows += top({ ($0.cpu ?? 0) > ($1.cpu ?? 0) }, value: { Format.percent($0.cpu) })
-      rows += [
-        DashboardRow.note(
-          "Logical-core bars show scheduler load. Clock-state residency reports separate hardware activity; channel names come from the system. Dynamic GHz remains unavailable for unnamed frequency states."
-        )
-      ]
+      rows.append(
+        .note(
+          "Logical-core indicators show scheduler load. Clock-state residency is separate hardware activity; system channel names do not prove physical core roles. GHz requires named frequency states."
+        ))
       return rows
     case .gpu:
-      var rows: [DashboardRow] = [DashboardRow.chart("gpu", "GPU %", AeriePalette.cpu, 100)]
+      var rows: [DashboardRow] = [
+        .trend(
+          "GPU " + Format.percent(s.gpu.first?.utilization),
+          s.gpu.first?.name ?? "Driver telemetry unavailable",
+          [DashboardSeries(key: "gpu", title: "GPU %", color: AeriePalette.cpu, maximum: 100)])
+      ]
       for gpu in s.gpu {
-        rows += [
-          DashboardRow.heading(gpu.name),
-          DashboardRow.gauge(
-            "Device utilization", Format.percent(gpu.utilization), gpu.utilization, AeriePalette.cpu
-          ),
-          DashboardRow.metric("Renderer", Format.percent(gpu.renderer)),
-          DashboardRow.metric("Tiler", Format.percent(gpu.tiler)),
-          DashboardRow.metric(
-            "In-use shared memory", gpu.memory.map { self.bytes($0) } ?? "Unavailable"),
-          DashboardRow.metric(
-            "Temperature",
-            gpu.temperature.map { Format.temperature($0, unit: settings.temperature) }
-              ?? "Unavailable"),
-          DashboardRow.metric(
-            "Frequency", gpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
-          DashboardRow.metric(
-            "Frame rate", gpu.fps.map { String(format: "%.0f FPS", $0) } ?? "Unavailable"),
+        var facts: [(String, String)] = [
+          ("Renderer", Format.percent(gpu.renderer)), ("Tiler", Format.percent(gpu.tiler)),
+          ("Utilization", Format.percent(gpu.utilization)),
+          ("In-use shared memory", gpu.memory.map { self.bytes($0) } ?? "Unavailable"),
         ]
+        if let value = gpu.temperature {
+          facts.append(("Temperature", Format.temperature(value, unit: settings.temperature)))
+        }
+        if let value = gpu.frequency {
+          facts.append(("Frequency", String(format: "%.2f GHz", value)))
+        }
+        if let value = gpu.fps { facts.append(("Frame rate", String(format: "%.0f FPS", value))) }
+        rows += [.heading(gpu.name), .facts(facts)]
       }
+      rows += [
+        .heading("CPU context"),
+        .facts([
+          ("CPU total", Format.percent(s.cpu.total)),
+          ("User / system", Format.percent(s.cpu.user) + " / " + Format.percent(s.cpu.system)),
+          (
+            "Load · 1 / 5 / 15 min",
+            s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")
+          ),
+          ("Uptime", Format.duration(s.cpu.uptime)),
+        ]), .heading("Advanced GPU telemetry"),
+      ]
+      rows += clockRows(kinds: [.gpu])
       rows.append(
-        DashboardRow.note(
-          "Driver-exposed statistics vary by GPU. Global FPS and per-process GPU utilization are unavailable when the driver does not publish them."
+        .note(
+          "Optional temperature, frequency and frame-rate fields appear only when the driver exposes them. Global FPS and per-process GPU utilization remain unavailable without a supported source."
         ))
-      return rows + clockRows(kinds: [.gpu])
+      return rows
     case .memory:
       let m = s.memory
       guard m.validity == .fresh else {
@@ -912,31 +1015,56 @@ final class DashboardController: NSViewController {
         ] + top({ $0.memory > $1.memory }, value: { bytes($0.memory) })
       }
       return [
-        DashboardRow.heading("Memory"), DashboardRow.metric("Pressure", m.pressure),
-        DashboardRow.gauge(
-          "Used", Format.percent(m.usedFraction), m.usedFraction, AeriePalette.memory),
-        DashboardRow.chart("memory", "Used memory %", AeriePalette.memory, 100),
-        DashboardRow.metric("Physical", bytes(m.total)),
-        DashboardRow.metric("App", bytes(m.app)), DashboardRow.metric("Wired", bytes(m.wired)),
-        DashboardRow.metric("Compressed", bytes(m.compressed)),
-        DashboardRow.metric("Free", bytes(m.free)),
-        DashboardRow.metric("File cache", bytes(m.cached)),
-        DashboardRow.metric("Purgeable", bytes(m.purgeable)),
-        DashboardRow.heading("Virtual memory"),
-        DashboardRow.metric("Swap", "\(bytes(m.swap)) / \(bytes(m.swapTotal))"),
-        DashboardRow.metric("Page in", rate(m.pageIn)),
-        DashboardRow.metric("Page out", rate(m.pageOut)),
-        DashboardRow.metric("Swap in", rate(m.swapIn)),
-        DashboardRow.metric("Swap out", rate(m.swapOut)),
-        DashboardRow.heading("Top memory processes"),
-      ] + top({ $0.memory > $1.memory }, value: { bytes($0.memory) })
-    case .storage:
-      var rows: [DashboardRow] = [
-        DashboardRow.heading("Disk activity"), DashboardRow.metric("Read", rate(s.diskRead)),
-        DashboardRow.metric("Write", rate(s.diskWrite)),
-        DashboardRow.chart("diskRead", "Read bytes/s", AeriePalette.incoming, nil),
-        DashboardRow.chart("diskWrite", "Write bytes/s", AeriePalette.outgoing, nil),
+        .trend(
+          "Memory " + Format.percent(m.usedFraction),
+          "Pressure " + m.pressure + " · " + bytes(m.total) + " physical",
+          [
+            DashboardSeries(
+              key: "memory", title: "Memory %", color: AeriePalette.memory, maximum: 100)
+          ]),
+        .facts([
+          ("App", bytes(m.app)), ("Wired", bytes(m.wired)), ("Compressed", bytes(m.compressed)),
+          ("File cache", bytes(m.cached)),
+        ]),
+        .heading("Top memory processes"),
+      ] + top({ $0.memory > $1.memory }, value: { bytes($0.memory) }) + [
+        .heading("Memory details"),
+        .facts([
+          ("Physical", bytes(m.total)), ("Free", bytes(m.free)), ("Purgeable", bytes(m.purgeable)),
+          ("Swap", bytes(m.swap) + " / " + bytes(m.swapTotal)),
+        ]),
+        .heading("Virtual memory activity"),
+        .facts([
+          ("Page in", rate(m.pageIn)), ("Page out", rate(m.pageOut)), ("Swap in", rate(m.swapIn)),
+          ("Swap out", rate(m.swapOut)),
+        ]),
       ]
+    case .storage:
+      let ioRows = top(
+        { left, right in
+          (left.read ?? 0) + (left.write ?? 0) > (right.read ?? 0) + (right.write ?? 0)
+        }, value: { "R \(rate($0.read))  W \(rate($0.write))" })
+      var rows: [DashboardRow] = [
+        .trend(
+          "Disk activity", "↓ Read " + rate(s.diskRead) + " · ↑ Write " + rate(s.diskWrite),
+          [
+            DashboardSeries(
+              key: "diskRead", title: "Read B/s", color: AeriePalette.incoming, maximum: nil),
+            DashboardSeries(
+              key: "diskWrite", title: "Write B/s", color: AeriePalette.outgoing, maximum: nil),
+          ])
+      ]
+      if let volume = s.volumes.first {
+        rows += [
+          .heading(volume.name),
+          .facts([
+            ("Capacity", bytes(volume.total)), ("Available", bytes(volume.free)),
+            ("Used", volume.total > 0 ? Format.percent(volume.usedFraction) : "Unavailable"),
+          ]),
+        ]
+      }
+      rows += [.heading("Top process I/O")] + ioRows
+      rows.append(.heading("Volume details"))
       for v in s.volumes {
         rows += [
           DashboardRow.heading(v.name), DashboardRow.metric("Capacity", bytes(v.total)),
@@ -995,14 +1123,6 @@ final class DashboardController: NSViewController {
         .note(
           "SMART is the OS-reported drive threshold state, not a diagnostic scan or remaining-life estimate. Read-only metadata refreshes once per minute only while visible. Temperature and endurance remain unavailable when no supported telemetry source exists. Virtual/image APFS stores are identified as backing devices without claiming physical drive health."
         ))
-      rows.append(.heading("Top process I/O"))
-      let ioRows = top(
-        { left, right in
-          let leftBytes = (left.read ?? 0) + (left.write ?? 0)
-          let rightBytes = (right.read ?? 0) + (right.write ?? 0)
-          return leftBytes > rightBytes
-        }, value: { process in "R \(rate(process.read))  W \(rate(process.write))" })
-      rows.append(contentsOf: ioRows)
       rows.append(
         .note(
           "Disk rates are physical-device totals; process I/O uses OS accounting. Per-device association uses native whole-media registry records and read-only OS/APFS metadata; unassociated sources remain explicit. No drive scan, repair, device write or elevated helper is performed."
@@ -1010,16 +1130,55 @@ final class DashboardController: NSViewController {
       return rows
     case .network:
       var rows: [DashboardRow] = [
-        DashboardRow.heading("Traffic"), DashboardRow.metric("Connectivity", s.connectivity),
-        DashboardRow.metric("Download", rate(s.download, domain: .network)),
-        DashboardRow.metric("Upload", rate(s.upload, domain: .network)),
-        DashboardRow.chart("download", "Download bytes/s", AeriePalette.incoming, nil),
-        DashboardRow.chart("upload", "Upload bytes/s", AeriePalette.outgoing, nil),
-        DashboardRow.note(
-          s.networkSelection.description
-            + ". Collection still includes every reported interface. Aggregate rates require a valid baseline for every selected active interface."
-        ),
+        .trend(
+          "Network traffic",
+          "↓ " + rate(s.download, domain: .network) + " · ↑ " + rate(s.upload, domain: .network),
+          [
+            DashboardSeries(
+              key: "download", title: "↓ B/s", color: AeriePalette.incoming, maximum: nil),
+            DashboardSeries(
+              key: "upload", title: "↑ B/s", color: AeriePalette.outgoing, maximum: nil),
+          ]),
+        .facts([
+          ("Connectivity", s.connectivity), ("Aggregate scope", s.networkSelection.description),
+        ]),
       ]
+      rows.append(.heading("Process traffic"))
+      let networkOrder = settings.processSorts?[.network] ?? .automatic
+      let sortedProcesses = ProcessPresentation.network(
+        s.networkProcesses, groups: s.networkProcessGroups,
+        enabled: settings.effectiveCombineProcesses, sort: networkOrder)
+      if sortedProcesses.isEmpty {
+        rows.append(.metric("Process traffic", "Waiting for OS reading"))
+      }
+      for process in sortedProcesses.prefix(settings.processCount) {
+        let title = process.members > 1 ? process.name : "\(process.name) · \(process.pid)"
+        let incoming = rate(process.download, domain: .network)
+        let outgoing = rate(process.upload, domain: .network)
+        rows.append(.metric(title, "↓ \(incoming)  ↑ \(outgoing)"))
+      }
+      var processNotes: [DashboardRow] = [.note(s.processNetworkStatus)]
+      if settings.effectiveCombineProcesses {
+        let missing = s.networkProcesses.filter {
+          s.networkProcessGroups[ProcessIdentity(pid: Int($0.pid), startTime: $0.startTime)] == nil
+        }.count
+        processNotes.append(
+          .note(
+            "Combined by application bundle or executable. \(missing) readable traffic identities stay separate. Group rates require every member's baseline."
+          ))
+      }
+      if networkOrder != .automatic {
+        processNotes.append(.note("Process order: " + networkOrder.title))
+      }
+      processNotes.append(
+        .note(
+          "Process totals cover OS-reported TCP/UDP activity across interfaces, including loopback; they use independent process-start baselines and do not follow the aggregate interface filter. Protected, missing or reset readings have unavailable rates. The app owns one OS logger only while this panel is visible."
+        ))
+      processNotes.append(
+        .note(
+          s.networkSelection.description
+            + ". Collection includes every reported interface; aggregate rates require every selected active interface baseline."
+        ))
       rows.append(.heading("External address"))
       if let publicAddress {
         rows.append(.metric(publicAddress.family, publicAddress.address))
@@ -1089,47 +1248,34 @@ final class DashboardController: NSViewController {
         .note(
           "Radio details refresh every 30 seconds while this panel is open, or when the network path or authorization changes. Zero error sentinels are unavailable. Identity is discarded on close, pause or sleep; no network scan is performed."
         ))
-      rows.append(.heading("Process traffic"))
-      rows.append(.note(s.processNetworkStatus))
-      let networkOrder = settings.processSorts?[.network] ?? .automatic
-      let sortedProcesses = ProcessPresentation.network(
-        s.networkProcesses, groups: s.networkProcessGroups,
-        enabled: settings.effectiveCombineProcesses, sort: networkOrder)
-      for process in sortedProcesses.prefix(settings.processCount) {
-        let title = process.members > 1 ? process.name : "\(process.name) · \(process.pid)"
-        let incoming = rate(process.download, domain: .network)
-        let outgoing = rate(process.upload, domain: .network)
-        rows.append(.metric(title, "↓ \(incoming)  ↑ \(outgoing)"))
-      }
-      if settings.effectiveCombineProcesses {
-        let missing = s.networkProcesses.filter {
-          s.networkProcessGroups[ProcessIdentity(pid: Int($0.pid), startTime: $0.startTime)] == nil
-        }.count
-        rows.append(
-          .note(
-            "Combined by application bundle or executable. \(missing) readable traffic identities stay separate. Group rates require every member's baseline."
-          ))
-      }
-      if networkOrder != .automatic { rows.append(.note("Process order: " + networkOrder.title)) }
-      rows.append(
-        .note(
-          "Process totals cover OS-reported TCP/UDP activity across interfaces, including loopback; they use independent process-start baselines and do not follow the aggregate interface filter. Protected, missing or reset readings have unavailable rates. The app owns one OS logger only while this panel is visible."
-        ))
+      rows += [.heading("Traffic accounting")] + processNotes
       rows.append(
         DashboardRow.note(
           "Virtual tunnels may count the same traffic again. Choose aggregate interfaces in Network Settings; all interfaces remain sampled and displayed. Observed sessions rebase after unavailable/reset/disappearing counters."
         ))
       return rows
     case .sensors:
-      var rows: [DashboardRow] = [
-        DashboardRow.heading("Hardware"), DashboardRow.metric("Thermal state", s.thermal),
-        DashboardRow.note(s.sensorStatus),
-        DashboardRow.note(
-          settings.effectiveSensorSampling == .all
-            ? "All supported sensors are sampled at the selected system interval."
-            : "On-demand sampling keeps all temperatures and enabled individual-rule sensors live; other readings wait until this panel opens."
-        ),
-      ]
+      let primary = s.sensors.filter { $0.unit == "°C" && $0.state == .live && $0.value != nil }.max
+      {
+        ($0.value ?? 0) < ($1.value ?? 0)
+      }
+      var rows: [DashboardRow] = [.heading("Menu temperature · highest live reading")]
+      if let primary {
+        let value =
+          primary.state == .live
+          ? primary.value.map {
+            primary.unit == "°C"
+              ? Format.temperature($0, unit: settings.temperature)
+              : String(format: "%.1f %@", $0, primary.unit)
+          } : nil
+        rows.append(
+          .metric(
+            primary.title(names: settings.sensorNames),
+            value ?? (primary.state == .deferred ? "Waiting for live read" : "Unavailable")))
+      } else {
+        rows.append(.metric("Temperature source", "Unavailable"))
+      }
+      rows.append(.metric("Thermal state", s.thermal))
       for unit in ["°C", "rpm", "W", "V", "A"] {
         let sensors = s.sensors.filter { $0.unit == unit }
         guard !sensors.isEmpty else { continue }
@@ -1152,6 +1298,14 @@ final class DashboardController: NSViewController {
         }
       }
       rows += [
+        .note(s.sensorStatus),
+        .note(
+          settings.effectiveSensorSampling == .all
+            ? "All supported sensors are sampled at the selected system interval."
+            : "On-demand sampling keeps temperatures and enabled individual-rule sensors live; other readings wait until this panel opens."
+        ),
+      ]
+      rows += [
         DashboardRow.note(
           "Firmware key names appear when a sensor label is unknown. Aerie only reads sensors. Fan profiles require a separately approved and safety-tested control implementation."
         )
@@ -1168,22 +1322,30 @@ final class DashboardController: NSViewController {
       ]
       if p.present {
         rows += [
-          DashboardRow.gauge("Charge", Format.percent(p.percent), p.percent, AeriePalette.power),
-          DashboardRow.metric("Charging", p.charging.map { $0 ? "Yes" : "No" } ?? "Unavailable"),
-          DashboardRow.metric(
-            p.charging == true ? "Time to full" : "Time remaining",
-            Format.powerTime(
-              p.minutes, charging: p.charging,
-              input: p.external.map { $0 ? .ac : .battery } ?? .unknown)),
-          DashboardRow.chart("battery", "Battery %", AeriePalette.power, 100),
-          DashboardRow.metric("Health", Format.percent(p.health)),
-          DashboardRow.metric("Cycles", p.cycles.map { String($0) } ?? "Unavailable"),
-          DashboardRow.metric(
-            "Battery power", p.watts.map { String(format: "%.2f W", $0) } ?? "Unavailable"),
-          DashboardRow.metric(
-            "Voltage", p.voltage.map { String(format: "%.2f V", $0) } ?? "Unavailable"),
-          DashboardRow.metric(
-            "Current", p.amperage.map { String(format: "%.2f A", $0) } ?? "Unavailable"),
+          .trend(
+            "Charge " + Format.percent(p.percent),
+            p.sourceLabel + " · "
+              + (p.charging.map { $0 ? "Charging" : "Not charging" } ?? "Charging unavailable"),
+            [
+              DashboardSeries(
+                key: "battery", title: "Battery %", color: AeriePalette.power, maximum: 100)
+            ]),
+          .facts([
+            ("Health", Format.percent(p.health)),
+            ("Cycles", p.cycles.map { String($0) } ?? "Unavailable"),
+            (
+              p.charging == true ? "Time to full" : "Time remaining",
+              Format.powerTime(
+                p.minutes, charging: p.charging,
+                input: p.external.map { $0 ? .ac : .battery } ?? .unknown)
+            ),
+            ("Battery power", p.watts.map { String(format: "%.2f W", $0) } ?? "Unavailable"),
+          ]),
+          .heading("Electrical details"),
+          .facts([
+            ("Voltage", p.voltage.map { String(format: "%.2f V", $0) } ?? "Unavailable"),
+            ("Current", p.amperage.map { String(format: "%.2f A", $0) } ?? "Unavailable"),
+          ]),
         ]
       }
       if p.present && p.inventory.primaryBattery == nil {
@@ -1211,14 +1373,15 @@ final class DashboardController: NSViewController {
       let now = Date()
       let formatter = DateFormatter()
       LocalClockFormat.configure(formatter, pattern: settings.clockFormat)
-      var rows: [DashboardRow] = [
-        DashboardRow.heading("Local time"),
-        DashboardRow.metric(
-          formatter.string(from: now), TimeZone.current.abbreviation() ?? "Local"),
-        DashboardRow.metric("Moon phase (approx.)", Astronomy.moonName(at: now)),
-        DashboardRow.metric("Lunar age", String(format: "%.1f days", Astronomy.moonAge(at: now))),
-        DashboardRow.heading("World clocks"),
-      ]
+      var rows: [DashboardRow] =
+        [
+          DashboardRow.heading("Local time"),
+          DashboardRow.metric(
+            formatter.string(from: now), TimeZone.current.abbreviation() ?? "Local"),
+          DashboardRow.heading("Calendar"),
+        ] + calendarRows + [
+          DashboardRow.heading("World clocks")
+        ]
       for reading in ClockPresentation.readings(
         settings.clocks, at: now, order: settings.worldClockOrder ?? .manual)
       {
@@ -1230,8 +1393,14 @@ final class DashboardController: NSViewController {
           rows.append(.metric("Next daylight saving change", f.string(from: next)))
         }
       }
+      rows += [
+        .heading("Astronomical estimates"),
+        .facts([
+          ("Moon phase (approx.)", Astronomy.moonName(at: now)),
+          ("Lunar age", String(format: "%.1f days", Astronomy.moonAge(at: now))),
+        ]),
+      ]
       rows += daylightRows(now: now)
-      rows += [DashboardRow.heading("Calendar")] + calendarRows
       return rows
     case .weather:
       guard settings.weather.valid else {
@@ -1249,37 +1418,31 @@ final class DashboardController: NSViewController {
       let f = DateFormatter()
       f.dateFormat = "EEE d MMM HH:mm z"
       f.timeZone = w.timeContext.instantZone
-      if let station = w.observationStation { rows.append(.metric("Observation station", station)) }
-      if let time = w.observationTime {
-        rows.append(.metric("Observation time", f.string(from: time)))
-      }
-      if let time = w.forecastUpdated {
-        rows.append(.metric("Forecast updated", f.string(from: time)))
-      }
-      for note in w.notes { rows.append(.note(note)) }
       rows += [
-        DashboardRow.metric("Conditions", w.condition ?? WeatherCondition.describe(w.code)),
-        DashboardRow.metric(
-          "Temperature",
-          w.temperature.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Feels like",
-          w.apparent.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Humidity", w.humidity.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Wind / gusts",
-          "\(w.wind.map { String(format: "%.1f", $0) } ?? "—") / \(w.gusts.map { String(format: "%.1f km/h", $0) } ?? "—")"
-        ),
-        DashboardRow.metric(
-          "Direction", w.direction.map { String(format: "%.0f°", $0) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Pressure", w.pressure.map { String(format: "%.0f hPa", $0) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Cloud cover", w.cloud.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
-        DashboardRow.note(w.timeContext.description),
-        DashboardRow.heading("Hourly forecast"),
+        .facts([
+          ("Conditions", w.condition ?? WeatherCondition.describe(w.code)),
+          (
+            "Temperature",
+            w.temperature.map { Format.temperature($0, unit: settings.temperature) }
+              ?? "Unavailable"
+          ),
+          (
+            "Feels like",
+            w.apparent.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable"
+          ),
+          ("Humidity", w.humidity.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
+        ])
       ]
+      if let alerts = w.alertReport {
+        rows.append(.metric("Alert refresh", f.string(from: alerts.fetched)))
+      }
+      if let alerts = w.alertReport, !alerts.alerts.isEmpty {
+        rows.append(.heading("Current point alerts"))
+        for (index, alert) in alerts.alerts.enumerated() {
+          rows.append(.action(alert.event, alert.severity, "weather-alert:\(index)"))
+        }
+      }
+      rows.append(.heading("Hourly forecast"))
       f.dateFormat = "EEE HH:mm"
       let hours = HourlyForecastPresentation.indices(
         w.hours, at: Date(), limit: settings.effectiveHourlyForecastHours)
@@ -1301,6 +1464,29 @@ final class DashboardController: NSViewController {
         .note(
           "Showing \(hours.count) cached hourly periods, up to \(settings.effectiveHourlyForecastHours). Select an hour for available wind, humidity, precipitation and other details. No extra requests are made."
         ))
+      rows.append(.heading("Observation details"))
+      f.dateFormat = "EEE d MMM HH:mm z"
+      if let station = w.observationStation { rows.append(.metric("Observation station", station)) }
+      if let time = w.observationTime {
+        rows.append(.metric("Observation time", f.string(from: time)))
+      }
+      if let time = w.forecastUpdated {
+        rows.append(.metric("Forecast updated", f.string(from: time)))
+      }
+      for note in w.notes { rows.append(.note(note)) }
+      rows += [
+        DashboardRow.metric(
+          "Wind / gusts",
+          "\(w.wind.map { String(format: "%.1f", $0) } ?? "—") / \(w.gusts.map { String(format: "%.1f km/h", $0) } ?? "—")"
+        ),
+        DashboardRow.metric(
+          "Direction", w.direction.map { String(format: "%.0f°", $0) } ?? "Unavailable"),
+        DashboardRow.metric(
+          "Pressure", w.pressure.map { String(format: "%.0f hPa", $0) } ?? "Unavailable"),
+        DashboardRow.metric(
+          "Cloud cover", w.cloud.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
+        DashboardRow.note(w.timeContext.description),
+      ]
       if !w.periods.isEmpty {
         rows.append(.heading("Named forecast periods"))
         for (index, period) in w.periods.enumerated() {
@@ -1344,9 +1530,6 @@ final class DashboardController: NSViewController {
               + ". Alert validity is separate from forecast-period times."))
         if alerts.alerts.isEmpty {
           rows.append(.note("No active point alerts returned at fetch time."))
-        }
-        for (index, alert) in alerts.alerts.enumerated() {
-          rows.append(.action(alert.event, alert.severity, "weather-alert:\(index)"))
         }
         if alerts.moreAvailable {
           rows.append(

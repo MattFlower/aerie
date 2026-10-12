@@ -9,7 +9,7 @@ private final class MenuDashboardWindow: NSPanel {
 /// An opaque, ordinary AppKit utility panel. The dashboard and every source keep their cadence.
 final class MenuPanel: NSObject, NSWindowDelegate {
   var contentViewController: NSViewController?
-  var contentSize = NSSize(width: 416, height: 620)
+  var contentSize = NSSize(width: 416, height: 600)
   var onClose: (() -> Void)?
   var onCreate: ((NSWindow) -> Void)?
   var onShow: ((NSWindow) -> Void)?
@@ -27,10 +27,13 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     let anchor = Self.anchor(attached: attachedAnchor, visibleFrame: screen.visibleFrame)
     let window = MenuDashboardWindow(
       contentRect: NSRect(origin: .zero, size: contentSize),
-      styleMask: [.titled, .closable, .utilityWindow], backing: .buffered,
+      styleMask: [.titled, .closable, .utilityWindow, .fullSizeContentView], backing: .buffered,
       defer: false)
     window.isReleasedWhenClosed = false
     window.title = "Aerie"
+    window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
+    // Full-size content includes the native close controls in the one compact header.
+    window.setFrame(NSRect(origin: .zero, size: contentSize), display: false)
     window.isOpaque = true; window.backgroundColor = .windowBackgroundColor
     window.hasShadow = true; window.isFloatingPanel = true
     window.hidesOnDeactivate = false; window.level = .floating
@@ -47,6 +50,14 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
     onShow?(window)
+  }
+  func reanchor(to button: NSStatusBarButton) {
+    guard let panel, let screen = button.window?.screen ?? panel.screen else { return }
+    let attached = button.window.map { $0.convertToScreen(button.convert(button.bounds, to: nil)) }
+    panel.setFrameOrigin(
+      Self.origin(
+        anchor: Self.anchor(attached: attached, visibleFrame: screen.visibleFrame),
+        visibleFrame: screen.visibleFrame, size: panel.frame.size))
   }
   deinit {
     if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }

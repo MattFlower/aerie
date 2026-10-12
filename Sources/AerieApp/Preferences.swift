@@ -822,7 +822,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
   }
   @objc private func compactMenus() {
     choices["menuLayout"]?.selectItem(at: 0)
-    choices["menuPadding"]?.selectItem(at: 0); choices["menuGap"]?.selectItem(at: 0)
+    choices["menuPadding"]?.selectItem(at: 0); choices["menuGap"]?.selectItem(at: 2)
     toggles["spacing"]?.state = .on
     for module in menuStyles.keys {
       menuStyles[module]?.selectItem(

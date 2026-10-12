@@ -76,10 +76,31 @@ final class GroupedStatusView: NSView {
     else { return nil }
     return widgets[index].module
   }
+  /// NSStatusBarButton may receive the tracked click instead of its child view.
+  /// Pointer activation uses the same rectangles as drawing; gaps never select a neighbor.
+  @discardableResult func activate(at point: NSPoint?) -> Bool {
+    guard let point else { return press(index: selected) }
+    guard let index = segments.firstIndex(where: { $0.contains(point) }) else { return false }
+    return press(index: index)
+  }
+  @discardableResult func activate(from event: NSEvent?) -> Bool {
+    guard let event else { return activate(at: nil) }
+    switch event.type {
+    case .leftMouseDown, .leftMouseUp:
+      guard let window else { return false }
+      let position =
+        event.window === window
+        ? event.locationInWindow : window.convertPoint(fromScreen: NSEvent.mouseLocation)
+      return activate(at: convert(position, from: nil))
+    default: return activate(at: nil)
+    }
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    window?.makeFirstResponder(self)
+  }
   override func mouseUp(with event: NSEvent) {
-    let point = convert(event.locationInWindow, from: nil)
-    guard let index = segments.firstIndex(where: { $0.contains(point) }) else { return }
-    _ = press(index: index)
+    _ = activate(at: convert(event.locationInWindow, from: nil))
   }
   override func rightMouseUp(with event: NSEvent) { onContext?() }
   override func keyDown(with event: NSEvent) {

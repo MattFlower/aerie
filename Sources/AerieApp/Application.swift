@@ -81,7 +81,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     history.configure(interval: settings.interval)
     configureHistoryPersistence(load: true)
-    menuPanel.contentSize = NSSize(width: 416, height: 620)
+    menuPanel.contentSize = NSSize(width: 416, height: 600)
     menuPanel.contentViewController = dashboard
     menuPanel.onClose = { [weak self] in self?.dashboardDidClose() }
     menuPanel.onCreate = { [weak self] in self?.windowLifecycle?.register($0, role: .dashboard) }
@@ -179,6 +179,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     dashboard.onMaps = { [weak self] in self?.showMaps() }
     dashboard.onExportHistory = { [weak self] in self?.exportHistory(window: $0, points: $1) }
     dashboard.onModule = { [weak self] module in
+      self?.currentMenuModule = module
       self?.collector?.setVisibleModule(module)
       self?.releaseViewMetadata(module: module)
       self?.updateCalendar()
@@ -533,11 +534,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let group = GroupedStatusView(frame: button.bounds); groupedStatus = group
         group.onSelect = { [weak self, weak button] module in
           guard let self, let button else { return }
-          if self.menuPanel.isShown && self.currentMenuModule == module {
-            self.menuPanel.performClose(nil)
-          } else {
-            self.showModule(module, anchoredTo: button)
-          }
+          self.toggleModule(module, anchoredTo: button)
         }
         group.onContext = { [weak self, weak button] in
           if let button { self?.clickedStatus(button) }
@@ -564,14 +561,22 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
       return
     }
-    if let group = groupedStatus { _ = group.press(index: 0); return }
-    if menuPanel.isShown { menuPanel.performClose(nil); return }
+    if let group = groupedStatus { _ = group.activate(from: NSApp.currentEvent); return }
     let module = items.first { $0.1.button === sender }?.0.module ?? .overview
-    showModule(module, anchoredTo: sender)
+    toggleModule(module, anchoredTo: sender)
+  }
+  private func toggleModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
+    switch ModuleActivation.resolve(
+      requested: module, shown: menuPanel.isShown ? dashboard.module : nil)
+    {
+    case .close: menuPanel.performClose(nil)
+    case .show(let selected): showModule(selected, anchoredTo: button)
+    }
   }
   private func showModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
-    if menuPanel.isShown { menuPanel.performClose(nil) }
+    let switching = menuPanel.isShown
     currentMenuModule = module
+    releaseViewMetadata(module: module)
     idleMemory.presentationOpened()
     dashboard.snapshot = snapshot
     dashboard.settings = settings
@@ -585,7 +590,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     dashboard.show(module)
     updateCalendar(opening: true)
     collector?.setVisibleModule(module)
-    menuPanel.show(anchoredTo: button)
+    if switching { menuPanel.reanchor(to: button) } else { menuPanel.show(anchoredTo: button) }
+    dashboard.view.window?.setAccessibilityLabel("Aerie \(module.title) detail")
     menuPanel.contentViewController?.view.window?.makeKey()
   }
   private func dashboardDidClose() {
@@ -883,7 +889,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     preferences?.onDashboard = { [weak self] in
       guard let self, let button = self.items.first?.1.button else { return };
-      self.preferences?.close(); self.clickedStatus(button)
+      self.preferences?.close(); self.showModule(.overview, anchoredTo: button)
     }
     preferences?.onNotifications = { [weak self] in self?.requestNotifications() }
     preferences?.onCalendar = { [weak self] in self?.requestCalendar() }

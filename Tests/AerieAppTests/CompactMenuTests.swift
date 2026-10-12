@@ -62,7 +62,7 @@ final class CompactMenuTests: XCTestCase {
         MenuRenderer.widget(external, padding: 1).size)
     }
   }
-  func testEightEnabledModulesFitAnExplicitLaptopBudgetWithStableValuesAndFullAccessibility()
+  func testEightEnabledModulesDiscloseTheBreathingRoomCostWithStableValuesAndFullAccessibility()
     async throws
   {
     try await MainActor.run {
@@ -90,11 +90,12 @@ final class CompactMenuTests: XCTestCase {
       let preview = MenuBarPreview(frame: .zero)
       let beforeWidth = preview.update(before, padding: 4, gap: 6)
       let beforeParts = preview.moduleWidths
-      let afterWidth = preview.update(after, padding: 0, gap: 0)
+      let afterWidth = preview.update(after, padding: 0, gap: 2)
       let afterParts = preview.moduleWidths
       // Synthetic1440pt display: (1440 -200 reserved center)/2 -140 system -120 other =360pt.
       let budget: CGFloat = (1440 - 200) / 2 - 140 - 120
-      XCTAssertEqual(after.count, before.count); XCTAssertLessThanOrEqual(afterWidth, budget)
+      XCTAssertEqual(after.count, before.count)
+      XCTAssertEqual(afterWidth, 373); XCTAssertEqual(afterWidth - budget, 13)
       XCTAssertLessThan(afterWidth, beforeWidth * 0.75)
       for descriptor in after {
         for content in ["0%", "100%", "Unavailable", "—", "999999999999%"] {
@@ -111,7 +112,7 @@ final class CompactMenuTests: XCTestCase {
         XCTAssertTrue(descriptor.accessibility.contains(descriptor.value.full))
       }
       let group = GroupedStatusView(frame: .zero)
-      XCTAssertEqual(group.update(after, padding: 0, gap: 0), afterWidth)
+      XCTAssertEqual(group.update(after, padding: 0, gap: 2), afterWidth)
       if let directory = ProcessInfo.processInfo.environment["AERIE_COMPACT_FIXTURE_DIRECTORY"] {
         let url = URL(fileURLWithPath: directory, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
