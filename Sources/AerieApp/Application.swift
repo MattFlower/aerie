@@ -864,6 +864,19 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       self?.windowLifecycle?.register($0, role: .calendar)
     }
     preferences?.onApply = { [weak self] in self?.apply($0) }
+    preferences?.onMenuPreview = { [weak self] draft in
+      guard let self else { return [] }
+      if draft.combined {
+        return draft.visibleCombinedModules.map { module in
+          self.widget(
+            MenuConfiguration(
+              module: module, style: draft.combinedStyle ?? .text,
+              colorHex: draft.combinedColorHex,
+              labelPlacement: draft.menus.first(where: { $0.module == module })?.labelPlacement))
+        }
+      }
+      return draft.visibleMenus.map { self.widget($0) }
+    }
     preferences?.onClose = { [weak self] in
       self?.cancelWiFiPermission(); self?.preferences = nil
       self?.idleMemory.presentationClosed()

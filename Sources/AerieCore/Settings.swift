@@ -148,7 +148,17 @@ public struct Settings: Codable, Equatable {
   public var rules: [ThresholdRule] = []
   // Optional for decoding configurations saved before change rules existed.
   public var changeRules: [ChangeRule]?
-  public init() { groupedMenus = true }
+  public init() { applyCompactMenuPreset() }
+  /// Presentation only: preserves every module's visibility/order and every collector/source setting.
+  public mutating func applyCompactMenuPreset() {
+    groupedMenus = true; combined = false; compactSpacing = true; menuPadding = 1; menuGap = 2
+    for index in menus.indices {
+      let module = menus[index].module
+      menus[index].style = module == .time ? .text : .compact
+      menus[index].labelPlacement =
+        module == .overview || module == .weather ? .icon : module == .time ? .none : .vertical
+    }
+  }
   public func validated() throws -> Settings {
     guard effectiveCalendarOptions.valid, EventCalendarSelection.valid(eventCalendars) else {
       throw SettingsError.invalid

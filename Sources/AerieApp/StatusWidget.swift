@@ -101,10 +101,24 @@ extension MenuRenderer {
             ]).width) + 5 : 0
     let isNetwork = descriptor.module == .network
     let stacked = descriptor.style == .stacked || isNetwork
-    let content = descriptor.value.compact
+    var content = descriptor.value.compact
+    let compact = descriptor.style == .compact
+    let iconOnly = compact && descriptor.module == .overview && label == .icon
+    if compact {
+      if content == "Unavailable" || content == "TEMP —" || content == "WX —" { content = "—" }
+      if content.hasSuffix("°C") || content.hasSuffix("°F") { content.removeLast() }
+    }
     let width: CGFloat
-    if isNetwork {
-      width = (descriptor.style == .graph ? 116 : 90) + labelWidth + padding * 2
+    if iconOnly {
+      width = labelWidth + padding * 2
+    } else if isNetwork {
+      width = (compact ? 60 : descriptor.style == .graph ? 116 : 90) + labelWidth + padding * 2
+    } else if compact,
+      [.cpu, .gpu, .memory, .storage, .power, .sensors, .weather].contains(descriptor.module)
+    {
+      width =
+        (descriptor.module == .sensors || descriptor.module == .weather ? 42 : 28) + labelWidth
+        + padding * 2
     } else if descriptor.style == .graph {
       width = 58 + labelWidth + padding * 2
     } else {
@@ -135,8 +149,12 @@ extension MenuRenderer {
       } else if label == .icon {
         let name =
           descriptor.paused ? "pause.fill" : descriptor.symbol ?? descriptor.defaultSymbol
-        NSImage(systemSymbolName: name, accessibilityDescription: nil)?.draw(
-          in: NSRect(x: x, y: 2, width: 15, height: 16))
+        let symbolRect = NSRect(x: x, y: 2, width: 15, height: 16)
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)?.draw(in: symbolRect)
+        if let context = NSGraphicsContext.current?.cgContext {
+          context.saveGState(); context.setBlendMode(.sourceAtop)
+          context.setFillColor(color.cgColor); context.fill(symbolRect); context.restoreGState()
+        }
         x += 17
       } else if label == .inline {
         (descriptor.shortLabel as NSString).draw(
@@ -157,6 +175,7 @@ extension MenuRenderer {
             .foregroundColor: color, .paragraphStyle: paragraph,
           ])
       }
+      if iconOnly { return true }
       if isNetwork {
         if descriptor.style == .graph {
           let maximum = max(1, descriptor.points.compactMap { $0 }.filter(\.isFinite).max() ?? 1)
@@ -177,16 +196,19 @@ extension MenuRenderer {
           let line = descriptor.paused ? "—" : source
           let body = line.hasPrefix("↓") || line.hasPrefix("↑") ? String(line.dropFirst()) : line
           let parts = body.split(separator: " ", maxSplits: 1).map(String.init)
+          let shortened = CompactNetworkColumn(line)
           let y = CGFloat(index) * 10 - 0.5
           text(
-            index == 0 ? "↓" : "↑", rect: NSRect(x: x, y: y, width: 10, height: 11),
+            index == 0 ? "↓" : "↑", rect: NSRect(x: x, y: y, width: compact ? 8 : 10, height: 11),
             alignment: .left, size: 9)
           text(
-            parts.first ?? "—", rect: NSRect(x: x + 10, y: y, width: 43, height: 11),
-            alignment: .right, size: 9)
+            compact ? shortened.number : parts.first ?? "—",
+            rect: NSRect(x: x + (compact ? 8 : 10), y: y, width: compact ? 25 : 43, height: 11),
+            alignment: .right, size: compact ? 8.5 : 9)
           text(
-            parts.count > 1 ? parts[1] : "", rect: NSRect(x: x + 57, y: y, width: 33, height: 11),
-            alignment: .left, size: 9)
+            compact ? shortened.unit : parts.count > 1 ? parts[1] : "",
+            rect: NSRect(x: x + (compact ? 36 : 57), y: y, width: compact ? 24 : 33, height: 11),
+            alignment: .left, size: compact ? 8 : 9)
         }
       } else if descriptor.style == .graph && !descriptor.paused
         && descriptor.points.prefix(48).contains(where: { $0?.isFinite == true })
@@ -214,8 +236,12 @@ extension MenuRenderer {
           rect: NSRect(x: area.minX, y: 9.5, width: area.width, height: 11), alignment: .right,
           size: 9)
       } else {
+        let boundedContent =
+          compact && (content as NSString).size(withAttributes: attributes).width > area.width
+          ? "…" : content
         text(
-          descriptor.paused ? "Paused" : content, rect: area.insetBy(dx: 0, dy: 3),
+          descriptor.paused ? (compact ? "Ⅱ" : "Paused") : boundedContent,
+          rect: area.insetBy(dx: 0, dy: 3),
           alignment: .center, size: fontSize)
       }
       return true

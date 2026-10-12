@@ -16,6 +16,9 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
   var onWiFiPermission: (() -> Void)?
   var onLogin: (() -> Void)?
   var onWindowCreated: ((NSWindow) -> Void)?
+  var onMenuPreview: ((Settings) -> [StatusWidget])? { didSet { refreshMenuPreview() } }
+  private var menuPreview = MenuBarPreview(frame: .zero)
+  private var menuFootprint = NSTextField(wrappingLabelWithString: "")
   private var fields: [String: NSTextField] = [:]
   private var toggles: [String: NSButton] = [:]
   private var choices: [String: NSPopUpButton] = [:]
@@ -268,6 +271,21 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     page.buttons([button("Open Dashboard", #selector(openDashboard))])
   }
   private func buildMenus(_ page: SettingsForm) {
+    page.section("Preview and space")
+    page.buttons([button("Use Compact Layout", #selector(compactMenus))])
+    page.note(
+      "Compact uses vertical labels, an icon-only Aerie control and tighter spacing. Every enabled module and sampling setting is preserved. Changes enter this draft until Apply."
+    )
+    menuPreview = MenuBarPreview(frame: .zero)
+    let previewScroll = NSScrollView(); previewScroll.hasHorizontalScroller = true
+    previewScroll.autohidesScrollers = true; previewScroll.drawsBackground = false
+    previewScroll.documentView = menuPreview
+    previewScroll.heightAnchor.constraint(equalToConstant: 42).isActive = true
+    page.append(previewScroll)
+    menuFootprint = NSTextField(wrappingLabelWithString: "")
+    menuFootprint.font = .systemFont(ofSize: 12); menuFootprint.textColor = .secondaryLabelColor
+    menuFootprint.setAccessibilityLabel("Menu-bar point width")
+    page.append(menuFootprint)
     page.section("Layout")
     choice(
       "menuLayout", title: "Menu-bar layout",
@@ -773,6 +791,46 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     guard !fields.isEmpty else { return }
     updateNotificationExample()
     draftLabel.stringValue = "Unapplied changes. Apply to save, or Close to discard."
+    refreshMenuPreview()
+  }
+  private func refreshMenuPreview() {
+    guard let onMenuPreview else { return }
+    guard let draft = try? readSettings() else {
+      menuFootprint.stringValue = "Preview needs a valid draft. Review the values and module order."
+      return
+    }
+    guard !draft.combined else {
+      menuPreview.update([], padding: 0, gap: 0)
+      menuFootprint.stringValue =
+        "Combined dashboard uses one control. Choose Grouped modules or Separate items for a per-module width preview."
+      return
+    }
+    let widgets = onMenuPreview(draft)
+    let padding = CGFloat(
+      draft.combined ? (draft.compactSpacing ? 1 : 4) : draft.effectiveMenuPadding)
+    let gap = CGFloat(
+      draft.combined
+        ? (draft.compactSpacing ? 2 : 6) : draft.effectiveGroupedMenus ? draft.effectiveMenuGap : 0)
+    let width = menuPreview.update(widgets, padding: padding, gap: gap)
+    let rows = menuPreview.moduleWidths.map { "\($0.0.title) \(Int(ceil($0.1)))" }.joined(
+      separator: " · ")
+    menuFootprint.stringValue =
+      "\(Int(ceil(width))) pt in Aerie modules · \(rows). "
+      + (draft.effectiveGroupedMenus && !draft.combined
+        ? "Grouped gaps included." : "macOS also places space between separate items.")
+  }
+  @objc private func compactMenus() {
+    choices["menuLayout"]?.selectItem(at: 0)
+    choices["menuPadding"]?.selectItem(at: 1); choices["menuGap"]?.selectItem(at: 2)
+    toggles["spacing"]?.state = .on
+    for module in menuStyles.keys {
+      menuStyles[module]?.selectItem(
+        at: DisplayStyle.allCases.firstIndex(of: module == .time ? .text : .compact)!)
+      let label: MenuLabelPlacement =
+        module == .overview || module == .weather ? .icon : module == .time ? .none : .vertical
+      menuLabels[module]?.selectItem(at: MenuLabelPlacement.allCases.firstIndex(of: label)!)
+    }
+    menuLayoutChanged()
   }
   private func updateNotificationExample() {
     guard let index = choices["ruleMetric"]?.indexOfSelectedItem,

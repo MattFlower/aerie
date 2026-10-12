@@ -1,5 +1,30 @@
 import Foundation
 
+/// Bounded columns keep units and explicit overflow honest while geometry stays fixed.
+public struct CompactNetworkColumn: Equatable {
+  public let number: String, unit: String
+  public init(_ line: String) {
+    let source = line.hasPrefix("↓") || line.hasPrefix("↑") ? String(line.dropFirst()) : line
+    let parts = source.split(whereSeparator: \.isWhitespace).map(String.init)
+    guard parts.count == 2, let value = Double(parts[0]), value.isFinite, value >= 0 else {
+      number =
+        ["—", "Unavailable", "Paused", ""].contains(source.trimmingCharacters(in: .whitespaces))
+        ? "—" : "…"
+      unit = ""; return
+    }
+    let allowed = [
+      "B/s", "KB/s", "MB/s", "GB/s", "TB/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s", "bit/s", "Kbit/s",
+      "Mbit/s", "Gbit/s", "Tbit/s",
+    ]
+    guard allowed.contains(parts[1]) else { number = "…"; unit = ""; return }
+    unit = parts[1].replacingOccurrences(of: "bit", with: "b")
+    number =
+      value >= 1000
+      ? ">999"
+      : parts[0].count <= 5 ? parts[0] : String(format: value >= 100 ? "%.0f" : "%.1f", value)
+  }
+}
+
 public enum MenuColor {
   public static func rgb(_ value: String?) -> UInt32? {
     guard let value, value.utf8.count == 7, value.first == "#",
