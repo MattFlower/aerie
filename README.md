@@ -11,8 +11,11 @@ Requires macOS 14 or newer and Xcode's command-line tools. There are no package 
 ```sh
 swift test --build-system native
 bash scripts/build-app.sh
+python3 scripts/check-app-build.py dist/Aerie.app
 open dist/Aerie.app
 ```
+
+Each build records its source revision and whether sources were modified in the bundle, and writes a neighboring `Aerie.app.build.json` receipt with the signed executable's SHA-256. The pre-launch check rejects another revision, modified sources, an altered executable or a missing receipt, and verifies the bundle signature. It launches no app and reads or changes no preferences. When using an alternate output, run the printed check on that exact path; an older copy in `dist` does not update automatically. Keep the receipt alongside the app when moving a development build.
 
 Set `AERIE_BUILD_SCRATCH` and `AERIE_APP_OUTPUT` to local build/output directories if needed; they default to `.build` and `dist/Aerie.app`. The build is ad-hoc signed for local development. It is not notarized or submitted to the App Store. Left-click a menu item to inspect its dashboard. Right-click for settings, sampling pause, Activity Monitor, or quit. Choose grouped modules, separate items or a combined dashboard. Settings provides a resizable native sidebar, units, order, appearance, refresh interval, notifications and world clocks. See [Settings and menu appearance](docs/SETTINGS.md).
 

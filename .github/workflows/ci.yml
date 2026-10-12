@@ -25,6 +25,8 @@ jobs:
         run: swift test --build-system native
       - name: Test recursive cohort coverage
         run: python3 -m unittest discover -s Tests/MeasurementTests -p 'test_*.py'
+      - name: Test build identity fixtures
+        run: python3 -m unittest discover -s Tests/BuildTests -p 'test_*.py'
       - name: Lint Swift
         run: xcrun swift-format lint --strict --recursive Sources Tests Package.swift
       - name: Build native application
@@ -33,3 +35,4 @@ jobs:
         run: |
           plutil -lint dist/Aerie.app/Contents/Info.plist
           codesign --verify --strict dist/Aerie.app
+          python3 scripts/check-app-build.py dist/Aerie.app

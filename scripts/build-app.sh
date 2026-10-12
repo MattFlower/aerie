@@ -2,6 +2,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 scratch="${AERIE_BUILD_SCRATCH:-.build}"
+revision="$(git rev-parse HEAD 2>/dev/null || printf 'unversioned')"
+source_modified=false
+if [[ "$revision" == unversioned ]] || [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  source_modified=true
+fi
 swift build --scratch-path "$scratch" --build-system native -c release --product Aerie
 app="${AERIE_APP_OUTPUT:-dist/Aerie.app}"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -26,6 +31,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>NSLocationUsageDescription</key><string>Choose one Mac location for Weather and Daylight, or allow macOS to reveal Wi-Fi network names. Location is requested only when you choose Use My Mac Location.</string>
 </dict></plist>
 PLIST
+/usr/libexec/PlistBuddy -c "Add :AerieSourceRevision string $revision" "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :AerieSourceModified bool $source_modified" "$app/Contents/Info.plist"
 # Finder can annotate a generated bundle directory; that metadata invalidates strict signing.
 # Only this build output's FinderInfo is removed; other attributes are preserved.
 if [[ "$(/usr/bin/xattr "$app")" == *com.apple.FinderInfo* ]]; then
@@ -33,4 +40,15 @@ if [[ "$(/usr/bin/xattr "$app")" == *com.apple.FinderInfo* ]]; then
 fi
 codesign --force --sign - "$app"
 codesign --verify --deep --strict "$app"
-printf 'Built %s\n' "$app"
+current_revision="$(git rev-parse HEAD 2>/dev/null || printf 'unversioned')"
+if [[ "$current_revision" != "$revision" ]]; then
+  printf 'Source revision changed during build; rebuild before launching.\n' >&2
+  exit 1
+fi
+if [[ "$source_modified" == false ]] && [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  printf 'Source files changed during build; rebuild before launching.\n' >&2
+  exit 1
+fi
+python3 scripts/check-app-build.py "$app" --write-receipt --revision "$revision" --modified "$source_modified"
+printf 'Built %s from %s\n' "$app" "$revision"
+printf 'Before launch: python3 scripts/check-app-build.py "%s"\n' "$app"
