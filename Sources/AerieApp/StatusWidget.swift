@@ -51,6 +51,7 @@ extension MenuRenderer {
   static let compactPercentWidth: CGFloat = 38
   static let compactTemperatureWidth: CGFloat = 45
   static let compactNetworkFonts = (number: CGFloat(8.5), unit: CGFloat(8), arrow: CGFloat(9))
+  static let networkNumberWeight = NSFont.Weight.semibold
   static func uprightLabelGlyphs(_ label: String) -> [(String, NSPoint)] {
     let font = NSFont.systemFont(ofSize: 6.5, weight: .semibold)
     return label.prefix(3).enumerated().map { index, character in
@@ -182,7 +183,10 @@ extension MenuRenderer {
         x += labelWidth
       }
       let area = NSRect(x: x, y: 0, width: width - x - padding, height: 20)
-      func text(_ value: String, rect: NSRect, alignment: NSTextAlignment, size: CGFloat = 10) {
+      func text(
+        _ value: String, rect: NSRect, alignment: NSTextAlignment, size: CGFloat = 10,
+        weight: NSFont.Weight = .medium
+      ) {
         let paragraph = NSMutableParagraphStyle(); paragraph.alignment = alignment;
         paragraph.lineBreakMode = .byTruncatingTail
         (String(value.prefix(256)) as NSString).draw(
@@ -190,7 +194,7 @@ extension MenuRenderer {
           withAttributes: [
             .font: compact && !isNetwork && !stacked
               ? compactPrimaryFont
-              : NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium),
+              : NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight),
             .foregroundColor: color, .paragraphStyle: paragraph,
           ])
       }
@@ -223,7 +227,8 @@ extension MenuRenderer {
           text(
             compact ? shortened.number : parts.first ?? "—",
             rect: NSRect(x: x + (compact ? 8 : 10), y: y, width: compact ? 25 : 43, height: 11),
-            alignment: .right, size: compact ? compactNetworkFonts.number : 9)
+            alignment: .right, size: compact ? compactNetworkFonts.number : 9,
+            weight: networkNumberWeight)
           text(
             compact ? shortened.unit : parts.count > 1 ? parts[1] : "",
             rect: NSRect(x: x + (compact ? 36 : 57), y: y, width: compact ? 24 : 33, height: 11),
