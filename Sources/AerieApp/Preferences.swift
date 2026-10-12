@@ -137,6 +137,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     if let index = SettingsSection.allCases.firstIndex(of: section) {
       sidebar?.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
     }
+    if section == .menus { refreshMenuPreview() }
   }
   private func build() {
     let split = NSSplitViewController()

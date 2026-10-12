@@ -4,6 +4,32 @@ import XCTest
 @testable import AerieApp
 
 final class CompactMenuTests: XCTestCase {
+  func testSelectingMenuPageRefreshesCurrentReadingsAndPowerLabelDistinguishesExternalSupply()
+    async throws
+  {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let controller = PreferencesController(settings: Settings())
+      defer { controller.close() }
+      var reads = 0
+      controller.onMenuPreview = { _ in
+        reads += 1; return []
+      }
+      let initial = reads
+      controller.selectSection(.menus)
+      XCTAssertGreaterThan(reads, initial)
+      let battery = StatusWidget(
+        module: .power, value: MenuValue(full: "BAT 73%"), style: .compact, label: .vertical,
+        colorHex: nil)
+      let external = StatusWidget(
+        module: .power, value: MenuValue(full: "PWR AC", compact: "AC"), style: .compact,
+        label: .vertical, colorHex: nil)
+      XCTAssertEqual(battery.shortLabel, "BAT"); XCTAssertEqual(external.shortLabel, "PWR")
+      XCTAssertEqual(
+        MenuRenderer.widget(battery, padding: 1).size,
+        MenuRenderer.widget(external, padding: 1).size)
+    }
+  }
   func testEightEnabledModulesFitAnExplicitLaptopBudgetWithStableValuesAndFullAccessibility()
     async throws
   {

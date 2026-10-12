@@ -36,7 +36,7 @@ struct StatusWidget: Equatable {
     case .storage: return "SSD"
     case .network: return "NET"
     case .sensors: return "SNS"
-    case .power: return "BAT"
+    case .power: return value.full.hasPrefix("PWR") ? "PWR" : "BAT"
     case .time: return "CLK"
     case .weather: return "WX"
     }
