@@ -275,7 +275,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     page.section("Preview and space")
     page.buttons([button("Use Compact Layout", #selector(compactMenus))])
     page.note(
-      "Compact uses vertical labels, an icon-only Aerie control and tighter spacing. Every enabled module and sampling setting is preserved. Changes enter this draft until Apply."
+      "Compact stacks upright label letters beside larger readings. Network retains its two-row text size. Every enabled module and sampling setting is preserved; changes enter this draft until Apply."
     )
     menuPreview = MenuBarPreview(frame: .zero)
     let previewScroll = NSScrollView(); previewScroll.hasHorizontalScroller = true
@@ -822,7 +822,7 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
   }
   @objc private func compactMenus() {
     choices["menuLayout"]?.selectItem(at: 0)
-    choices["menuPadding"]?.selectItem(at: 1); choices["menuGap"]?.selectItem(at: 2)
+    choices["menuPadding"]?.selectItem(at: 0); choices["menuGap"]?.selectItem(at: 0)
     toggles["spacing"]?.state = .on
     for module in menuStyles.keys {
       menuStyles[module]?.selectItem(

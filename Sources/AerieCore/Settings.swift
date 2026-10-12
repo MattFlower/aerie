@@ -151,7 +151,7 @@ public struct Settings: Codable, Equatable {
   public init() { applyCompactMenuPreset() }
   /// Presentation only: preserves every module's visibility/order and every collector/source setting.
   public mutating func applyCompactMenuPreset() {
-    groupedMenus = true; combined = false; compactSpacing = true; menuPadding = 1; menuGap = 2
+    groupedMenus = true; combined = false; compactSpacing = true; menuPadding = 0; menuGap = 0
     for index in menus.indices {
       let module = menus[index].module
       menus[index].style = module == .time ? .text : .compact

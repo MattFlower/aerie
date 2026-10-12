@@ -44,6 +44,21 @@ struct StatusWidget: Equatable {
 }
 
 extension MenuRenderer {
+  static var compactPrimaryFont: NSFont {
+    let base = NSFont.systemFont(ofSize: 15, weight: .semibold)
+    return NSFont(descriptor: base.fontDescriptor.withSymbolicTraits(.condensed), size: 15) ?? base
+  }
+  static let compactPercentWidth: CGFloat = 38
+  static let compactTemperatureWidth: CGFloat = 45
+  static let compactNetworkFonts = (number: CGFloat(8.5), unit: CGFloat(8), arrow: CGFloat(9))
+  static func uprightLabelGlyphs(_ label: String) -> [(String, NSPoint)] {
+    let font = NSFont.systemFont(ofSize: 6.5, weight: .semibold)
+    return label.prefix(3).enumerated().map { index, character in
+      let glyph = String(character)
+      let width = (glyph as NSString).size(withAttributes: [.font: font]).width
+      return (glyph, NSPoint(x: (7 - width) / 2, y: -0.5 + CGFloat(index) * 6.5))
+    }
+  }
   static func weatherSymbol(code: Int?, daylight: Bool? = nil, glyph: WeatherGlyph? = nil) -> String
   {
     if let glyph {
@@ -86,14 +101,16 @@ extension MenuRenderer {
         ? MenuLabelPlacement.icon
         : descriptor.module == .time || descriptor.style == .compact ? .none : .inline)
       : descriptor.label
-    let fontSize: CGFloat = descriptor.style == .compact ? 9 : 10
-    let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
+    let fontSize: CGFloat = descriptor.style == .compact ? 15 : 10
+    let font =
+      descriptor.style == .compact && descriptor.module != .network
+      ? compactPrimaryFont : NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
     let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
     let labelWidth: CGFloat =
       label == .vertical
-      ? 10
+      ? 7
       : label == .icon
-        ? 17
+        ? (descriptor.module == .overview && descriptor.style == .compact ? 15 : 17)
         : label == .inline
           ? ceil(
             (descriptor.shortLabel as NSString).size(withAttributes: [
@@ -117,7 +134,8 @@ extension MenuRenderer {
       [.cpu, .gpu, .memory, .storage, .power, .sensors, .weather].contains(descriptor.module)
     {
       width =
-        (descriptor.module == .sensors || descriptor.module == .weather ? 42 : 28) + labelWidth
+        (descriptor.module == .sensors || descriptor.module == .weather
+          ? compactTemperatureWidth : compactPercentWidth) + labelWidth
         + padding * 2
     } else if descriptor.style == .graph {
       width = 58 + labelWidth + padding * 2
@@ -137,15 +155,14 @@ extension MenuRenderer {
       NSBezierPath(rect: rect).addClip()
       var x = padding
       if label == .vertical {
-        NSGraphicsContext.saveGraphicsState()
-        let transform = NSAffineTransform(); transform.translateX(by: x + 1, yBy: 19);
-        transform.rotate(byDegrees: -90); transform.concat()
-        (descriptor.shortLabel as NSString).draw(
-          at: .zero,
-          withAttributes: [
-            .font: NSFont.systemFont(ofSize: 8, weight: .semibold), .foregroundColor: color,
-          ])
-        NSGraphicsContext.restoreGraphicsState(); x += 10
+        for (glyph, point) in uprightLabelGlyphs(descriptor.shortLabel) {
+          (glyph as NSString).draw(
+            at: NSPoint(x: x + point.x, y: point.y),
+            withAttributes: [
+              .font: NSFont.systemFont(ofSize: 6.5, weight: .semibold), .foregroundColor: color,
+            ])
+        }
+        x += 7
       } else if label == .icon {
         let name =
           descriptor.paused ? "pause.fill" : descriptor.symbol ?? descriptor.defaultSymbol
@@ -171,7 +188,9 @@ extension MenuRenderer {
         (String(value.prefix(256)) as NSString).draw(
           in: rect,
           withAttributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium),
+            .font: compact && !isNetwork && !stacked
+              ? compactPrimaryFont
+              : NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium),
             .foregroundColor: color, .paragraphStyle: paragraph,
           ])
       }
@@ -200,15 +219,15 @@ extension MenuRenderer {
           let y = CGFloat(index) * 10 - 0.5
           text(
             index == 0 ? "↓" : "↑", rect: NSRect(x: x, y: y, width: compact ? 8 : 10, height: 11),
-            alignment: .left, size: 9)
+            alignment: .left, size: compact ? compactNetworkFonts.arrow : 9)
           text(
             compact ? shortened.number : parts.first ?? "—",
             rect: NSRect(x: x + (compact ? 8 : 10), y: y, width: compact ? 25 : 43, height: 11),
-            alignment: .right, size: compact ? 8.5 : 9)
+            alignment: .right, size: compact ? compactNetworkFonts.number : 9)
           text(
             compact ? shortened.unit : parts.count > 1 ? parts[1] : "",
             rect: NSRect(x: x + (compact ? 36 : 57), y: y, width: compact ? 24 : 33, height: 11),
-            alignment: .left, size: compact ? 8 : 9)
+            alignment: .left, size: compact ? compactNetworkFonts.unit : 9)
         }
       } else if descriptor.style == .graph && !descriptor.paused
         && descriptor.points.prefix(48).contains(where: { $0?.isFinite == true })
@@ -241,7 +260,7 @@ extension MenuRenderer {
           ? "…" : content
         text(
           descriptor.paused ? (compact ? "Ⅱ" : "Paused") : boundedContent,
-          rect: area.insetBy(dx: 0, dy: 3),
+          rect: area.insetBy(dx: 0, dy: compact ? 0.5 : 3),
           alignment: .center, size: fontSize)
       }
       return true
