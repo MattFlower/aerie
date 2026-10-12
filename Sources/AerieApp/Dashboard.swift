@@ -1042,8 +1042,10 @@ final class DashboardController: NSViewController {
     case .storage:
       let ioRows = top(
         { left, right in
-          (left.read ?? 0) + (left.write ?? 0) > (right.read ?? 0) + (right.write ?? 0)
-        }, value: { "R \(rate($0.read))  W \(rate($0.write))" })
+          let leftBytes = (left.read ?? 0) + (left.write ?? 0)
+          let rightBytes = (right.read ?? 0) + (right.write ?? 0)
+          return leftBytes > rightBytes
+        }, value: { process in "R \(rate(process.read))  W \(rate(process.write))" })
       var rows: [DashboardRow] = [
         .trend(
           "Disk activity", "↓ Read " + rate(s.diskRead) + " · ↑ Write " + rate(s.diskWrite),
