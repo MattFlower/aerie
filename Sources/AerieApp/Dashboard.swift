@@ -1238,7 +1238,7 @@ final class DashboardController: NSViewController {
         return [
           DashboardRow.heading("Weather is off"),
           DashboardRow.note(
-            "Choose a provider and a manual location in Settings to enable weather. No device location, IP geolocation, or background city search is used."
+            "Choose a provider and location in Weather Settings, then enable forecasts. Enter coordinates manually, find a city or ZIP, or explicitly choose one Mac location. Choosing a location alone does not enable forecasts or maps."
           ),
         ]
       }

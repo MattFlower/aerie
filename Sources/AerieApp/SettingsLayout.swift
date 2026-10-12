@@ -9,9 +9,13 @@ final class SettingsForm: NSView {
     stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 14
     stack.translatesAutoresizingMaskIntoConstraints = false
     addSubview(stack)
+    let availableWidth = stack.widthAnchor.constraint(equalTo: widthAnchor, constant: -48)
+    availableWidth.priority = .defaultHigh
     NSLayoutConstraint.activate([
       stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
-      stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
+      stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+      stack.widthAnchor.constraint(lessThanOrEqualToConstant: 820),
+      availableWidth,
       stack.topAnchor.constraint(equalTo: topAnchor, constant: 24),
       stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
     ])

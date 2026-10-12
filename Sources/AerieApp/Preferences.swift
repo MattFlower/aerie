@@ -70,6 +70,12 @@ final class PreferencesController: NSWindowController, NSWindowDelegate, NSTextF
     window.center()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame: NSRect) -> NSRect {
+    let size = NSSize(width: min(defaultFrame.width, 1040), height: min(defaultFrame.height, 820))
+    return NSRect(
+      x: defaultFrame.midX - size.width / 2, y: defaultFrame.midY - size.height / 2,
+      width: size.width, height: size.height)
+  }
   func windowWillClose(_ notification: Notification) {
     NotificationCenter.default.removeObserver(self)
     locationSession.cancel(); locationChoices.removeAll()

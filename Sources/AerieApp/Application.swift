@@ -23,6 +23,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private var menuPanel = MenuPanel()
   private let idleMemory = IdleMemoryReclaimer()
   private var preferences: PreferencesController?
+  private var initialSettings = InitialSettingsPresentation()
+  private var initialSettingsFallback: DispatchWorkItem?
   private var keyboardShortcuts: KeyboardShortcuts?
   private var shortcutStatus: String?
   private var publicAddressReader: PublicAddressReader?
@@ -243,7 +245,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     if !LaunchPresentation.silent(
       arguments: CommandLine.arguments, event: NSAppleEventManager.shared().currentAppleEvent)
     {
-      defaults.set(true, forKey: "hasShownWelcome"); showSettings()
+      defaults.set(true, forKey: "hasShownWelcome"); requestInitialSettings()
     }
   }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
@@ -252,7 +254,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     if LaunchPresentation.presentsOnReopen(
       arguments: CommandLine.arguments, visibleWindows: flag, menuShown: menuPanel.isShown)
     {
-      showSettings()
+      requestInitialSettings()
     }
     return true
   }
@@ -295,6 +297,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       snapshot.wifi?.recheckAuthorization(WiFiAccess.nativeAuthorization())
     }
     self.snapshot = snapshot
+    if initialSettings.receivedSample() { showSettings() }
     publicAddressReader?.tick(
       time: ProcessInfo.processInfo.systemUptime,
       route: snapshot.networkAvailable && snapshot.connectivity == "Connected"
@@ -835,7 +838,19 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     image.isTemplate = true
     return image
   }
+  private func requestInitialSettings() {
+    if initialSettings.request() { showSettings(); return }
+    guard initialSettingsFallback == nil else { return }
+    let fallback = DispatchWorkItem { [weak self] in
+      guard let self, self.initialSettings.fallback() else { return }
+      self.showSettings()
+    }
+    initialSettingsFallback = fallback
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: fallback)
+  }
   @objc private func showSettings() {
+    initialSettings.didPresent()
+    initialSettingsFallback?.cancel(); initialSettingsFallback = nil
     menuPanel.performClose(nil)
     idleMemory.presentationOpened()
     if let preferences {

@@ -1,6 +1,6 @@
 # Settings and menu appearance
 
-Aerie's resizable Settings window has a left sidebar and scrolling native forms. Changes stay in a draft until **Apply**; **Close** discards unapplied edits. Imported profiles and Restore Defaults are reviewed before staging.
+Aerie's resizable Settings window has a left sidebar and scrolling native forms. Changes stay in a draft until **Apply**; **Close** discards unapplied edits. Imported profiles and Restore Defaults are reviewed before staging. Forms stay at a readable width on large displays, and Zoom opens a bounded enlarged frame. At manual launch, Settings waits for the first normal sample to fill its interface and sensor inventories, with a two-second fallback if sampling is delayed.
 
 - **General:** collection interval, full or on-demand sensor sampling, process grouping/sorting, units, theme, numeric history and configuration transfer.
 - **Menu Bar:** grouped modules, separate items or the existing combined dashboard; visibility/order/style/color; automatic, inline, vertical or icon labels. Inside padding and gaps between grouped modules have separate controls. Aerie controls only its own grouped gaps; macOS places separate items.

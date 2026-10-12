@@ -25,7 +25,10 @@ final class SettingsLayoutTests: XCTestCase {
       if let output {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
       }
-      for size in [NSSize(width: 840, height: 560), NSSize(width: 880, height: 680)] {
+      for size in [
+        NSSize(width: 840, height: 560), NSSize(width: 880, height: 680),
+        NSSize(width: 1040, height: 820), NSSize(width: 3200, height: 1600),
+      ] {
         window.setContentSize(size)
         for appearance in appearances {
           window.appearance = NSAppearance(named: appearance)
@@ -35,6 +38,7 @@ final class SettingsLayoutTests: XCTestCase {
             let scroll = try XCTUnwrap(tabs.selectedTabViewItem?.view as? NSScrollView)
             let form = try XCTUnwrap(scroll.documentView as? SettingsForm)
             form.layoutSubtreeIfNeeded()
+            XCTAssertLessThanOrEqual(form.stack.frame.width, 821, section.rawValue)
             XCTAssertGreaterThan(scroll.contentView.bounds.width, 400, section.rawValue)
             XCTAssertGreaterThan(form.frame.height, 100, section.rawValue)
             for row in form.stack.arrangedSubviews where !row.isHidden {
@@ -54,6 +58,25 @@ final class SettingsLayoutTests: XCTestCase {
         }
       }
       XCTAssertFalse(window.isVisible)
+    }
+  }
+  func testNativeZoomKeepsFormsInAUsefulFrameWithinTheAvailableDisplay() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let controller = PreferencesController(settings: Settings())
+      defer { controller.close() }
+      let window = try XCTUnwrap(controller.window)
+      for available in [
+        NSRect(x: 0, y: 24, width: 3200, height: 1600),
+        NSRect(x: -1200, y: 24, width: 900, height: 700),
+      ] {
+        let frame = controller.windowWillUseStandardFrame(window, defaultFrame: available)
+        XCTAssertTrue(available.contains(frame))
+        XCTAssertLessThanOrEqual(frame.width, 1040)
+        XCTAssertLessThanOrEqual(frame.height, 820)
+        XCTAssertEqual(frame.midX, available.midX, accuracy: 0.01)
+        XCTAssertEqual(frame.midY, available.midY, accuracy: 0.01)
+      }
     }
   }
 }

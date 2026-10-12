@@ -1,6 +1,29 @@
 import AppKit
 import Carbon
 
+/// Let the existing first sample populate Settings inventories without extra collection.
+/// A bounded fallback still opens the window if that sample is unavailable or delayed.
+struct InitialSettingsPresentation {
+  private(set) var sampleAvailable = false
+  private(set) var awaitingSample = false
+  mutating func request() -> Bool {
+    if sampleAvailable { return true }
+    awaitingSample = true
+    return false
+  }
+  mutating func receivedSample() -> Bool {
+    sampleAvailable = true
+    return consumeRequest()
+  }
+  mutating func fallback() -> Bool { consumeRequest() }
+  mutating func didPresent() { awaitingSample = false }
+  private mutating func consumeRequest() -> Bool {
+    let present = awaitingSample
+    awaitingSample = false
+    return present
+  }
+}
+
 /// Explicit manual launches open Settings; background tests and OS login/service launches stay quiet.
 enum LaunchPresentation {
   static func presentsOnReopen(arguments: [String], visibleWindows: Bool, menuShown: Bool) -> Bool {
