@@ -180,7 +180,7 @@ final class ModuleActivationTests: XCTestCase {
         case .show(let selected): dashboard.show(selected); shown = selected
         }
       }
-      func click(_ index: Int) throws {
+      @MainActor func click(_ index: Int) throws {
         let rect = group.segments[index]
         let point = group.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
         let event = try XCTUnwrap(
