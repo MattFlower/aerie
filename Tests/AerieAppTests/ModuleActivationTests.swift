@@ -211,7 +211,7 @@ final class ModuleActivationTests: XCTestCase {
       dashboard.releasePresentation(); group.releaseContent(); window.contentView = nil
     }
   }
-  func testChildMouseUpIgnoresForeignWindowCoordinatesAfterSettings() async throws {
+  func testChildMouseUpUsesLivePointerAcrossRetainedNetworkAndForeignCoordinates() async throws {
     try await MainActor.run {
       _ = NSApplication.shared
       let window = NSWindow(
@@ -231,6 +231,16 @@ final class ModuleActivationTests: XCTestCase {
       let pointer = window.convertPoint(
         toScreen: group.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil))
       group.pointerLocation = { pointer }
+      let retained = group.segments[3]
+      let retainedNetworkPoint = group.convert(
+        NSPoint(x: retained.midX, y: retained.midY), to: nil)
+      let staleNetwork = try XCTUnwrap(
+        NSEvent.mouseEvent(
+          with: .leftMouseUp, location: retainedNetworkPoint, modifierFlags: [], timestamp: 1,
+          windowNumber: window.windowNumber, context: nil, eventNumber: 1,
+          clickCount: 1, pressure: 0))
+      group.mouseUp(with: staleNetwork)
+      XCTAssertEqual(requests.last, .gpu)
       let foreign = NSWindow(
         contentRect: NSRect(x: 1000, y: 700, width: 50, height: 50), styleMask: [],
         backing: .buffered, defer: false)
