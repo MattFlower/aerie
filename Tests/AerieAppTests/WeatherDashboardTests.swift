@@ -197,6 +197,25 @@ final class WeatherDashboardTests: XCTestCase {
       }
     }
   }
+  func testHourlyLabelsAndTemperaturesFitWithOverlayAndAlwaysVisibleScrollbars() async throws {
+    try await MainActor.run {
+      let controller = fixture()
+      let weather = try XCTUnwrap(
+        controller.canvas.subviews.compactMap { $0 as? WeatherDashboardView }.first)
+      let strip = try XCTUnwrap(weather.subviews.compactMap { $0 as? NSScrollView }.first)
+      for style in [NSScroller.Style.legacy, .overlay] {
+        strip.scrollerStyle = style; strip.tile()
+        XCTAssertTrue(strip.documentView?.isFlipped == true)
+        XCTAssertGreaterThanOrEqual(strip.contentSize.height, 80)
+        let first = try XCTUnwrap(
+          strip.documentView?.subviews.compactMap { $0 as? WeatherForecastButton }.first {
+            $0.actionIdentifier == "weather-hour:0"
+          })
+        XCTAssertTrue(strip.contentView.bounds.contains(first.frame))
+      }
+      controller.releasePresentation()
+    }
+  }
   func testNativeKeyboardFocusScrollsTheLastCachedHourIntoView() async throws {
     try await MainActor.run {
       let controller = fixture()

@@ -2,7 +2,7 @@
 
 Updated 2026-10-13.
 
-Aerie's native weather panel uses the same 416 × 600 point window as the system detail panels. Its 530 point scroll viewport contains current conditions, seven complete hourly columns, and five complete outlook rows with a complete synthetic forecast. One point-alert banner still permits five complete outlooks; additional alerts receive priority and can push outlooks below the fold. More cached hours remain available by horizontal scrolling, and additional outlooks by vertical scrolling.
+Aerie's native weather panel uses the same 416 × 600 point window as the system detail panels. Its 530 point scroll viewport contains current conditions, seven complete hourly columns, and five complete outlook rows with a complete synthetic forecast. With one point-alert banner, four outlooks remain completely visible and the next can be reached by scrolling. Additional alerts receive priority and can push more outlooks below the fold. The hourly strip reserves room for always-visible native scrollbars so time labels and temperatures stay readable. More cached hours remain available by horizontal scrolling, and additional outlooks by vertical scrolling.
 
 The current-condition card shows rounded temperatures and six paired metrics. Labels and daily minimum temperatures use secondary native text colors; current values and daily maximum temperatures have stronger contrast. Sunshine, precipitation and night symbols use restrained native colors. Unreported values display an em dash, with explicit unavailable-field explanations in accessible labels and details.
 

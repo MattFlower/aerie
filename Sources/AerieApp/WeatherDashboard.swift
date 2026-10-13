@@ -45,7 +45,7 @@ final class WeatherDashboardPresentation {
   let statusWarning: Bool
   let night: Bool
   static let currentHeight: CGFloat = 154
-  static let hourlyHeight: CGFloat = 104
+  static let hourlyHeight: CGFloat = 122
   static let dayHeadingHeight: CGFloat = 22
   static let dayHeight: CGFloat = 42
   static let alertHeight: CGFloat = 32
@@ -248,9 +248,13 @@ final class WeatherForecastButton: NSButton {
   }
 }
 
+private final class WeatherHourlyDocument: NSView {
+  override var isFlipped: Bool { true }
+}
+
 final class WeatherDashboardView: NSView {
   private let hourlyScroll = NSScrollView()
-  private let hourlyDocument = NSView()
+  private let hourlyDocument = WeatherHourlyDocument()
   private var buttons: [String: WeatherForecastButton] = [:]
   private var labels: [String: NSTextField] = [:]
   private(set) var presentation: WeatherDashboardPresentation?
@@ -388,7 +392,7 @@ final class WeatherDashboardView: NSView {
           ? "Hourly forecast unavailable" : "Hourly · \(value.hours.count) cached hours   ↔",
         frame: NSRect(x: 0, y: y + 3, width: width, height: 17)))
     hourlyScroll.isHidden = value.hours.isEmpty
-    hourlyScroll.frame = NSRect(x: 0, y: y + 22, width: width, height: 82)
+    hourlyScroll.frame = NSRect(x: 0, y: y + 22, width: width, height: 100)
     hourlyDocument.frame = NSRect(
       x: 0, y: 0,
       width: max(width, CGFloat(value.hours.count) * WeatherDashboardPresentation.hourWidth),
