@@ -588,7 +588,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     idleMemory.presentationOpened()
     dashboard.snapshot = snapshot
     dashboard.settings = settings
-    updatePublicAddressView()
+    updatePublicAddressView(preparingPresentation: true)
     dashboard.history = history
     dashboard.historyStatus = historyPersistence?.status ?? "History archive is off"
     dashboard.weather = weatherReport
@@ -604,12 +604,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   }
   private func dashboardDidClose() {
     currentMenuModule = nil
-    collector?.setVisibleModule(nil); releaseViewMetadata(module: nil)
-    dashboard.history = HistoryStore(interval: settings.interval);
-    dashboard.canvas.points.removeAll(); dashboard.canvas.selectedPoint = nil
-    clearCalendar(); dashboard.canvas.releaseInteractiveRows()
-    calendarSelection.today()
+    collector?.setVisibleModule(nil)
     dashboard.releasePresentation()
+    releaseViewMetadata(module: nil); clearCalendar(); calendarSelection.today()
     idleMemory.presentationClosed()
   }
   private func releaseViewMetadata(module: Module?) {
@@ -981,10 +978,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     publicAddressReader?.configure(enabled: true, suspended: paused || sleeping)
     updatePublicAddressView()
   }
-  private func updatePublicAddressView() {
+  private func updatePublicAddressView(preparingPresentation: Bool = false) {
     dashboard.updatePublicAddress(
       publicAddressReader?.reading,
-      status: publicAddressReader?.status ?? "Public IP lookup is off")
+      status: publicAddressReader?.status ?? "Public IP lookup is off",
+      preparingPresentation: preparingPresentation)
   }
   private func showMaps() {
     menuPanel.performClose(nil)

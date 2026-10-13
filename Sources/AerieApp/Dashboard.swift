@@ -567,7 +567,10 @@ final class DashboardController: NSViewController {
   var shortcutStatus: String?
   var publicAddress: PublicAddressReading?
   var publicAddressStatus = "Public IP lookup is off"
-  func updatePublicAddress(_ reading: PublicAddressReading?, status: String) {
+  func updatePublicAddress(
+    _ reading: PublicAddressReading?, status: String, preparingPresentation: Bool = false
+  ) {
+    guard isPresentationLoaded || preparingPresentation else { return }
     let released = publicAddress != nil && reading == nil
     publicAddress = reading; publicAddressStatus = status
     if released && module == .network { canvas.releaseInteractiveRows(); refresh() }
@@ -575,8 +578,13 @@ final class DashboardController: NSViewController {
   var calendarRows: [DashboardRow] = []
   private var presentationReleased = false
   var isPresentationLoaded: Bool { isViewLoaded && !presentationReleased }
-  /// Release the native scroll hierarchy between presentations while retaining selection state.
+  /// Discard presentation copies while the live collector, forecast and history owners continue.
+  /// Retain reusable controls and their module/range/zoom choices for the next presentation.
   func releasePresentation() {
+    snapshot = Snapshot(); history = HistoryStore(interval: settings.interval)
+    weather = nil; publicAddress = nil; calendarRows.removeAll(); releaseDaylight()
+    weatherStatus = "Weather is off"; publicAddressStatus = "Public IP lookup is off"
+    historyStatus = "History archive is off"; shortcutStatus = nil
     guard isPresentationLoaded else { return }
     canvas.releaseInteractiveRows()
     canvas.enclosingScrollView?.documentView = nil
