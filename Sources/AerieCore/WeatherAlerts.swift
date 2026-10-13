@@ -1,12 +1,12 @@
 import Foundation
 
-public struct WeatherAlert {
+public struct WeatherAlert: Equatable {
   public var event, headline, area, sender, severity, urgency, certainty: String
   public var status, messageType, description, instructions: String
   public var sent, effective, onset, expires, ends: Date?
   public var source: URL?
 }
-public struct WeatherAlertReport {
+public struct WeatherAlertReport: Equatable {
   public var alerts: [WeatherAlert]
   public var fetched: Date
   public var updated: Date?

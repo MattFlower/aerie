@@ -22,7 +22,15 @@ jobs:
       - name: Toolchain
         run: swift --version
       - name: Test synthetic accounting and forecast fixtures
+        env:
+          AERIE_WEATHER_FIXTURE_DIRECTORY: ${{ runner.temp }}/aerie-weather-fixtures
         run: swift test --build-system native
+      - name: Upload synthetic native weather views
+        uses: actions/upload-artifact@v4
+        with:
+          name: weather-views-${{ matrix.runner }}
+          path: ${{ runner.temp }}/aerie-weather-fixtures/weather-content-*.png
+          if-no-files-found: error
       - name: Test recursive cohort coverage
         run: python3 -m unittest discover -s Tests/MeasurementTests -p 'test_*.py'
       - name: Test build identity fixtures

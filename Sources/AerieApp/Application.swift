@@ -115,6 +115,26 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         )
         return
       }
+      if let self, self.dashboard.module == .weather, let report = self.dashboard.weather {
+        if identifier == "weather-current" {
+          self.showWeatherDetail(
+            title: "Current weather",
+            message: WeatherDashboardPresentation.currentMessage(
+              report, status: self.dashboard.weatherStatus, unit: self.settings.temperature))
+          return
+        }
+        if identifier.hasPrefix("weather-day:") || identifier.hasPrefix("weather-outlook:"),
+          let outlook = WeatherOutlookPresentation.outlooks(report, at: Date()).first(where: {
+            $0.identifier == identifier
+          })
+        {
+          self.showWeatherDetail(
+            title: outlook.title + " outlook",
+            message: WeatherOutlookPresentation.message(
+              outlook, report: report, temperature: self.settings.temperature))
+          return
+        }
+      }
       if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-alert:"),
         let index = Int(identifier.dropFirst(14)), let report = self.dashboard.weather?.alertReport,
         report.alerts.indices.contains(index)

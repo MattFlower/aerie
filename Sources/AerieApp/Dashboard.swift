@@ -14,6 +14,7 @@ enum DashboardRow {
   case cores([Double])
   case calendar(CalendarMonth)
   case clock(WorldClockReading, WorldClockStyle)
+  case weather(WeatherDashboardPresentation)
   case action(String, String, String)
   var height: CGFloat {
     switch self {
@@ -33,6 +34,7 @@ enum DashboardRow {
     case .cores(let c): return CGFloat((c.count + 11) / 12) * 42 + 18
     case .calendar(let model): return CalendarMonthView.height(model)
     case .clock(_, let style): return style == .compact ? 58 : 100
+    case .weather(let value): return value.height
     case .action: return 34
     }
   }
@@ -57,6 +59,7 @@ final class DashboardView: NSView {
   var expectedInterval = 1.0
   private let chartFormatter = DateFormatter()
   private var calendarView: CalendarMonthView?
+  private var weatherView: WeatherDashboardView?
   private var actionButtons: [Int: NSButton] = [:]
   private var textElements: [Int: NSAccessibilityElement] = [:]
   private var accessibilityGroups: [Int: NSAccessibilityElement] = [:]
@@ -84,9 +87,19 @@ final class DashboardView: NSView {
     var y: CGFloat = 8
     var elements: [Any] = []
     var hasCalendar = false
+    var hasWeather = false
     var actionIndexes: Set<Int> = []
     var textIndexes: Set<Int> = []
     for (index, row) in rows.enumerated() {
+      if case .weather(let value) = row {
+        let weather = weatherView ?? WeatherDashboardView(frame: .zero)
+        weatherView = weather; hasWeather = true
+        weather.frame = NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height)
+        weather.onAction = { [weak self] in self?.onAction?($0) }
+        if weather.superview == nil { addSubview(weather) }
+        weather.update(value); elements.append(weather)
+        y += row.height; continue
+      }
       if case .calendar(let model) = row {
         let calendar = calendarView ?? CalendarMonthView(frame: .zero)
         calendarView = calendar; hasCalendar = true
@@ -148,7 +161,7 @@ final class DashboardView: NSView {
         label = c.enumerated().map { "Core \($0.offset + 1): \(Format.percent($0.element))" }
           .joined(separator: ", ")
       case .clock(let reading, _): label = reading.accessibilityLabel
-      case .calendar, .action: label = ""
+      case .calendar, .action, .weather: label = ""
       }
       let chart: Bool
       switch row {
@@ -177,6 +190,9 @@ final class DashboardView: NSView {
       }
       elements.append(e)
       y += row.height
+    }
+    if !hasWeather {
+      weatherView?.releasePresentation(); weatherView?.removeFromSuperview(); weatherView = nil
     }
     if !hasCalendar {
       calendarView?.setAccessibilityParent(nil)
@@ -255,6 +271,8 @@ final class DashboardView: NSView {
     }
   }
   func releaseInteractiveRows() {
+    weatherView?.releasePresentation(); weatherView?.setAccessibilityParent(nil)
+    weatherView?.removeFromSuperview(); weatherView = nil
     calendarView?.setAccessibilityParent(nil); calendarView?.removeFromSuperview();
     calendarView = nil
     actionButtons.values.forEach {
@@ -344,6 +362,7 @@ final class DashboardView: NSView {
       defer { y += row.height }
       guard rect.intersects(dirtyRect) else { continue }
       switch row {
+      case .weather: break
       case .trend(let title, let detail, let series):
         drawCompactTrend(
           title, detail: detail, series: series, points: points,
@@ -564,6 +583,9 @@ final class DashboardController: NSViewController {
   var historyStatus = "History archive is off"
   var weather: WeatherReport?
   var weatherStatus = "Weather is off"
+  var weatherNow: () -> Date = Date.init
+  private var weatherPresentation:
+    (WeatherDashboardPresentation.Input, WeatherDashboardPresentation)?
   var shortcutStatus: String?
   var publicAddress: PublicAddressReading?
   var publicAddressStatus = "Public IP lookup is off"
@@ -582,6 +604,7 @@ final class DashboardController: NSViewController {
   /// Retain reusable controls and their module/range/zoom choices for the next presentation.
   func releasePresentation() {
     snapshot = Snapshot(); history = HistoryStore(interval: settings.interval)
+    weatherPresentation = nil
     weather = nil; publicAddress = nil; calendarRows.removeAll(); releaseDaylight()
     weatherStatus = "Weather is off"; publicAddressStatus = "Public IP lookup is off"
     historyStatus = "History archive is off"; shortcutStatus = nil
@@ -664,6 +687,7 @@ final class DashboardController: NSViewController {
   @objc private func selectModule() {
     canvas.selectedPoint = nil; setHistoryExpanded(false)
     module = Module.allCases[modules.indexOfSelectedItem]
+    if module != .weather { weatherPresentation = nil }
     view.window?.setAccessibilityLabel("Aerie \(module.title) detail")
     onModule?(module)
     refresh()
@@ -694,6 +718,7 @@ final class DashboardController: NSViewController {
   func show(_ module: Module) {
     if presentationReleased { loadView() } else { _ = view }
     if module != .time { releaseDaylight() }
+    if module != .weather { weatherPresentation = nil }
     let changed = self.module != module
     self.module = module
     if changed {
@@ -724,6 +749,10 @@ final class DashboardController: NSViewController {
       ? "Paused"
       : age > settings.interval * 3
         ? "Stale · \(Int(age))s" : "Live · \(settings.interval.formatted())s"
+    if module == .weather {
+      stateLabel.stringValue =
+        suspended ? "Paused · cached forecast" : weather == nil ? "Forecast" : "Forecast · 15 min"
+    }
     let rows = makeRows()
     canvas.expectedInterval =
       windowPicker.indexOfSelectedItem == 0
@@ -1423,147 +1452,30 @@ final class DashboardController: NSViewController {
       return rows
     case .weather:
       guard settings.weather.valid else {
+        weatherPresentation = nil
         return [
-          DashboardRow.heading("Weather is off"),
-          DashboardRow.note(
+          .heading("Weather is off"),
+          .note(
             "Choose a provider and location in Weather Settings, then enable forecasts. Enter coordinates manually, find a city or ZIP, or explicitly choose one Mac location. Choosing a location alone does not enable forecasts or maps."
           ),
         ]
       }
-      var rows: [DashboardRow] = [
-        DashboardRow.heading(settings.weather.name), DashboardRow.note(weatherStatus),
-      ]
-      guard let w = weather else { return rows }
-      let f = DateFormatter()
-      f.dateFormat = "EEE d MMM HH:mm z"
-      f.timeZone = w.timeContext.instantZone
-      rows += [
-        .facts([
-          ("Conditions", w.condition ?? WeatherCondition.describe(w.code)),
-          (
-            "Temperature",
-            w.temperature.map { Format.temperature($0, unit: settings.temperature) }
-              ?? "Unavailable"
-          ),
-          (
-            "Feels like",
-            w.apparent.map { Format.temperature($0, unit: settings.temperature) } ?? "Unavailable"
-          ),
-          ("Humidity", w.humidity.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
-        ])
-      ]
-      if let alerts = w.alertReport {
-        rows.append(.metric("Alert refresh", f.string(from: alerts.fetched)))
+      guard let report = weather else {
+        weatherPresentation = nil
+        return [.heading(settings.weather.name), .note(weatherStatus)]
       }
-      if let alerts = w.alertReport, !alerts.alerts.isEmpty {
-        rows.append(.heading("Current point alerts"))
-        for (index, alert) in alerts.alerts.enumerated() {
-          rows.append(.action(alert.event, alert.severity, "weather-alert:\(index)"))
-        }
-      }
-      rows.append(.heading("Hourly forecast"))
-      f.dateFormat = "EEE HH:mm"
-      let hours = HourlyForecastPresentation.indices(
-        w.hours, at: Date(), limit: settings.effectiveHourlyForecastHours)
-      if hours.isEmpty { rows.append(.note("No current or upcoming hourly forecast returned.")) }
-      for index in hours {
-        let h = w.hours[index]
-        let chance = h.precipitation.map { String(format: "%.0f%% precipitation", $0) } ?? ""
-        rows.append(
-          .action(
-            f.string(from: h.date),
-            (h.temperature.map { Format.temperature($0, unit: settings.temperature) }
-              ?? "Unavailable") + "  " + chance, "weather-hour:\(index)"))
-        rows.append(
-          .note(
-            (h.condition ?? WeatherCondition.describe(h.code))
-              + (h.windDescription.map { $0.isEmpty ? "" : " · " + $0 } ?? "")))
-      }
-      rows.append(
-        .note(
-          "Showing \(hours.count) cached hourly periods, up to \(settings.effectiveHourlyForecastHours). Select an hour for available wind, humidity, precipitation and other details. No extra requests are made."
-        ))
-      rows.append(.heading("Observation details"))
-      f.dateFormat = "EEE d MMM HH:mm z"
-      if let station = w.observationStation { rows.append(.metric("Observation station", station)) }
-      if let time = w.observationTime {
-        rows.append(.metric("Observation time", f.string(from: time)))
-      }
-      if let time = w.forecastUpdated {
-        rows.append(.metric("Forecast updated", f.string(from: time)))
-      }
-      for note in w.notes { rows.append(.note(note)) }
-      rows += [
-        DashboardRow.metric(
-          "Wind / gusts",
-          "\(w.wind.map { String(format: "%.1f", $0) } ?? "—") / \(w.gusts.map { String(format: "%.1f km/h", $0) } ?? "—")"
-        ),
-        DashboardRow.metric(
-          "Direction", w.direction.map { String(format: "%.0f°", $0) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Pressure", w.pressure.map { String(format: "%.0f hPa", $0) } ?? "Unavailable"),
-        DashboardRow.metric(
-          "Cloud cover", w.cloud.map { String(format: "%.0f%%", $0) } ?? "Unavailable"),
-        DashboardRow.note(w.timeContext.description),
-      ]
-      if !w.periods.isEmpty {
-        rows.append(.heading("Named forecast periods"))
-        for (index, period) in w.periods.enumerated() {
-          rows.append(
-            .action(
-              period.name,
-              period.temperature.map { Format.temperature($0, unit: settings.temperature) }
-                ?? "Temperature unavailable", "weather-period:\(index)"))
-          rows.append(.note(period.condition + (period.wind.isEmpty ? "" : " · " + period.wind)))
-        }
-      }
-      if !w.days.isEmpty { rows += [DashboardRow.heading("Daily forecast")] }
-      f.dateFormat = "EEE d MMM"
-      f.timeZone = w.timeContext.dailyZone
-      for d in w.days {
-        rows += [
-          DashboardRow.metric(
-            f.string(from: d.date),
-            "\(Format.temperature(d.low, unit: settings.temperature)) / \(Format.temperature(d.high, unit: settings.temperature))"
-          ),
-          DashboardRow.metric(
-            WeatherCondition.describe(d.code), d.uv.map { String(format: "UV %.1f", $0) } ?? ""),
-        ]
-        let t = DateFormatter()
-        t.timeStyle = .short
-        t.timeZone = w.timeContext.instantZone
-        if let sunrise = d.sunrise, let sunset = d.sunset {
-          rows += [
-            DashboardRow.metric(
-              "Daylight", "\(t.string(from: sunrise)) – \(t.string(from: sunset))")
-          ]
-        }
-      }
-      if let alerts = w.alertReport {
-        rows.append(.heading("Current alerts at the manual point"))
-        f.dateFormat = "EEE d MMM HH:mm z"
-        f.timeZone = w.timeContext.instantZone
-        rows.append(
-          .note(
-            "Fetched " + f.string(from: alerts.fetched)
-              + ". Alert validity is separate from forecast-period times."))
-        if alerts.alerts.isEmpty {
-          rows.append(.note("No active point alerts returned at fetch time."))
-        }
-        if alerts.moreAvailable {
-          rows.append(
-            .note("Additional provider results exist; this view is bounded to 100 messages."))
-        }
-      }
-      rows += [
-        DashboardRow.heading("Source"),
-        DashboardRow.note(
-          w.source == "NWS"
-            ? "Weather data: NWS · https://www.weather.gov/ · Station observations and issued forecasts. Public-domain source data; Aerie is not endorsed by NOAA/NWS. Coverage and delivery vary."
-            : "Weather data: Open-Meteo · CC BY 4.0 · https://open-meteo.com/ · Model-derived forecasts. Official severe alerts are not supplied by this forecast provider."
-        ),
-      ]
-      return rows
+      let now = weatherNow()
+      let input = WeatherDashboardPresentation.Input(
+        report: report, name: settings.weather.name, status: weatherStatus,
+        unit: settings.temperature,
+        limit: settings.effectiveHourlyForecastHours, now: now)
+      if let cached = weatherPresentation, cached.0 == input { return [.weather(cached.1)] }
+      let value = WeatherDashboardPresentation(
+        report: report, name: settings.weather.name, status: weatherStatus,
+        unit: settings.temperature,
+        limit: settings.effectiveHourlyForecastHours, now: now)
+      weatherPresentation = (input, value)
+      return [.weather(value)]
     }
   }
 }

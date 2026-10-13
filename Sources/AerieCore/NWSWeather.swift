@@ -7,6 +7,7 @@ public struct WeatherPeriod: Equatable {
   public let isDay: Bool
   public let temperature, precipitation: Double?
   public let condition, detail, wind: String
+  public var glyph: WeatherGlyph? = nil
   public var humidity: Double? = nil
   public var dewpoint: Double? = nil
   public var windSpeed: Double? = nil
@@ -197,6 +198,7 @@ public enum NWSWeather {
               ?? "",
             text(period["windDirection"], limit: 32),
           ].filter { !$0.isEmpty }.joined(separator: " · "),
+          glyph: WeatherIconMetadata.nws(period["icon"] as? String)?.glyph,
           humidity: quantity(period["relativeHumidity"], kind: "percent"),
           dewpoint: quantity(period["dewpoint"], kind: "temperature"),
           windSpeed: quantity(period["windSpeed"], kind: "wind"),
@@ -240,7 +242,8 @@ public struct NWSProvider: WeatherProvider {
       report.hours = hourly.periods.map {
         WeatherHour(
           date: $0.start, temperature: $0.temperature, precipitation: $0.precipitation, code: -1,
-          condition: $0.condition, end: $0.end, humidity: $0.humidity, dewpoint: $0.dewpoint,
+          condition: $0.condition, isDay: $0.isDay, glyph: $0.glyph, end: $0.end,
+          humidity: $0.humidity, dewpoint: $0.dewpoint,
           wind: $0.windSpeed, gusts: $0.gusts, windDescription: $0.wind,
           gustDescription: $0.gustDescription, detail: $0.detail)
       }

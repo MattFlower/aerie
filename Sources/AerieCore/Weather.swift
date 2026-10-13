@@ -6,6 +6,8 @@ public struct WeatherHour: Equatable {
   public var precipitation: Double?
   public var code: Int
   public var condition: String?
+  public var isDay: Bool?
+  public var glyph: WeatherGlyph?
   public var end: Date?
   public var precedingHourAggregates: Bool
   public var apparent, humidity, dewpoint, wind, gusts, direction, pressure, cloud, amount, uv,
@@ -13,6 +15,7 @@ public struct WeatherHour: Equatable {
   public var windDescription, gustDescription, detail: String?
   public init(
     date: Date, temperature: Double?, precipitation: Double?, code: Int, condition: String? = nil,
+    isDay: Bool? = nil, glyph: WeatherGlyph? = nil,
     end: Date? = nil, precedingHourAggregates: Bool = false, apparent: Double? = nil,
     humidity: Double? = nil, dewpoint: Double? = nil,
     wind: Double? = nil, gusts: Double? = nil, direction: Double? = nil, pressure: Double? = nil,
@@ -23,7 +26,7 @@ public struct WeatherHour: Equatable {
     self.temperature = temperature
     self.precipitation = precipitation
     self.code = code
-    self.condition = condition; self.end = end;
+    self.condition = condition; self.isDay = isDay; self.glyph = glyph; self.end = end;
     self.precedingHourAggregates = precedingHourAggregates; self.apparent = apparent;
     self.humidity = humidity
     self.dewpoint = dewpoint; self.wind = wind; self.gusts = gusts; self.direction = direction
@@ -73,7 +76,7 @@ public struct WeatherTimeContext: Equatable {
     return "Forecast timezone unavailable; times shown in UTC."
   }
 }
-public struct WeatherReport {
+public struct WeatherReport: Equatable {
   public var source: String
   public var attributionURL: String
   public var fetched: Date

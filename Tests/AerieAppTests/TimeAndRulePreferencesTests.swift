@@ -116,16 +116,18 @@ final class TimeAndRulePreferencesTests: XCTestCase {
             date: now.addingTimeInterval(3600), temperature: nil, precipitation: 0, code: 71)
         ], days: [], alerts: [])
       dashboard.show(.weather)
-      XCTAssertTrue(
-        dashboard.canvas.rows.contains {
-          if case .action(_, let value, "weather-hour:0") = $0 {
-            return value.contains("Unavailable") && value.contains("0% precipitation")
-          }; return false
-        })
+      let weather = try XCTUnwrap(
+        dashboard.canvas.subviews.compactMap { $0 as? WeatherDashboardView }.first)
+      let value = try XCTUnwrap(weather.presentation)
+      XCTAssertEqual(value.hours.first?.temperature, "—")
+      XCTAssertEqual(value.hours.first?.chance, "0%")
+      XCTAssertTrue(value.hours.first?.accessibility.contains("Temperature: Unavailable") == true)
       var selected: String?
       dashboard.canvas.onAction = { selected = $0 }
-      try XCTUnwrap(dashboard.canvas.subviews.compactMap { $0 as? NSButton }.first).performClick(
-        nil)
+      let strip = try XCTUnwrap(weather.subviews.compactMap { $0 as? NSScrollView }.first)
+      let hour = try XCTUnwrap(
+        strip.documentView?.subviews.compactMap { $0 as? WeatherForecastButton }.first)
+      XCTAssertTrue(hour.accessibilityPerformPress())
       XCTAssertEqual(selected, "weather-hour:0")
       dashboard.canvas.releaseInteractiveRows(); XCTAssertTrue(dashboard.canvas.subviews.isEmpty)
     }
