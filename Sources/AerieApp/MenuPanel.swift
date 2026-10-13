@@ -14,6 +14,7 @@ final class MenuPanel: NSObject, NSWindowDelegate {
   var onCreate: ((NSWindow) -> Void)?
   var onShow: ((NSWindow) -> Void)?
   private var panel: MenuDashboardWindow?
+  private var presentationID = 0
   private var deactivationObserver: NSObjectProtocol?
   var isShown: Bool { panel?.isVisible == true }
 
@@ -42,7 +43,7 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     window.delegate = self
     window.setFrameOrigin(
       Self.origin(anchor: anchor, visibleFrame: screen.visibleFrame, size: window.frame.size))
-    panel = window
+    presentationID += 1; panel = window
     onCreate?(window)
     deactivationObserver = NotificationCenter.default.addObserver(
       forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main
@@ -50,6 +51,7 @@ final class MenuPanel: NSObject, NSWindowDelegate {
     NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
     onShow?(window)
+    traceHost("show", window: window)
   }
   func reanchor(to button: NSStatusBarButton) {
     guard let panel, let screen = button.window?.screen ?? panel.screen else { return }
@@ -58,6 +60,7 @@ final class MenuPanel: NSObject, NSWindowDelegate {
       Self.origin(
         anchor: Self.anchor(attached: attached, visibleFrame: screen.visibleFrame),
         visibleFrame: screen.visibleFrame, size: panel.frame.size))
+    traceHost("switch", window: panel)
   }
   deinit {
     if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
@@ -69,10 +72,21 @@ final class MenuPanel: NSObject, NSWindowDelegate {
   func performClose(_ sender: Any?) { panel?.close() }
   func windowWillClose(_ notification: Notification) {
     guard let window = notification.object as? NSWindow, window === panel else { return }
+    traceHost("close", window: window)
     panel = nil; window.delegate = nil; Self.releaseContent(of: window)
     if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
     deactivationObserver = nil
     onClose?()
+  }
+  private func traceHost(_ phase: String, window: NSWindow) {
+    let controller = window.contentViewController
+    MenuRoutingTrace.host(
+      phase: phase, id: presentationID, module: (controller as? DashboardController)?.module,
+      controllerMatches: controller === contentViewController,
+      viewAttached: controller?.isViewLoaded == true && controller?.view.window === window,
+      visible: window.isVisible,
+      visibleDashboardCount: NSApp.windows.filter { $0 is MenuDashboardWindow && $0.isVisible }
+        .count)
   }
   static func releaseContent(of window: NSWindow) {
     // Clearing the controller alone can leave its view attached to an ordered-out native window.

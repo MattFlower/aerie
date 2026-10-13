@@ -553,7 +553,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       showStatusContext(anchoredTo: sender); return
     }
     if let group = groupedStatus {
-      _ = group.activate(from: NSApp.currentEvent, pointerInScreen: NSEvent.mouseLocation)
+      _ = group.activatePointer(from: NSApp.currentEvent, source: "button")
       return
     }
     toggleModule(module, anchoredTo: sender)
@@ -573,6 +573,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button)
   }
   private func toggleModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
+    MenuRoutingTrace.selection(module, shown: menuPanel.isShown ? dashboard.module : nil)
     switch ModuleActivation.resolve(
       requested: module, shown: menuPanel.isShown ? dashboard.module : nil)
     {

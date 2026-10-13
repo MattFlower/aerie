@@ -17,6 +17,7 @@ final class GroupedStatusView: NSView {
   private var elements: [StatusSegmentElement] = []
   private var selected = 0
   private var padding: CGFloat = -1, gap: CGFloat = -1
+  var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
   var onSelect: ((Module) -> Void)?
   var onContext: (() -> Void)?
   override init(frame: NSRect) {
@@ -106,11 +107,21 @@ final class GroupedStatusView: NSView {
     }
   }
 
+  @discardableResult func activatePointer(from event: NSEvent?, source: String) -> Bool {
+    let pointer = pointerLocation()
+    let point = window.map { convert($0.convertPoint(fromScreen: pointer), from: nil) }
+    let focused = widgets.indices.contains(selected) ? widgets[selected].module : nil
+    MenuRoutingTrace.pointer(
+      source: source, eventType: Int(event?.type.rawValue ?? 0),
+      windowMatches: window != nil && event?.window === window,
+      point: point, bounds: bounds, hit: point.flatMap { module(at: $0) }, focused: focused)
+    return activate(from: event, pointerInScreen: pointer)
+  }
   override func mouseDown(with event: NSEvent) {
     window?.makeFirstResponder(self)
   }
   override func mouseUp(with event: NSEvent) {
-    _ = activate(at: convert(event.locationInWindow, from: nil))
+    _ = activatePointer(from: event, source: "child")
   }
   override func rightMouseUp(with event: NSEvent) { onContext?() }
   override func keyDown(with event: NSEvent) {
@@ -135,6 +146,6 @@ final class GroupedStatusView: NSView {
   override func accessibilityPerformPress() -> Bool { press(index: selected) }
   func releaseContent() {
     widgets.removeAll(); images.removeAll(); segments.removeAll(); elements.removeAll()
-    onSelect = nil; onContext = nil
+    onSelect = nil; onContext = nil; pointerLocation = { NSEvent.mouseLocation }
   }
 }

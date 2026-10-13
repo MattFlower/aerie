@@ -188,6 +188,8 @@ final class ModuleActivationTests: XCTestCase {
             with: .leftMouseUp, location: point, modifierFlags: [],
             timestamp: Double(index + 1), windowNumber: window.windowNumber, context: nil,
             eventNumber: index + 1, clickCount: 1, pressure: 0))
+        let screenPoint = window.convertPoint(toScreen: point)
+        group.pointerLocation = { screenPoint }
         group.mouseUp(with: event)
       }
       try click(0); XCTAssertEqual(shown, .network)
@@ -207,6 +209,44 @@ final class ModuleActivationTests: XCTestCase {
       XCTAssertEqual(dashboard.modules.titleOfSelectedItem, "Memory")
       XCTAssertTrue(group.activate(from: nil, pointerInScreen: pointer)); XCTAssertNil(shown)
       dashboard.releasePresentation(); group.releaseContent(); window.contentView = nil
+    }
+  }
+  func testChildMouseUpIgnoresForeignWindowCoordinatesAfterSettings() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let window = NSWindow(
+        contentRect: NSRect(x: -800, y: 400, width: 400, height: 24), styleMask: [],
+        backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      let group = GroupedStatusView(frame: .zero); window.contentView?.addSubview(group)
+      _ = group.update(
+        [Module.overview, .cpu, .gpu, .network].map {
+          StatusWidget(
+            module: $0, value: MenuValue(full: "42%"), style: .compact,
+            label: .vertical, colorHex: nil)
+        }, padding: 0, gap: 6)
+      var requests: [Module] = []; group.onSelect = { requests.append($0) }
+      XCTAssertTrue(group.press(index: 3))
+      let rect = group.segments[2]
+      let pointer = window.convertPoint(
+        toScreen: group.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil))
+      group.pointerLocation = { pointer }
+      let foreign = NSWindow(
+        contentRect: NSRect(x: 1000, y: 700, width: 50, height: 50), styleMask: [],
+        backing: .buffered, defer: false)
+      foreign.isReleasedWhenClosed = false
+      let up = try XCTUnwrap(
+        NSEvent.mouseEvent(
+          with: .leftMouseUp, location: .zero, modifierFlags: [], timestamp: 1,
+          windowNumber: foreign.windowNumber, context: nil, eventNumber: 1,
+          clickCount: 1, pressure: 0))
+      group.mouseUp(with: up)
+      XCTAssertEqual(requests.last, .gpu)
+      let gapPointer = window.convertPoint(
+        toScreen: group.convert(NSPoint(x: group.segments[1].maxX + 3, y: 12), to: nil))
+      group.pointerLocation = { gapPointer }; let count = requests.count
+      group.mouseUp(with: up); XCTAssertEqual(requests.count, count)
+      group.releaseContent(); window.contentView = nil
     }
   }
   func testMatchingModuleTogglesWhileAnotherModuleSwitchesForEveryConfiguration() {

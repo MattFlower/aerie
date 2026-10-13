@@ -659,6 +659,7 @@ final class DashboardController: NSViewController {
     view.window?.setAccessibilityLabel("Aerie \(module.title) detail")
     onModule?(module)
     refresh()
+    traceRenderedModule()
     if let scroll = canvas.enclosingScrollView {
       scroll.contentView.scroll(to: .zero)
       scroll.reflectScrolledClipView(scroll.contentView)
@@ -693,6 +694,13 @@ final class DashboardController: NSViewController {
     }
     modules.selectItem(at: Module.allCases.firstIndex(of: module) ?? 0)
     refresh()
+    traceRenderedModule()
+  }
+  private func traceRenderedModule() {
+    let index = modules.indexOfSelectedItem
+    let picker = Module.allCases.indices.contains(index) ? Module.allCases[index] : nil
+    MenuRoutingTrace.rendered(
+      module, picker: picker, metrics: MenuRoutingTrace.metrics(in: canvas.rows))
   }
   func refresh() {
     guard isPresentationLoaded else { return }
