@@ -9,6 +9,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private let defaults = UserDefaults.standard
   private var settings = Settings()
   private var items: [(MenuConfiguration, NSStatusItem)] = []
+  private var statusTargets: [StatusItemTarget] = []
   private var groupedStatus: GroupedStatusView?
   private var widgetValues: [Module: StatusWidget] = [:]
   private var combinedWidgetValues: [StatusWidget] = []
@@ -506,7 +507,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     groupedStatus?.releaseContent(); groupedStatus?.removeFromSuperview(); groupedStatus = nil;
     widgetValues.removeAll(); combinedWidgetValues.removeAll()
     for (_, item) in items { NSStatusBar.system.removeStatusItem(item) }
-    items.removeAll()
+    items.removeAll(); statusTargets.removeAll()
     graphValues.removeAll(); stackedValues.removeAll()
     accessibilityValues.removeAll()
     configureClockFormat()
@@ -525,9 +526,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
       item.isVisible = true
       if let button = item.button {
-        button.target = self
-        button.action = #selector(clickedStatus(_:))
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        let target = StatusItemTarget(module: menu.module) { [weak self] module, sender in
+          guard let button = sender as? NSStatusBarButton else { return }
+          self?.clickedStatus(button, module: module)
+        }
+        statusTargets.append(target); target.attach(to: button)
         button.setAccessibilityLabel("Aerie \(menu.module.title)")
       }
       if settings.effectiveGroupedMenus && !settings.combined, let button = item.button {
@@ -537,7 +540,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
           self.toggleModule(module, anchoredTo: button)
         }
         group.onContext = { [weak self, weak button] in
-          if let button { self?.clickedStatus(button) }
+          if let button { self?.showStatusContext(anchoredTo: button) }
         }
         button.addSubview(group)
       }
@@ -545,25 +548,29 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     updateItems()
   }
-  @objc private func clickedStatus(_ sender: NSStatusBarButton) {
+  private func clickedStatus(_ sender: NSStatusBarButton, module: Module) {
     if NSApp.currentEvent?.type == .rightMouseUp {
-      let menu = NSMenu()
-      for (title, action) in [
-        ("Aerie Settings…", #selector(showSettings)),
-        ("Close All Aerie Windows", #selector(closeAllWindows)),
-        (paused ? "Resume Sampling" : "Pause Sampling", #selector(togglePaused)),
-        ("Open Activity Monitor", #selector(activityMonitor)), ("Quit Aerie", #selector(quit)),
-      ] {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
-      }
-      menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
+      showStatusContext(anchoredTo: sender); return
+    }
+    if let group = groupedStatus {
+      _ = group.activate(from: NSApp.currentEvent, pointerInScreen: NSEvent.mouseLocation)
       return
     }
-    if let group = groupedStatus { _ = group.activate(from: NSApp.currentEvent); return }
-    let module = items.first { $0.1.button === sender }?.0.module ?? .overview
     toggleModule(module, anchoredTo: sender)
+  }
+  private func showStatusContext(anchoredTo button: NSStatusBarButton) {
+    let menu = NSMenu()
+    for (title, action) in [
+      ("Aerie Settings…", #selector(showSettings)),
+      ("Close All Aerie Windows", #selector(closeAllWindows)),
+      (paused ? "Resume Sampling" : "Pause Sampling", #selector(togglePaused)),
+      ("Open Activity Monitor", #selector(activityMonitor)), ("Quit Aerie", #selector(quit)),
+    ] {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = self
+      menu.addItem(item)
+    }
+    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button)
   }
   private func toggleModule(_ module: Module, anchoredTo button: NSStatusBarButton) {
     switch ModuleActivation.resolve(

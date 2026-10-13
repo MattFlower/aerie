@@ -26,6 +26,7 @@ final class GroupedStatusView: NSView {
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override var acceptsFirstResponder: Bool { true }
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
   @discardableResult func update(_ descriptors: [StatusWidget], padding: CGFloat, gap: CGFloat)
     -> CGFloat
   {
@@ -83,7 +84,16 @@ final class GroupedStatusView: NSView {
     guard let index = segments.firstIndex(where: { $0.contains(point) }) else { return false }
     return press(index: index)
   }
-  @discardableResult func activate(from event: NSEvent?) -> Bool {
+  @discardableResult func activate(
+    from event: NSEvent?, pointerInScreen: NSPoint? = nil
+  ) -> Bool {
+    // A tracked status-button action can arrive with a stale, missing, or unrelated current
+    // event. Its explicit pointer position takes precedence over that event's type/window.
+    // Keyboard and accessibility paths activate their focused/identified segment directly.
+    if let pointerInScreen {
+      guard let window else { return false }
+      return activate(at: convert(window.convertPoint(fromScreen: pointerInScreen), from: nil))
+    }
     guard let event else { return activate(at: nil) }
     switch event.type {
     case .leftMouseDown, .leftMouseUp:

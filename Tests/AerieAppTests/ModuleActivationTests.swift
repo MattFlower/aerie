@@ -56,6 +56,159 @@ final class ModuleActivationTests: XCTestCase {
       group.releaseContent()
     }
   }
+  func testTrackedStatusActionUsesPointerForMissingAndNonMouseCurrentEvents() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let window = NSWindow(
+        contentRect: NSRect(x: -700, y: 300, width: 300, height: 24), styleMask: [],
+        backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      let group = GroupedStatusView(frame: .zero)
+      window.contentView?.addSubview(group)
+      _ = group.update(
+        [Module.overview, .cpu, .gpu, .network].map {
+          StatusWidget(
+            module: $0, value: MenuValue(full: "42%"), style: .compact,
+            label: .vertical, colorHex: nil)
+        }, padding: 0, gap: 6)
+      var requests: [Module] = []; group.onSelect = { requests.append($0) }
+      XCTAssertTrue(group.press(index: 3))
+      XCTAssertTrue(group.acceptsFirstMouse(for: nil))
+      let rect = group.segments[2]
+      let pointer = window.convertPoint(
+        toScreen: group.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil))
+      let unrelated = try XCTUnwrap(
+        NSEvent.otherEvent(
+          with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 1,
+          windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0))
+      XCTAssertTrue(group.activate(from: unrelated, pointerInScreen: pointer))
+      XCTAssertEqual(requests.last, .gpu)
+      XCTAssertTrue(group.press(index: 0))
+      XCTAssertTrue(group.activate(from: nil, pointerInScreen: pointer))
+      XCTAssertEqual(requests.last, .gpu)
+      let staleKey = try XCTUnwrap(
+        NSEvent.keyEvent(
+          with: .keyDown, location: .zero, modifierFlags: [], timestamp: 2,
+          windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+          isARepeat: false, keyCode: 36))
+      XCTAssertTrue(group.press(index: 3))
+      XCTAssertTrue(group.activate(from: staleKey, pointerInScreen: pointer))
+      XCTAssertEqual(requests.last, .gpu)
+      let unrelatedWindow = NSWindow(
+        contentRect: NSRect(x: 1200, y: 800, width: 40, height: 40), styleMask: [],
+        backing: .buffered, defer: false)
+      unrelatedWindow.isReleasedWhenClosed = false
+      let staleMouse = try XCTUnwrap(
+        NSEvent.mouseEvent(
+          with: .leftMouseUp, location: .zero, modifierFlags: [], timestamp: 3,
+          windowNumber: unrelatedWindow.windowNumber, context: nil, eventNumber: 1,
+          clickCount: 1, pressure: 0))
+      XCTAssertTrue(group.activate(from: staleMouse, pointerInScreen: pointer))
+      XCTAssertEqual(requests.last, .gpu)
+      let gap = group.segments[1].maxX + 3
+      let gapPointer = window.convertPoint(
+        toScreen: group.convert(NSPoint(x: gap, y: 12), to: nil))
+      let count = requests.count
+      XCTAssertFalse(group.activate(from: unrelated, pointerInScreen: gapPointer))
+      XCTAssertEqual(requests.count, count)
+      group.releaseContent(); window.contentView = nil
+    }
+  }
+  func testNativeButtonTargetsRetainDestinationsAcrossForwardedSendersAndSettingsTransitions()
+    async throws
+  {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let dashboard = DashboardController()
+      var shown: Module?
+      var requests: [Module] = []
+      let modules: [Module] = [.network, .cpu, .gpu, .memory, .overview]
+      let targets = modules.map { module in
+        StatusItemTarget(module: module) { selected, _ in
+          requests.append(selected)
+          switch ModuleActivation.resolve(requested: selected, shown: shown) {
+          case .close: shown = nil; dashboard.releasePresentation()
+          case .show(let selected):
+            dashboard.show(selected); shown = selected
+          }
+        }
+      }
+      let buttons = modules.map { _ in NSButton(frame: .zero) }
+      for (target, button) in zip(targets, buttons) { target.attach(to: button) }
+      for index in buttons.indices {
+        buttons[index].performClick(nil)
+        XCTAssertEqual(shown, modules[index]); XCTAssertEqual(dashboard.module, modules[index])
+        XCTAssertEqual(dashboard.modules.titleOfSelectedItem, modules[index].title)
+      }
+      buttons[4].performClick(nil)
+      XCTAssertNil(shown); XCTAssertFalse(dashboard.isPresentationLoaded)
+      // Opening Settings closes/releases the detail hierarchy; the next toolbar action must
+      // rebuild it for its own module, even after Network was previously selected.
+      buttons[0].performClick(nil); XCTAssertEqual(shown, .network)
+      shown = nil; dashboard.releasePresentation()
+      buttons[1].performClick(nil)
+      XCTAssertEqual(shown, .cpu); XCTAssertEqual(dashboard.modules.titleOfSelectedItem, "CPU")
+      let forwarded = NSButton(frame: .zero)
+      targets[2].attach(to: forwarded); forwarded.performClick(nil)
+      XCTAssertEqual(shown, .gpu); XCTAssertEqual(requests.last, .gpu)
+      forwarded.performClick(nil); XCTAssertNil(shown)
+      dashboard.releasePresentation()
+    }
+  }
+  func testGroupedMouseEventsAndTrackedActionsShareOpenSwitchCloseAndSettingsLifecycle()
+    async throws
+  {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      let window = NSWindow(
+        contentRect: NSRect(x: -800, y: 400, width: 400, height: 24), styleMask: [],
+        backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      let group = GroupedStatusView(frame: .zero)
+      window.contentView?.addSubview(group)
+      let modules: [Module] = [.network, .cpu, .gpu, .memory, .overview]
+      _ = group.update(
+        modules.map {
+          StatusWidget(
+            module: $0, value: MenuValue(full: "42%"), style: .compact,
+            label: .vertical, colorHex: nil)
+        }, padding: 0, gap: 6)
+      let dashboard = DashboardController(); var shown: Module?
+      group.onSelect = { selected in
+        switch ModuleActivation.resolve(requested: selected, shown: shown) {
+        case .close: shown = nil; dashboard.releasePresentation()
+        case .show(let selected): dashboard.show(selected); shown = selected
+        }
+      }
+      func click(_ index: Int) throws {
+        let rect = group.segments[index]
+        let point = group.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        let event = try XCTUnwrap(
+          NSEvent.mouseEvent(
+            with: .leftMouseUp, location: point, modifierFlags: [],
+            timestamp: Double(index + 1), windowNumber: window.windowNumber, context: nil,
+            eventNumber: index + 1, clickCount: 1, pressure: 0))
+        group.mouseUp(with: event)
+      }
+      try click(0); XCTAssertEqual(shown, .network)
+      try click(1); XCTAssertEqual(shown, .cpu)
+      try click(2); XCTAssertEqual(shown, .gpu)
+      XCTAssertEqual(dashboard.modules.titleOfSelectedItem, "GPU")
+      try click(2); XCTAssertNil(shown)
+      try click(0); XCTAssertEqual(shown, .network)
+      // The Settings transition releases the page; a tracked action without a mouse current
+      // event must ignore the retained Network focus and rebuild the clicked Memory page.
+      shown = nil; dashboard.releasePresentation()
+      let rect = group.segments[3]
+      let pointer = window.convertPoint(
+        toScreen: group.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil))
+      XCTAssertTrue(group.activate(from: nil, pointerInScreen: pointer))
+      XCTAssertEqual(shown, .memory)
+      XCTAssertEqual(dashboard.modules.titleOfSelectedItem, "Memory")
+      XCTAssertTrue(group.activate(from: nil, pointerInScreen: pointer)); XCTAssertNil(shown)
+      dashboard.releasePresentation(); group.releaseContent(); window.contentView = nil
+    }
+  }
   func testMatchingModuleTogglesWhileAnotherModuleSwitchesForEveryConfiguration() {
     for requested in Module.allCases {
       XCTAssertEqual(ModuleActivation.resolve(requested: requested, shown: nil), .show(requested))
