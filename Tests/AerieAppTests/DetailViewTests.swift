@@ -11,10 +11,12 @@ final class DetailViewTests: XCTestCase {
       timeContext: WeatherTimeContext(identifier: "Etc/UTC", offsetSeconds: 0),
       temperature: 24.2, apparent: 23.8, humidity: 53, wind: 14.5, gusts: 20.5, direction: 180,
       pressure: 1011.2, cloud: 20, code: 2, hours: [], days: [], alerts: [])
+    report.isDay = true; report.glyph = .partlyCloudy
     report.hours = (0..<24).map {
       WeatherHour(
         date: now.addingTimeInterval(Double($0) * 3600), temperature: 24.2 - Double($0 % 6),
-        precipitation: Double($0 % 5) * 12, code: 2, apparent: 23.8, humidity: 53, dewpoint: 16.3,
+        precipitation: Double($0 % 5) * 12, code: 2, isDay: true, apparent: 23.8, humidity: 53,
+        dewpoint: 16.3,
         wind: 14.5, gusts: 20.5, direction: 180, pressure: 1011.2, cloud: 20, amount: 0.2, uv: 3,
         visibility: 10000, detail: "Synthetic forecast narrative. Light winds ease overnight.")
     }
@@ -37,6 +39,17 @@ final class DetailViewTests: XCTestCase {
       effective: now.addingTimeInterval(3600), onset: now.addingTimeInterval(7200),
       expires: now.addingTimeInterval(10800), ends: now.addingTimeInterval(14400),
       source: URL(string: "https://example.invalid/alert"))
+  }
+  func testConditionIconsUseReportedDayNightWithoutInferringFromNarrative() {
+    XCTAssertEqual(MenuRenderer.weatherSymbol(code: 2, daylight: true), "cloud.sun")
+    XCTAssertEqual(MenuRenderer.weatherSymbol(code: 2, daylight: false), "cloud.moon")
+    XCTAssertEqual(MenuRenderer.weatherSymbol(code: 2, daylight: nil), "cloud")
+    XCTAssertEqual(
+      MenuRenderer.weatherSymbol(code: nil, daylight: true, glyph: .partlyCloudy), "cloud.sun")
+    XCTAssertEqual(
+      MenuRenderer.weatherSymbol(code: nil, daylight: false, glyph: .partlyCloudy), "cloud.moon")
+    XCTAssertEqual(
+      MenuRenderer.weatherSymbol(code: nil, daylight: nil, glyph: .partlyCloudy), "cloud")
   }
   func testWeatherUsesWholeDegreesAndRetainsOriginalPrecisionAndTiming() {
     let report = report(), hour = report.hours[0]

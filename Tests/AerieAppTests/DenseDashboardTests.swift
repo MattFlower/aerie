@@ -75,6 +75,13 @@ final class DenseDashboardTests: XCTestCase {
       source: "Battery Power", present: true, percent: 0.8,
       charging: false, external: false, minutes: 120, health: 0.95, cycles: 100, watts: 12,
       voltage: 12, amperage: 1)
+    controller.snapshot.power.inventory = PowerSourceInventory(
+      sources: [
+        PowerSourceReading(
+          name: "Synthetic battery", kind: .internalBattery, transport: "Internal", present: true,
+          input: .battery, charging: false, current: 80, maximum: 100, minutes: 120, voltage: 12,
+          amperage: 1, temperature: 30)
+      ], available: true, reportedCount: 1)
     controller.settings.processCount = 7
     for index in 0..<20 {
       controller.history.append(
@@ -92,8 +99,10 @@ final class DenseDashboardTests: XCTestCase {
       let viewport = try XCTUnwrap(controller.canvas.enclosingScrollView).contentSize.height
       var y: CGFloat = 8; var processCount = 0; var gpuBeforeFooter = false; var foundFooter = false
       for row in rows {
-        if case .metric(let key, _) = row, key.hasPrefix("Synthetic process") { processCount += 1 }
-        if case .heading(let title) = row, title == "GPU · Synthetic GPU" {
+        if case .reading(let card) = row, card.compact, card.title.hasPrefix("Synthetic process") {
+          processCount += 1
+        }
+        if case .reading(let card) = row, card.title == "GPU · Synthetic GPU" {
           XCTAssertEqual(processCount, 5); gpuBeforeFooter = true
         }
         y += row.height
@@ -123,7 +132,8 @@ final class DenseDashboardTests: XCTestCase {
       XCTAssertEqual(title, "GPU 25%"); XCTAssertEqual(series.map(\.key), ["gpu"])
       @MainActor func facts() -> [(String, String)] {
         controller.canvas.rows.flatMap {
-          if case .facts(let items) = $0 { return items }; return []
+          if case .facts(let items) = $0 { return items };
+          if case .reading(let card) = $0 { return card.facts }; return []
         }
       }
       XCTAssertFalse(

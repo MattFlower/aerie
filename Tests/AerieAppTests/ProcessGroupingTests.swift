@@ -156,9 +156,10 @@ final class ProcessGroupingAppTests: XCTestCase {
       ]
       dashboard.show(.cpu)
       let processRows = dashboard.canvas.rows.compactMap { row -> String? in
-        if case .metric(let title, _) = row, title == "Other" || title == "Synthetic · 2 processes"
+        if case .reading(let card) = row,
+          card.title == "Other" || card.title == "Synthetic · 2 processes"
         {
-          return title
+          return card.title
         }; return nil
       }
       XCTAssertEqual(processRows, ["Other", "Synthetic · 2 processes"])

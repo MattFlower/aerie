@@ -3,6 +3,7 @@ import AppKit
 import EventKit
 
 enum DashboardRow {
+  case reading(ReadingCard)
   case hero(String, String, String)
   case sensor(SensorRowPresentation)
   case explanation(String)
@@ -21,6 +22,7 @@ enum DashboardRow {
   case action(String, String, String)
   var height: CGFloat {
     switch self {
+    case .reading(let card): return card.height
     case .hero: return 104
     case .sensor: return 38
     case .explanation: return 60
@@ -58,9 +60,31 @@ private final class HistoryChartAccessibilityElement: NSAccessibilityElement {
   override func accessibilityPerformPress() -> Bool { owner?.selectHistory(fraction: 0.5) ?? false }
 }
 
+private final class ReadingCardAccessibilityElement: NSAccessibilityElement {
+  weak var owner: DashboardView?
+  var index = 0
+  override func accessibilityFrame() -> NSRect {
+    guard let owner, let window = owner.window else { return .zero }
+    return window.convertToScreen(owner.convert(owner.rowRect(index), to: nil))
+  }
+  override func accessibilityPerformPress() -> Bool { owner?.activateReading(index) ?? false }
+}
+
 final class DashboardView: NSView {
   var rows: [DashboardRow] = []
   var points: [HistoryPoint] = []
+  private var focusedReading: Int?
+  private var rowFrames: [NSRect] = []
+  override var acceptsFirstResponder: Bool { true }
+  override func becomeFirstResponder() -> Bool {
+    if focusedReading == nil {
+      focusedReading = rows.indices.first {
+        if case .reading = rows[$0] { return true }; return false
+      }
+    }
+    needsDisplay = true; return true
+  }
+  override func resignFirstResponder() -> Bool { needsDisplay = true; return true }
   var selectedPoint: HistoryPoint?
   var expectedInterval = 1.0
   private let chartFormatter = DateFormatter()
@@ -92,11 +116,23 @@ final class DashboardView: NSView {
     needsDisplay = true
     var y: CGFloat = 8
     var elements: [Any] = []
+    rowFrames.removeAll(keepingCapacity: true)
     var hasCalendar = false
     var hasWeather = false
     var actionIndexes: Set<Int> = []
     var textIndexes: Set<Int> = []
     for (index, row) in rows.enumerated() {
+      rowFrames.append(NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height))
+      if case .reading(let card) = row {
+        let element =
+          textElements[index] as? ReadingCardAccessibilityElement
+          ?? ReadingCardAccessibilityElement()
+        textElements[index] = element; textIndexes.insert(index); element.owner = self;
+        element.index = index
+        element.setAccessibilityParent(self); element.setAccessibilityRole(.button)
+        element.setAccessibilityLabel(card.accessibility); element.setAccessibilityEnabled(true)
+        elements.append(element); y += row.height; continue
+      }
       if case .weather(let value) = row {
         let weather = weatherView ?? WeatherDashboardView(frame: .zero)
         weatherView = weather; hasWeather = true
@@ -151,6 +187,7 @@ final class DashboardView: NSView {
       }
       let label: String
       switch row {
+      case .reading(let card): label = card.accessibility
       case .hero(let title, let value, let detail): label = title + ": " + value + ". " + detail
       case .explanation(let s): label = s
       case .sensor(let value): label = value.name + ": " + value.value
@@ -308,7 +345,9 @@ final class DashboardView: NSView {
     }; actionButtons.removeAll()
     textElements.values.forEach { $0.setAccessibilityParent(nil) }; textElements.removeAll()
     clearAccessibilityGroups()
-    rows.removeAll(); points.removeAll(); selectedPoint = nil; setAccessibilityChildren([])
+    rows.removeAll(); rowFrames.removeAll(); points.removeAll(); selectedPoint = nil;
+    focusedReading = nil;
+    setAccessibilityChildren([])
     // A large inventory must not leave a tall, empty native document backing after close.
     frame.size.height = 16
     needsDisplay = true
@@ -389,11 +428,12 @@ final class DashboardView: NSView {
     dirtyRect.intersection(bounds).fill()
     chartFormatter.dateStyle = .short; chartFormatter.timeStyle = .medium
     var y: CGFloat = 8
-    for row in rows {
+    for (rowIndex, row) in rows.enumerated() {
       let rect = NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height)
       defer { y += row.height }
       guard rect.intersects(dirtyRect) else { continue }
       switch row {
+      case .reading(let card): drawReadingCard(card, in: rect, focused: focusedReading == rowIndex)
       case .weather, .sensor, .explanation: break
       case .hero(let title, let value, let detail):
         drawText(
@@ -510,8 +550,13 @@ final class DashboardView: NSView {
     }
   }
   override func mouseDown(with event: NSEvent) {
-    guard !points.isEmpty else { return }
     let point = convert(event.locationInWindow, from: nil)
+    if let index = rows.indices.first(where: {
+      if case .reading = rows[$0] { return rowRect($0).contains(point) }; return false
+    }) {
+      _ = activateReading(index); return
+    }
+    guard !points.isEmpty else { return }
     let fraction = max(0, min(1, (point.x - 14) / (bounds.width - 28)))
     var y: CGFloat = 8
     let clickedChart = rows.contains { row in
@@ -524,6 +569,32 @@ final class DashboardView: NSView {
     }
     guard clickedChart else { return }
     _ = selectHistory(fraction: Double(fraction))
+  }
+  func rowRect(_ index: Int) -> NSRect {
+    rowFrames.indices.contains(index) ? rowFrames[index] : .zero
+  }
+  @discardableResult func activateReading(_ index: Int) -> Bool {
+    guard rows.indices.contains(index), case .reading = rows[index] else { return false }
+    focusedReading = index; window?.makeFirstResponder(self); needsDisplay = true
+    onAction?("reading:\(index)"); return true
+  }
+  override func keyDown(with event: NSEvent) {
+    let indices = rows.indices.filter {
+      if case .reading = rows[$0] { return true }; return false
+    }
+    guard !indices.isEmpty else { super.keyDown(with: event); return }
+    if [36, 49, 76].contains(event.keyCode), let focusedReading {
+      _ = activateReading(focusedReading); return
+    }
+    if event.keyCode == 125 || event.keyCode == 126 {
+      let old = focusedReading.flatMap { indices.firstIndex(of: $0) }
+      let next =
+        old.map { max(0, min(indices.count - 1, $0 + (event.keyCode == 125 ? 1 : -1))) }
+        ?? (event.keyCode == 125 ? 0 : indices.count - 1)
+      focusedReading = indices[next]; _ = scrollToVisible(rowRect(indices[next]));
+      needsDisplay = true; return
+    }
+    super.keyDown(with: event)
   }
   @discardableResult func selectHistory(fraction: Double) -> Bool {
     guard !points.isEmpty, fraction.isFinite else { return false }
@@ -832,7 +903,12 @@ final class DashboardController: NSViewController {
         .note("Process details begin when this menu opens. Protected processes may be unavailable.")
       ]
     }
-    var rows = list.map { DashboardRow.metric($0.name, value($0)) }
+    var rows = list.map {
+      DashboardRow.reading(
+        ReadingCard(
+          title: $0.name, subtitle: "Captured process activity", symbol: "app",
+          facts: [("Reading", value($0))], target: .process($0), compact: true))
+    }
     if settings.effectiveCombineProcesses {
       let missing = snapshot.processes.filter { $0.group == nil }.count
       rows.append(
@@ -984,16 +1060,43 @@ final class DashboardController: NSViewController {
     guard !snapshot.gpu.isEmpty else {
       return [.heading("GPU"), .metric("Driver telemetry", "Unavailable")]
     }
-    return snapshot.gpu.flatMap { gpu in
-      [
-        DashboardRow.heading("GPU · " + gpu.name),
-        .facts([
-          ("Utilization", Format.percent(gpu.utilization)),
-          ("Renderer / tiler", Format.percent(gpu.renderer) + " / " + Format.percent(gpu.tiler)),
-          ("In-use shared memory", gpu.memory.map { self.bytes($0) } ?? "Unavailable"),
-        ]),
-      ]
+    return snapshot.gpu.enumerated().map { index, gpu in
+      .reading(
+        ReadingCard(
+          title: "GPU · " + gpu.name, subtitle: "Driver telemetry", symbol: "display",
+          facts: [
+            ("Utilization", Format.percent(gpu.utilization)),
+            ("Renderer / tiler", Format.percent(gpu.renderer) + " / " + Format.percent(gpu.tiler)),
+            ("In-use shared memory", gpu.memory.map(bytes) ?? "Unavailable"),
+          ], target: .graphics(index)))
     }
+  }
+  private func volumeCard(_ index: Int) -> DashboardRow {
+    let v = snapshot.volumes[index]
+    return .reading(
+      ReadingCard(
+        title: v.name,
+        subtitle: (v.local ? "Local" : "Network") + (v.removable ? " · removable" : "")
+          + (v.readOnly ? " · read only" : " · writable"),
+        symbol: v.local ? "internaldrive" : "network",
+        facts: [("Capacity", bytes(v.total)), ("Available", bytes(v.free))], target: .volume(index),
+        accent: .systemTeal,
+        gauge: (
+          "Used " + (v.total > 0 ? Format.percent(v.usedFraction) : "Unavailable"),
+          v.total > 0 ? v.usedFraction : nil
+        )))
+  }
+  private func interfaceCard(_ index: Int) -> DashboardRow {
+    let i = snapshot.interfaces[index]
+    return .reading(
+      ReadingCard(
+        title: i.name,
+        subtitle: i.active ? "Active interface · counters & addresses" : "Inactive interface",
+        symbol: "network",
+        facts: [
+          ("Download", rate(i.download, domain: .network)),
+          ("Upload", rate(i.upload, domain: .network)),
+        ], target: .interface(i.name)))
   }
   private func makeRows() -> [DashboardRow] {
     let s = snapshot
@@ -1053,10 +1156,17 @@ final class DashboardController: NSViewController {
           ("Uptime", Format.duration(s.cpu.uptime)),
         ]))
       rows += [
-        .heading("Processor details"),
-        .metric(
-          "Nominal frequency",
-          s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"),
+        .reading(
+          ReadingCard(
+            title: "Processor details", subtitle: "Reported topology & clock context",
+            symbol: "cpu",
+            facts: [
+              ("Logical cores", String(s.cpu.cores.count)),
+              (
+                "Nominal frequency",
+                s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"
+              ),
+            ], target: .processor))
       ]
       if processes.count > primaryCount {
         rows += [.heading("Process accounting")] + processes.dropFirst(primaryCount)
@@ -1074,7 +1184,7 @@ final class DashboardController: NSViewController {
           s.gpu.first?.name ?? "Driver telemetry unavailable",
           [DashboardSeries(key: "gpu", title: "GPU %", color: AeriePalette.cpu, maximum: 100)])
       ]
-      for gpu in s.gpu {
+      for (index, gpu) in s.gpu.enumerated() {
         var facts: [(String, String)] = [
           ("Renderer", Format.percent(gpu.renderer)), ("Tiler", Format.percent(gpu.tiler)),
           ("Utilization", Format.percent(gpu.utilization)),
@@ -1087,7 +1197,12 @@ final class DashboardController: NSViewController {
           facts.append(("Frequency", String(format: "%.2f GHz", value)))
         }
         if let value = gpu.fps { facts.append(("Frame rate", String(format: "%.0f FPS", value))) }
-        rows += [.heading(gpu.name), .facts(facts)]
+        rows += [
+          .reading(
+            ReadingCard(
+              title: gpu.name, subtitle: "Driver telemetry · captured details", symbol: "display",
+              facts: facts, target: .graphics(index)))
+        ]
       }
       rows += [
         .heading("CPU context"),
@@ -1124,23 +1239,16 @@ final class DashboardController: NSViewController {
             DashboardSeries(
               key: "memory", title: "Memory %", color: AeriePalette.memory, maximum: 100)
           ]),
-        .facts([
-          ("App", bytes(m.app)), ("Wired", bytes(m.wired)), ("Compressed", bytes(m.compressed)),
-          ("File cache", bytes(m.cached)),
-        ]),
+        .reading(
+          ReadingCard(
+            title: "Memory breakdown", subtitle: "OS categories & virtual memory activity",
+            symbol: "memorychip",
+            facts: [
+              ("App", bytes(m.app)), ("Wired", bytes(m.wired)), ("Compressed", bytes(m.compressed)),
+              ("File cache", bytes(m.cached)),
+            ], target: .memory, accent: .systemTeal)),
         .heading("Top memory processes"),
-      ] + top({ $0.memory > $1.memory }, value: { bytes($0.memory) }) + [
-        .heading("Memory details"),
-        .facts([
-          ("Physical", bytes(m.total)), ("Free", bytes(m.free)), ("Purgeable", bytes(m.purgeable)),
-          ("Swap", bytes(m.swap) + " / " + bytes(m.swapTotal)),
-        ]),
-        .heading("Virtual memory activity"),
-        .facts([
-          ("Page in", rate(m.pageIn)), ("Page out", rate(m.pageOut)), ("Swap in", rate(m.swapIn)),
-          ("Swap out", rate(m.swapOut)),
-        ]),
-      ]
+      ] + top({ $0.memory > $1.memory }, value: { bytes($0.memory) })
     case .storage:
       let ioRows = top(
         { left, right in
@@ -1158,31 +1266,11 @@ final class DashboardController: NSViewController {
               key: "diskWrite", title: "Write B/s", color: AeriePalette.outgoing, maximum: nil),
           ])
       ]
-      if let volume = s.volumes.first {
-        rows += [
-          .heading(volume.name),
-          .facts([
-            ("Capacity", bytes(volume.total)), ("Available", bytes(volume.free)),
-            ("Used", volume.total > 0 ? Format.percent(volume.usedFraction) : "Unavailable"),
-          ]),
-        ]
-      }
+      if !s.volumes.isEmpty { rows.append(volumeCard(0)) }
       rows += [.heading("Top process I/O")] + ioRows
-      rows.append(.heading("Volume details"))
-      for v in s.volumes {
-        rows += [
-          DashboardRow.heading(v.name), DashboardRow.metric("Capacity", bytes(v.total)),
-          DashboardRow.metric("Available", bytes(v.free)),
-          DashboardRow.gauge(
-            "Used", v.total > 0 ? Format.percent(v.usedFraction) : "Unavailable",
-            v.total > 0 ? v.usedFraction : nil, AeriePalette.memory),
-          DashboardRow.metric(
-            "Important-use capacity", v.important.map { self.bytes($0) } ?? "Unavailable"),
-          DashboardRow.metric(
-            "Kind",
-            "\(v.local ? "Local" : "Network")\(v.removable ? ", removable" : "")\(v.readOnly ? ", read only" : "")"
-          ),
-        ]
+      if s.volumes.count > 1 {
+        rows.append(.heading("Additional volumes"));
+        rows += s.volumes.indices.dropFirst().map(volumeCard)
       }
       rows.append(.heading("Per-device I/O sources"))
       for device in s.storageDevices {
@@ -1247,6 +1335,10 @@ final class DashboardController: NSViewController {
           ("Connectivity", s.connectivity), ("Aggregate scope", s.networkSelection.description),
         ]),
       ]
+      let interfaceIndices = s.interfaces.indices.sorted {
+        s.interfaces[$0].active && !s.interfaces[$1].active
+      }
+      if let primary = interfaceIndices.first { rows.append(interfaceCard(primary)) }
       rows.append(.heading("Process traffic"))
       let networkOrder = settings.processSorts?[.network] ?? .automatic
       let sortedProcesses = ProcessPresentation.network(
@@ -1259,7 +1351,12 @@ final class DashboardController: NSViewController {
         let title = process.members > 1 ? process.name : "\(process.name) · \(process.pid)"
         let incoming = rate(process.download, domain: .network)
         let outgoing = rate(process.upload, domain: .network)
-        rows.append(.metric(title, "↓ \(incoming)  ↑ \(outgoing)"))
+        rows.append(
+          .reading(
+            ReadingCard(
+              title: title, subtitle: "Captured TCP/UDP activity", symbol: "app",
+              facts: [("Traffic", "↓ \(incoming)  ↑ \(outgoing)")],
+              target: .networkProcess(process), compact: true)))
       }
       var processNotes: [DashboardRow] = [.note(s.processNetworkStatus)]
       if settings.effectiveCombineProcesses {
@@ -1303,43 +1400,22 @@ final class DashboardController: NSViewController {
       } else if s.interfaces.isEmpty {
         rows.append(.note("No non-loopback interfaces were reported."))
       }
-      for i in s.interfaces.sorted(by: { $0.active && !$1.active }) {
-        rows += [
-          DashboardRow.heading(i.name + (i.active ? " · active" : " · inactive")),
-          DashboardRow.metric(
-            "Download / upload",
-            "\(rate(i.download, domain: .network)) / \(rate(i.upload, domain: .network))"),
-          DashboardRow.metric(
-            i.counterBits == 64 ? "OS cumulative received" : "Received · limited counter",
-            bytes(Double(i.received))),
-          DashboardRow.metric(
-            i.counterBits == 64 ? "OS cumulative sent" : "Sent · limited counter",
-            bytes(Double(i.sent))),
-          DashboardRow.metric("Errors", "\(i.errors)"),
-          DashboardRow.note(i.addresses.isEmpty ? "No assigned IP address" : i.addresses),
-        ]
-        if let session = i.session {
-          rows += [
-            DashboardRow.metric(
-              "Observed session received",
-              session.received.map { bytes(Double($0)) } ?? "Unavailable"),
-            DashboardRow.metric(
-              "Observed session sent", session.sent.map { bytes(Double($0)) } ?? "Unavailable"),
-            DashboardRow.note(
-              "Session baseline: \(session.started.formatted(date: .abbreviated, time: .standard))"
-                + (session.rebased ? " · counter/source rebase" : "")),
-          ]
-        }
-        if i.counterBits != 64 {
-          rows.append(
-            .note(
-              "The OS route fallback rounds bytes to 1 KiB and limits counters to 32 bits. These values are not totals since boot; a wrap or source change resets the rate baseline."
-            ))
-        }
+      if interfaceIndices.count > 1 {
+        rows.append(.heading("Additional interfaces"));
+        rows += interfaceIndices.dropFirst().map(interfaceCard)
       }
       rows.append(.heading("Wi-Fi"))
       if let wifi = s.wifi {
-        rows += wifi.fields.map { DashboardRow.metric($0.0, $0.1) }
+        rows.append(
+          .reading(
+            ReadingCard(
+              title: "Wi-Fi radio", subtitle: wifi.interface + " · passive reading", symbol: "wifi",
+              facts: wifi.fields.filter {
+                ["Signal", "Noise", "Link rate", "Channel"].contains($0.0)
+              }, target: .wifi)))
+        rows += wifi.fields.filter { ["SSID", "BSSID", "Country"].contains($0.0) }.map {
+          DashboardRow.metric($0.0, $0.1)
+        }
         rows.append(.note(wifi.identityNote))
         rows.append(
           .note(
@@ -1412,15 +1488,9 @@ final class DashboardController: NSViewController {
       return rows
     case .power:
       let p = s.power
-      var rows: [DashboardRow] = [
-        DashboardRow.heading("Power"),
-        DashboardRow.metric(
-          "System supply", p.source ?? "Unavailable"),
-        DashboardRow.metric("Low Power Mode", s.lowPower ? "On" : "Off"),
-        DashboardRow.metric("Thermal state", s.thermal),
-      ]
+      var rows: [DashboardRow] = []
       if p.present {
-        rows += [
+        rows.append(
           .trend(
             "Charge " + Format.percent(p.percent),
             p.sourceLabel + " · "
@@ -1428,25 +1498,25 @@ final class DashboardController: NSViewController {
             [
               DashboardSeries(
                 key: "battery", title: "Battery %", color: AeriePalette.power, maximum: 100)
-            ]),
-          .facts([
-            ("Health", Format.percent(p.health)),
-            ("Cycles", p.cycles.map { String($0) } ?? "Unavailable"),
-            (
-              p.charging == true ? "Time to full" : "Time remaining",
-              Format.powerTime(
-                p.minutes, charging: p.charging,
-                input: p.external.map { $0 ? .ac : .battery } ?? .unknown)
-            ),
-            ("Battery power", p.watts.map { String(format: "%.2f W", $0) } ?? "Unavailable"),
-          ]),
-          .heading("Electrical details"),
-          .facts([
-            ("Voltage", p.voltage.map { String(format: "%.2f V", $0) } ?? "Unavailable"),
-            ("Current", p.amperage.map { String(format: "%.2f A", $0) } ?? "Unavailable"),
-          ]),
-        ]
+            ]))
       }
+      rows.append(
+        .reading(
+          ReadingCard(
+            title: "Battery & supply", subtitle: p.source ?? "Supply unavailable",
+            symbol: "battery.100percent",
+            facts: [
+              ("Health", Format.percent(p.health)),
+              ("Cycles", p.cycles.map(String.init) ?? "Unavailable"),
+              (
+                p.charging == true ? "Time to full" : "Time remaining",
+                Format.powerTime(
+                  p.minutes, charging: p.charging,
+                  input: p.external.map { $0 ? .ac : .battery } ?? .unknown)
+              ), ("Battery power", p.watts.map { String(format: "%.2f W", $0) } ?? "Unavailable"),
+            ], target: .power, accent: .systemOrange)))
+      rows.append(
+        .facts([("Low Power Mode", s.lowPower ? "On" : "Off"), ("Thermal state", s.thermal)]))
       if p.present && p.inventory.primaryBattery == nil {
         rows += [
           .note(
@@ -1454,12 +1524,39 @@ final class DashboardController: NSViewController {
           )
         ]
       }
-      rows += Self.powerSourceRows(p.inventory)
+      rows.append(.heading("Power sources"))
+      if !p.inventory.available { rows.append(.note("Power source inventory unavailable.")) }
+      if !p.inventory.complete && p.inventory.available {
+        rows.append(
+          .note(
+            "Partial source inventory: \(p.inventory.sources.count) of \(p.inventory.reportedCount) readable."
+          ))
+      }
+      rows += p.inventory.sources.enumerated().map { index, source in
+        .reading(
+          ReadingCard(
+            title: source.name, subtitle: powerKindName(source.kind) + " · individual source",
+            symbol: "powerplug",
+            facts: [
+              ("Charge", Format.percent(source.percent)), ("Input", powerInputName(source.input)),
+              (
+                source.charging == true ? "Time to full" : "Time remaining",
+                Format.powerTime(source.minutes, charging: source.charging, input: source.input)
+              ),
+            ],
+            target: .powerSource(index), accent: .systemOrange))
+      }
       rows += [DashboardRow.heading("Peripheral batteries")]
       rows +=
         p.peripherals.isEmpty
         ? [DashboardRow.note("No supported peripheral battery is exposed by the device registry.")]
-        : p.peripherals.map { DashboardRow.metric($0.0, Format.percent($0.1)) }
+        : p.peripherals.enumerated().map { index, value in
+          .reading(
+            ReadingCard(
+              title: value.0, subtitle: "Exposed device battery", symbol: "battery.100percent",
+              facts: [("Charge", Format.percent(value.1))], target: .peripheral(index),
+              accent: .systemOrange, compact: true))
+        }
       return rows + [DashboardRow.heading("Process wakeups")]
         + top(
           { ($0.wakeups ?? 0) > ($1.wakeups ?? 0) },

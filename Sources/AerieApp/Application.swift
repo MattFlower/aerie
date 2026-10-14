@@ -101,6 +101,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     dashboard.canvas.onAction = { [weak self] identifier in
       guard let self else { return }
+      if identifier.hasPrefix("reading:"), let index = Int(identifier.dropFirst(8)),
+        self.dashboard.canvas.rows.indices.contains(index),
+        case .reading(let card) = self.dashboard.canvas.rows[index],
+        let detail = ReadingDetails.make(
+          card.target, snapshot: self.dashboard.snapshot, settings: self.settings)
+      {
+        self.showDetail(detail); return
+      }
       if identifier.hasPrefix("dashboard-explanation:"), let index = Int(identifier.dropFirst(22)),
         self.dashboard.canvas.rows.indices.contains(index),
         case .explanation(let message) = self.dashboard.canvas.rows[index]

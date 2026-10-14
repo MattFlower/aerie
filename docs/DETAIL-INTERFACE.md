@@ -6,7 +6,12 @@ Aerie's dashboards and drill-downs use native AppKit views with system appearanc
 
 | Surface | Presentation |
 | --- | --- |
-| Overview, CPU, GPU, Memory, Storage, Network, Power | Existing compact charts/gauges and grouped facts; lighter labels and stronger readings. Long accounting explanations open through an explicit About these readings control. Missing and paused states remain visible. |
+| Overview | Compact CPU/memory charts and grouped system facts. |
+| CPU/GPU | Compact activity/core graphs, interactive driver/topology cards and captured process/driver details. |
+| Memory | Category summary and a captured breakdown with independent category bars, capacity/swap and paging facts; pressure remains categorical. |
+| Storage | One card per volume with capacity/use gauge, captured access/backing/OS status details and clickable process I/O. Repeated first-volume rows are removed. |
+| Network | Interface cards separate throughput from counters/session/address drill-downs; captured TCP/UDP process details keep their independent scope. Passive Wi-Fi identity remains confined to the live authorized panel. |
+| Battery/power | Charge first, grouped battery/supply facts, individual source and peripheral cards, captured electrical/health/time details and process wakeups. No cross-source capacity average. |
 | Sensors | An exact menu-source summary, a separately identified highest live temperature, family groups and a highlighted native button for the menu reading. Every sensor remains explorable. |
 | Current weather | A prominent temperature, feels-like/humidity summaries, wind/air facts, observation/forecast context and provider attribution. |
 | Hourly forecast | Whole-degree temperature, grouped atmospheric facts, a cached temperature plot with actual forecast timestamps and preserved gaps, and explicit precipitation/gust windows. |
@@ -28,6 +33,10 @@ Hardware temperatures retain one decimal in the chosen unit. Firmware values and
 ## Menu temperature identity
 
 The existing menu value is the first finite live temperature in the current inventory order. The detail panel now uses the same selection. Its label is TMP when the role is unknown; CPU or GPU appears only for an explicit mapped source label. A local alias does not infer a hardware role from an unknown firmware key. The tooltip and accessibility description name the exact selected source. The sensor inventory highlights that source and every reading opens its own facts and raw identity. Highest-temperature history/rules remain separate aggregates; graph tooltips disclose that scope.
+
+## Resource interaction and allocation
+
+Resource cards expose native accessibility press actions and keyboard navigation. Their rectangles and content are reused; they do not create one NSView per inventory entry. A synthetic 1,024-card inventory verifies activation and geometry release. Captured process details hold the displayed sample and never look up a later reused PID. Wi-Fi radio drill-downs retain no SSID, BSSID or country; those identities remain in the existing authorized live panel and are discarded on close/pause/sleep. Opening a captured detail adds no collector, timer or request.
 
 ## Validation and remaining work
 

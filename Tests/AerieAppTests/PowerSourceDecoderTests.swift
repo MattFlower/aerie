@@ -59,6 +59,9 @@ final class PowerSourceDecoderTests: XCTestCase {
         if case .facts(let items) = row {
           return items.filter { $0.0 == "Time remaining" }.map(\.1)
         }
+        if case .reading(let card) = row {
+          return card.facts.filter { $0.0 == "Time remaining" }.map(\.1)
+        }
         return []
       }
       XCTAssertEqual(values, ["Not discharging", "Not discharging"])
