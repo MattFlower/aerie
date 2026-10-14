@@ -21,6 +21,19 @@ def binary_hash(app):
     return result.hexdigest()
 
 
+def icon_hash(app):
+    info = bundle_info(app)
+    if info.get("CFBundleIconFile") != "AppIcon.icns":
+        raise BuildMismatch("The bundle lacks its packaged application icon.")
+    path = app / "Contents/Resources/AppIcon.icns"
+    if not path.is_file() or not 8 < path.stat().st_size <= 8 * 1024 * 1024:
+        raise BuildMismatch("The application icon is missing or invalid.")
+    data = path.read_bytes()
+    if data[:4] != b"icns" or int.from_bytes(data[4:8], "big") != len(data):
+        raise BuildMismatch("The application icon container is invalid.")
+    return hashlib.sha256(data).hexdigest()
+
+
 def receipt_path(app):
     return Path(str(app) + ".build.json")
 
@@ -43,7 +56,7 @@ def write_receipt(app, revision, modified):
     if info["AerieSourceRevision"] != revision or info["AerieSourceModified"] != modified:
         raise BuildMismatch("Bundle metadata differs from the build's source state.")
     record = {"format": 1, "sourceRevision": revision, "sourceModified": modified,
-              "binarySHA256": binary_hash(app)}
+              "binarySHA256": binary_hash(app), "appIconSHA256": icon_hash(app)}
     path = receipt_path(app)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
@@ -70,6 +83,8 @@ def verify_metadata(app, expected_revision, current_modified=False):
         raise BuildMismatch("Sources were modified; commit and rebuild before verifying an exact revision.")
     if record.get("binarySHA256") != binary_hash(app):
         raise BuildMismatch("The executable differs from its recorded build; rebuild it before launch.")
+    if record.get("appIconSHA256") != icon_hash(app):
+        raise BuildMismatch("The application icon differs from its recorded build.")
     return record
 
 

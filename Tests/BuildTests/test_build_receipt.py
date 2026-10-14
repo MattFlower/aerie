@@ -19,8 +19,12 @@ class BuildReceiptTests(unittest.TestCase):
         (self.app / "Contents/MacOS").mkdir(parents=True)
         self.executable = self.app / "Contents/MacOS/Aerie"
         self.executable.write_bytes(b"synthetic executable fixture")
+        (self.app / "Contents/Resources").mkdir()
+        self.icon = self.app / "Contents/Resources/AppIcon.icns"
+        # Synthetic container payload; real image decoding is a separate native bundle check.
+        self.icon.write_bytes(b"icns" + (12).to_bytes(4, "big") + b"test")
         self.revision = "1" * 40
-        self.info = {"CFBundleIdentifier": "app.aerie.monitor",
+        self.info = {"CFBundleIdentifier": "app.aerie.monitor", "CFBundleIconFile": "AppIcon.icns",
                      "AerieSourceRevision": self.revision, "AerieSourceModified": False}
         self.save_info()
 
@@ -33,7 +37,7 @@ class BuildReceiptTests(unittest.TestCase):
     def test_matching_revision_and_exact_binary_are_accepted_without_launch(self):
         expected = self.receipt()
         self.assertEqual(build.verify_metadata(self.app, self.revision), expected)
-        self.assertEqual(set(expected), {"format", "sourceRevision", "sourceModified", "binarySHA256"})
+        self.assertEqual(set(expected), {"format", "sourceRevision", "sourceModified", "binarySHA256", "appIconSHA256"})
 
     def test_stale_revision_is_rejected(self):
         self.receipt()
@@ -77,6 +81,26 @@ class BuildReceiptTests(unittest.TestCase):
             build.write_receipt(self.app, "2" * 40, False)
         self.info["CFBundleIdentifier"] = "example.synthetic.other"
         self.save_info()
+        with self.assertRaises(build.BuildMismatch):
+            self.receipt()
+
+    def test_missing_or_replaced_icon_is_rejected(self):
+        self.receipt()
+        self.icon.write_bytes(b"icns" + (13).to_bytes(4, "big") + b"other")
+        with self.assertRaises(build.BuildMismatch):
+            build.verify_metadata(self.app, self.revision)
+        self.icon.unlink()
+        with self.assertRaises(build.BuildMismatch):
+            build.verify_metadata(self.app, self.revision)
+
+    def test_invalid_icon_metadata_and_container_are_rejected(self):
+        self.info["CFBundleIconFile"] = "../Other.icns"
+        self.save_info()
+        with self.assertRaises(build.BuildMismatch):
+            self.receipt()
+        self.info["CFBundleIconFile"] = "AppIcon.icns"
+        self.save_info()
+        self.icon.write_bytes(b"icns" + (500).to_bytes(4, "big") + b"test")
         with self.assertRaises(build.BuildMismatch):
             self.receipt()
 

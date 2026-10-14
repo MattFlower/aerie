@@ -36,7 +36,7 @@ jobs:
       - name: Test build identity fixtures
         run: python3 -m unittest discover -s Tests/BuildTests -p 'test_*.py'
       - name: Lint Swift
-        run: xcrun swift-format lint --strict --recursive Sources Tests Package.swift
+        run: xcrun swift-format lint --strict --recursive Sources Tests Package.swift scripts/render-app-icon.swift scripts/check-app-icon.swift
       - name: Build native application
         run: bash scripts/build-app.sh
       - name: Verify bundle
@@ -44,3 +44,4 @@ jobs:
           plutil -lint dist/Aerie.app/Contents/Info.plist
           codesign --verify --strict dist/Aerie.app
           python3 scripts/check-app-build.py dist/Aerie.app
+          swift scripts/check-app-icon.swift dist/Aerie.app

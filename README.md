@@ -15,7 +15,9 @@ python3 scripts/check-app-build.py dist/Aerie.app
 open dist/Aerie.app
 ```
 
-Each build records its source revision and whether sources were modified in the bundle, and writes a neighboring `Aerie.app.build.json` receipt with the signed executable's SHA-256. The pre-launch check rejects another revision, modified sources, an altered executable or a missing receipt, and verifies the bundle signature. It launches no app and reads or changes no preferences. When using an alternate output, run the printed check on that exact path; an older copy in `dist` does not update automatically. Keep the receipt alongside the app when moving a development build.
+Each build records its source revision and whether sources were modified in the bundle, and writes a neighboring `Aerie.app.build.json` receipt with the signed executable's and application icon's SHA-256. The pre-launch check rejects another revision, modified sources, an altered executable, an altered icon or a missing receipt, and verifies the bundle signature. It launches no app and reads or changes no preferences. When using an alternate output, run the printed check on that exact path; an older copy in `dist` does not update automatically. Keep the receipt alongside the app when moving a development build.
+
+The bundle includes an original application icon for Finder and macOS application surfaces at all ten standard resolutions. Its native path source is `scripts/render-app-icon.swift`; regenerate the icon set with `swift scripts/render-app-icon.swift`, then `iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns`. `Resources/AppIcon.json` records the sizes and scales. Verify native decoding with `swift scripts/check-app-icon.swift dist/Aerie.app`. The application icon is separate from the menu-bar symbols.
 
 Set `AERIE_BUILD_SCRATCH` and `AERIE_APP_OUTPUT` to local build/output directories if needed; they default to `.build` and `dist/Aerie.app`. The build is ad-hoc signed for local development. It is not notarized or submitted to the App Store. Left-click a menu item to inspect its dashboard. Right-click for settings, sampling pause, Activity Monitor, or quit. Choose grouped modules, separate items or a combined dashboard. Settings provides a resizable native sidebar, units, order, appearance, refresh interval, notifications and world clocks. See [Settings and menu appearance](docs/SETTINGS.md).
 
@@ -50,7 +52,7 @@ Notifications, calendar events, Wi-Fi identity access, and launch-at-login are r
 
 [Architecture](docs/ARCHITECTURE.md) describes the collectors and planned Linux boundary. [Performance protocol](docs/PERFORMANCE.md) explains physical-footprint, CPU, and wakeup measurements. Raw machine measurements and screenshots should remain private.
 
-GitHub Actions builds, runs synthetic tests and lints on standard public macOS 14/15 Apple Silicon and macOS 15 Intel runners. These framework checks do not establish real sensor or hardware coverage. It does not upload artifacts or use Actions caches. The workflow skips private repositories so a later visibility change cannot silently consume a private-runner allowance. No paid runners or spending changes are configured.
+GitHub Actions builds, runs synthetic tests and lints on standard public macOS 14/15 Apple Silicon and macOS 15 Intel runners. These framework checks do not establish real sensor or hardware coverage. It uploads only synthetic native weather fixture views and does not use Actions caches. The workflow skips private repositories so a later visibility change cannot silently consume a private-runner allowance. No paid runners or spending changes are configured.
 
 History charts use elapsed timestamps and leave missing or long sampling gaps visible. Export the retained time range as local CSV with explicit units, UTC dates, aggregate source scope and observed sample counts. Export does not transmit data or start background archiving.
 

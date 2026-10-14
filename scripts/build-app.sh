@@ -10,6 +10,7 @@ fi
 swift build --scratch-path "$scratch" --build-system native -c release --product Aerie
 app="${AERIE_APP_OUTPUT:-dist/Aerie.app}"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cp THIRD_PARTY_NOTICES.md "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
 cp "$scratch/release/Aerie" "$app/Contents/MacOS/Aerie"
 cat > "$app/Contents/Info.plist" <<'PLIST'
@@ -19,6 +20,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Aerie</string>
 <key>CFBundleDisplayName</key><string>Aerie</string>
 <key>CFBundleIdentifier</key><string>app.aerie.monitor</string>
+<key>CFBundleIconFile</key><string>AppIcon.icns</string>
 <key>CFBundleExecutable</key><string>Aerie</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
