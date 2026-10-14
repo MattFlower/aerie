@@ -56,7 +56,7 @@ enum WeatherDetailPresentation {
           ],
           paragraphs: [
             status,
-            "Current dew point, UV and visibility are not supplied by this observation source. Forecast values are available in hourly details.",
+            "Current dew point, UV and visibility are not available in this current-condition view. Cached hourly forecasts expose these readings when available.",
           ]),
       ], source: source(report))
     if let station = report.observationStation {

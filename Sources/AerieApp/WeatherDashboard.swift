@@ -155,7 +155,7 @@ final class WeatherDashboardPresentation {
       "Wind direction: " + number(report.direction, suffix: "°", range: 0...360),
       "Surface pressure: " + number(report.pressure, suffix: " hPa", range: 0.0001...1e12),
       "Cloud cover: " + number(report.cloud, suffix: "%", range: 0...100),
-      "Current dew point, UV index and visibility: not supplied by the current-condition source. Available forecast values appear in individual hourly details.",
+      "Current dew point, UV index and visibility: not available in this current-condition view. Available forecast values appear in individual hourly details.",
     ]
     if let station = report.observationStation { lines.append("Observation station: " + station) }
     if let date = report.observationTime {
