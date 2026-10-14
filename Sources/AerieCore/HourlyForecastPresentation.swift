@@ -34,7 +34,7 @@ public enum HourlyForecastPresentation {
       return String(format: "%.1f", value) + suffix
     }
     func degrees(_ value: Double?) -> String {
-      value.flatMap { $0.isFinite ? Format.temperature($0, unit: temperature) : nil }
+      value.flatMap { $0.isFinite ? Format.weatherTemperature($0, unit: temperature) : nil }
         ?? "Unavailable"
     }
     func text(_ value: String?) -> String? {

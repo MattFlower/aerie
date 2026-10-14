@@ -215,6 +215,16 @@ public enum Format {
       format: "%.1f°%@", unit == .celsius ? value : value * 1.8 + 32,
       unit == .celsius ? "C" : "F")
   }
+  /// Conventional forecast displays use whole degrees; hardware diagnostics retain decimals.
+  public static func weatherTemperature(
+    _ value: Double?, unit: TemperatureUnit, includeUnit: Bool = true
+  ) -> String {
+    guard let value, value.isFinite else { return "Unavailable" }
+    let degrees = unit == .celsius ? value : value * 1.8 + 32
+    guard degrees.isFinite else { return "Unavailable" }
+    return String(format: "%.0f°", degrees.rounded() == 0 ? 0 : degrees)
+      + (includeUnit ? (unit == .celsius ? "C" : "F") : "")
+  }
   public static func duration(_ seconds: Double) -> String {
     guard seconds.isFinite, seconds >= 0, seconds < Double(Int.max) else { return "Unavailable" }
     let n = Int(seconds)

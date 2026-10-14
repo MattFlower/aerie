@@ -38,7 +38,7 @@ final class WeatherOutlookTests: XCTestCase {
     XCTAssertEqual(rows[0].basis, .daytimeAndOvernight)
     XCTAssertEqual(rows[0].precipitation, 40)
     let message = WeatherOutlookPresentation.message(rows[0], report: value, temperature: .celsius)
-    XCTAssertTrue(message.contains("High: 20.2°C"));
+    XCTAssertTrue(message.contains("High: 20°C"));
     XCTAssertTrue(message.contains("Low: Unavailable"))
     XCTAssertTrue(message.contains("following overnight"))
     XCTAssertTrue(message.contains("not midnight-to-midnight"))
@@ -63,7 +63,7 @@ final class WeatherOutlookTests: XCTestCase {
     XCTAssertEqual(row.qualification, "Period details")
     XCTAssertTrue(
       WeatherOutlookPresentation.message(row, report: value, temperature: .celsius).contains(
-        "Forecast-period temperature: 20.0°C"))
+        "Forecast-period temperature: 20°C"))
     value.periods[0].temperatureStatistic = .maximum;
     value.periods[1].temperatureStatistic = .minimum
     value.timeContext = WeatherTimeContext(identifier: nil, offsetSeconds: nil)

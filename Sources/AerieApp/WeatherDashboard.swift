@@ -125,10 +125,8 @@ final class WeatherDashboardPresentation {
     }
   }
   static func degrees(_ value: Double?, unit: TemperatureUnit) -> String {
-    guard let value, value.isFinite else { return "—" }
-    let degrees = unit == .fahrenheit ? value * 1.8 + 32 : value
-    guard degrees.isFinite else { return "—" }
-    return String(format: "%.0f°", degrees.rounded() == 0 ? 0 : degrees)
+    let formatted = Format.weatherTemperature(value, unit: unit, includeUnit: false)
+    return formatted == "Unavailable" ? "—" : formatted
   }
   static func number(_ value: Double?, suffix: String, range: ClosedRange<Double>) -> String {
     guard let value, value.isFinite, range.contains(value) else { return "—" }
@@ -142,7 +140,8 @@ final class WeatherDashboardPresentation {
       return String(format: "%.1f", value) + suffix
     }
     func temperature(_ value: Double?) -> String {
-      value.flatMap { $0.isFinite ? Format.temperature($0, unit: unit) : nil } ?? "Unavailable"
+      value.flatMap { $0.isFinite ? Format.weatherTemperature($0, unit: unit) : nil }
+        ?? "Unavailable"
     }
     let formatter = DateFormatter(); formatter.timeZone = report.timeContext.instantZone
     formatter.dateStyle = .medium; formatter.timeStyle = .short

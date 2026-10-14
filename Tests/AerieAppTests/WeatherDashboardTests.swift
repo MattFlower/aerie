@@ -85,7 +85,7 @@ final class WeatherDashboardTests: XCTestCase {
       XCTAssertEqual(value.hours.count, 168); XCTAssertEqual(value.days.count, 7)
       XCTAssertEqual(value.temperature, "76°"); XCTAssertEqual(value.unit, "°F")
       XCTAssertEqual(value.days[2].chance, "83%"); XCTAssertTrue(value.days[2].wet)
-      XCTAssertTrue(value.currentAccessibility.contains("75.6°F"))
+      XCTAssertTrue(value.currentAccessibility.contains("76°F"))
       XCTAssertTrue(value.currentAccessibility.contains("not supplied"))
       XCTAssertTrue(value.source.contains("CC BY 4.0"))
       XCTAssertEqual(value.hours[7].symbol, "cloud.moon")

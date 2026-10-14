@@ -39,7 +39,7 @@ func drawCompactTrend(
       "History awaiting samples",
       rect: NSRect(
         x: rect.minX, y: rect.minY + 89,
-        width: rect.width, height: 13), font: .systemFont(ofSize: 9), color: .secondaryLabelColor)
+        width: rect.width, height: 13), font: .systemFont(ofSize: 10), color: .secondaryLabelColor)
     return
   }
   let span = max(0, last.date.timeIntervalSince(first.date))

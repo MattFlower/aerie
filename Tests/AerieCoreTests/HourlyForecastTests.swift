@@ -145,7 +145,7 @@ final class HourlyForecastTests: XCTestCase {
         hour, zone: TimeZone(secondsFromGMT: 0)!, temperature: .fahrenheit))
     XCTAssertEqual(fields["Temperature"], "Unavailable");
     XCTAssertEqual(fields["Feels like"], "Unavailable")
-    XCTAssertEqual(fields["Dew point"], "28.4°F"); XCTAssertEqual(fields["Humidity"], "0.0%")
+    XCTAssertEqual(fields["Dew point"], "28°F"); XCTAssertEqual(fields["Humidity"], "0.0%")
     XCTAssertEqual(fields["Wind"], "0.0 km/h"); XCTAssertEqual(fields["Gusts"], "Unavailable")
     XCTAssertEqual(fields["Surface pressure"], "Unavailable")
     XCTAssertEqual(fields["Precipitation probability"], "0.0%");

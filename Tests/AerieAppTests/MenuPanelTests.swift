@@ -55,7 +55,8 @@ final class MenuPanelTests: XCTestCase {
     await MainActor.run {
       _ = NSApplication.shared
       let settings = PreferencesController(settings: .init())
-      let detail = WeatherDetailWindow(title: "Synthetic detail", message: "Fixture")
+      let detail = DetailWindowController(
+        presentation: .information(title: "Synthetic detail", message: "Fixture"))
       settings.windowWillClose(
         Notification(name: NSWindow.willCloseNotification, object: settings.window))
       detail.windowWillClose(

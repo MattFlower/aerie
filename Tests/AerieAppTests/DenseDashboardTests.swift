@@ -65,7 +65,11 @@ final class DenseDashboardTests: XCTestCase {
         received: 1000, sent: 2000, download: 5 * 1048576, upload: 2 * 1048576, errors: 0)
     ]
     controller.snapshot.sensors = [
-      SensorData(key: "TEST", label: "Synthetic temperature", value: 42, unit: "°C")
+      SensorData(key: "TEST", label: "Synthetic temperature", value: 42, unit: "°C"),
+      SensorData(key: "GPU1", label: "Synthetic graphics board", value: 76.5, unit: "°C"),
+      SensorData(key: "UNK1", label: "UNK1", value: nil, unit: "°C", state: .unavailable),
+      SensorData(key: "FAN1", label: "Synthetic exhaust fan", value: 1240, unit: "rpm"),
+      SensorData(key: "PWR1", label: "Synthetic package power", value: 18.4, unit: "W"),
     ]
     controller.snapshot.power = PowerData(
       source: "Battery Power", present: true, percent: 0.8,
@@ -176,6 +180,17 @@ final class DenseDashboardTests: XCTestCase {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             try png.write(
               to: url.appendingPathComponent(module.rawValue + "-" + appearance.rawValue + ".png"))
+            let visible = NSRect(
+              x: 0, y: 0, width: controller.canvas.bounds.width,
+              height: min(530, controller.canvas.bounds.height))
+            let content = try XCTUnwrap(
+              controller.canvas.bitmapImageRepForCachingDisplay(in: visible))
+            controller.canvas.cacheDisplay(in: visible, to: content)
+            let contentPNG = try XCTUnwrap(content.representation(using: .png, properties: [:]))
+            try contentPNG.write(
+              to: url.appendingPathComponent(
+                "panel-content-" + module.rawValue + "-" + appearance.rawValue + ".png"))
+
           }
         }
       }

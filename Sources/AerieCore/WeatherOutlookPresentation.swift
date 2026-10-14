@@ -114,7 +114,7 @@ public enum WeatherOutlookPresentation {
     let formatter = DateFormatter(); formatter.timeZone = report.timeContext.instantZone
     formatter.dateStyle = .medium; formatter.timeStyle = .short
     func degrees(_ value: Double?) -> String {
-      finite(value).map { Format.temperature($0, unit: temperature) } ?? "Unavailable"
+      finite(value).map { Format.weatherTemperature($0, unit: temperature) } ?? "Unavailable"
     }
     var text = ["High: " + degrees(outlook.high), "Low: " + degrees(outlook.low)]
     if let index = outlook.dayIndex, report.days.indices.contains(index) {

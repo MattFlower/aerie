@@ -3,6 +3,9 @@ import AppKit
 import EventKit
 
 enum DashboardRow {
+  case hero(String, String, String)
+  case sensor(SensorRowPresentation)
+  case explanation(String)
   case heading(String)
   case metric(String, String)
   case gauge(String, String, Double?, NSColor)
@@ -18,6 +21,9 @@ enum DashboardRow {
   case action(String, String, String)
   var height: CGFloat {
     switch self {
+    case .hero: return 104
+    case .sensor: return 38
+    case .explanation: return 60
     case .heading: return 24
     case .metric: return 23
     case .gauge: return 54
@@ -111,21 +117,43 @@ final class DashboardView: NSView {
         calendar.update(model); elements.append(calendar)
         y += row.height; continue
       }
-      if case .action(let title, let value, _) = row {
+      let action:
+        (title: String, value: String, identifier: String, selected: Bool, explanatory: Bool)?
+      switch row {
+      case .action(let title, let value, let identifier):
+        action = (title, value, identifier, false, false)
+      case .sensor(let sensor):
+        action = (sensor.name, sensor.value, "sensor:" + sensor.key, sensor.selected, false)
+      case .explanation(let text):
+        action = (
+          "About these readings", text.components(separatedBy: ". ").first ?? text,
+          "dashboard-explanation:\(index)", false, true
+        )
+      default: action = nil
+      }
+      if let action {
         let button =
-          actionButtons[index]
-          ?? NSButton(title: "", target: self, action: #selector(performRowAction(_:)))
+          actionButtons[index] as? DashboardDetailButton
+          ?? DashboardDetailButton(title: "", target: self, action: #selector(performRowAction(_:)))
         actionButtons[index] = button; actionIndexes.insert(index)
-        button.tag = index; button.title = "\(title) · \(value)"
-        button.bezelStyle = .inline; button.alignment = .left
-        button.font = .systemFont(ofSize: 11); button.lineBreakMode = .byTruncatingTail
-        button.frame = NSRect(x: 14, y: y + 3, width: bounds.width - 28, height: 28)
-        button.setAccessibilityLabel("\(title), \(value), show details")
+        button.tag = index; button.title = ""; button.bezelStyle = .inline;
+        button.isBordered = false
+        button.primary = action.title; button.secondary = action.value
+        button.selectedReading = action.selected; button.explanatory = action.explanatory
+        button.frame = NSRect(x: 14, y: y + 1, width: bounds.width - 28, height: row.height - 2)
+        button.setAccessibilityLabel(
+          "\(action.title), \(action.value)" + (action.selected ? ", shown in the menu bar" : "")
+            + ", show details")
+        button.toolTip = action.title + ": " + action.value
         if button.superview == nil { addSubview(button) }
+        button.needsDisplay = true
         elements.append(button); y += row.height; continue
       }
       let label: String
       switch row {
+      case .hero(let title, let value, let detail): label = title + ": " + value + ". " + detail
+      case .explanation(let s): label = s
+      case .sensor(let value): label = value.name + ": " + value.value
       case .heading(let s), .note(let s): label = s
       case .facts(let items): label = items.map { "\($0.0): \($0.1)" }.joined(separator: "; ")
       case .coreGrid(let values, let detail):
@@ -286,9 +314,13 @@ final class DashboardView: NSView {
     needsDisplay = true
   }
   @objc private func performRowAction(_ sender: NSButton) {
-    guard rows.indices.contains(sender.tag), case .action(_, _, let identifier) = rows[sender.tag]
-    else { return }
-    onAction?(identifier)
+    guard rows.indices.contains(sender.tag) else { return }
+    switch rows[sender.tag] {
+    case .action(_, _, let identifier): onAction?(identifier)
+    case .sensor(let sensor): onAction?("sensor:" + sensor.key)
+    case .explanation: onAction?("dashboard-explanation:\(sender.tag)")
+    default: break
+    }
   }
   private func drawClock(_ reading: WorldClockReading, style: WorldClockStyle, in rect: NSRect) {
     var x = rect.minX
@@ -362,7 +394,17 @@ final class DashboardView: NSView {
       defer { y += row.height }
       guard rect.intersects(dirtyRect) else { continue }
       switch row {
-      case .weather: break
+      case .weather, .sensor, .explanation: break
+      case .hero(let title, let value, let detail):
+        drawText(
+          title, rect: NSRect(x: rect.minX, y: rect.minY + 2, width: rect.width, height: 18),
+          font: .systemFont(ofSize: 12, weight: .medium), color: .secondaryLabelColor)
+        drawText(
+          value, rect: NSRect(x: rect.minX, y: rect.minY + 22, width: rect.width, height: 38),
+          font: .systemFont(ofSize: 30), color: .labelColor)
+        drawText(
+          detail, rect: NSRect(x: rect.minX, y: rect.minY + 65, width: rect.width, height: 35),
+          font: .systemFont(ofSize: 11), color: .secondaryLabelColor, wrap: true)
       case .trend(let title, let detail, let series):
         drawCompactTrend(
           title, detail: detail, series: series, points: points,
@@ -377,22 +419,22 @@ final class DashboardView: NSView {
         line.stroke()
         drawText(
           title, rect: rect.insetBy(dx: 0, dy: 5),
-          font: .systemFont(ofSize: 12, weight: .semibold), color: .secondaryLabelColor)
+          font: .systemFont(ofSize: 12, weight: .semibold), color: .labelColor)
       case .metric(let key, let value):
         drawText(
           key, rect: NSRect(x: 14, y: y + 5, width: 165, height: 20), font: .systemFont(ofSize: 12),
-          color: .labelColor)
+          color: .secondaryLabelColor)
         drawText(
           value, rect: NSRect(x: 174, y: y + 5, width: bounds.width - 188, height: 20),
-          font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium), color: .labelColor,
+          font: .monospacedDigitSystemFont(ofSize: 12, weight: .semibold), color: .labelColor,
           alignment: .right)
       case .gauge(let key, let value, let fraction, let color):
         drawText(
           key, rect: NSRect(x: 14, y: y + 4, width: 180, height: 20), font: .systemFont(ofSize: 12),
-          color: .labelColor)
+          color: .secondaryLabelColor)
         drawText(
           value, rect: NSRect(x: 174, y: y + 4, width: bounds.width - 188, height: 20),
-          font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium), color: .labelColor,
+          font: .monospacedDigitSystemFont(ofSize: 12, weight: .semibold), color: .labelColor,
           alignment: .right)
         let track = NSRect(x: 14, y: y + 30, width: max(1, bounds.width - 28), height: 8)
         NSColor.quaternaryLabelColor.setFill();
@@ -758,10 +800,17 @@ final class DashboardController: NSViewController {
       windowPicker.indexOfSelectedItem == 0
       ? settings.interval : windowPicker.indexOfSelectedItem == 1 ? 60 : 3600
     canvas.update(
-      rows: rows + (shortcutStatus.map { [.note("Global shortcuts: " + $0)] } ?? [])
+      rows: Self.presentedRows(rows)
+        + (shortcutStatus.map { [.note("Global shortcuts: " + $0)] } ?? [])
         + (settings.effectivePersistentHistory || historyStatus != "History archive is off"
           ? [.note(historyStatus)] : []),
       points: displayedHistory)
+  }
+  static func presentedRows(_ rows: [DashboardRow]) -> [DashboardRow] {
+    rows.map { row in
+      if case .note(let text) = row, text.count > 180 { return .explanation(text) }
+      return row
+    }
   }
   private func bytes(_ value: Double) -> String {
     Format.bytes(value, binary: settings.binaryBytes)
@@ -1303,60 +1352,55 @@ final class DashboardController: NSViewController {
         ))
       return rows
     case .sensors:
-      let primary = s.sensors.filter { $0.unit == "°C" && $0.state == .live && $0.value != nil }.max
-      {
-        ($0.value ?? 0) < ($1.value ?? 0)
-      }
-      var rows: [DashboardRow] = [.heading("Menu temperature · highest live reading")]
+      let primary = SensorMenuPresentation.selected(s.sensors)
+      var rows: [DashboardRow] = []
       if let primary {
-        let value =
-          primary.state == .live
-          ? primary.value.map {
-            primary.unit == "°C"
-              ? Format.temperature($0, unit: settings.temperature)
-              : String(format: "%.1f %@", $0, primary.unit)
-          } : nil
         rows.append(
-          .metric(
-            primary.title(names: settings.sensorNames),
-            value ?? (primary.state == .deferred ? "Waiting for live read" : "Unavailable")))
+          .hero(
+            "Menu temperature · "
+              + SensorMenuPresentation.name(primary, names: settings.sensorNames),
+            SensorMenuPresentation.value(primary, unit: settings.temperature),
+            "First live temperature source. The highlighted reading below is the exact value shown in your menu bar."
+          ))
       } else {
-        rows.append(.metric("Temperature source", "Unavailable"))
+        rows.append(
+          .hero(
+            "Menu temperature", "Unavailable", "No finite live temperature source is available."))
       }
-      rows.append(.metric("Thermal state", s.thermal))
+      let maximum = s.sensors.filter {
+        $0.unit == "°C" && $0.state == .live && $0.value?.isFinite == true
+      }.max { ($0.value ?? 0) < ($1.value ?? 0) }
+      rows.append(
+        .facts([
+          (
+            "Highest live temperature",
+            maximum.map { SensorMenuPresentation.value($0, unit: settings.temperature) }
+              ?? "Unavailable"
+          ), ("Thermal state", s.thermal),
+        ]))
       for unit in ["°C", "rpm", "W", "V", "A"] {
         let sensors = s.sensors.filter { $0.unit == unit }
         guard !sensors.isEmpty else { continue }
-        rows += [
-          DashboardRow.heading(
-            ["°C": "Temperature", "rpm": "Fans", "W": "Power", "V": "Voltage", "A": "Current"][
-              unit]!)
-        ]
-        rows += sensors.map {
-          let value: String
-          if let reading = $0.value, $0.state == .live {
-            value =
-              unit == "°C"
-              ? Format.temperature(reading, unit: settings.temperature)
-              : String(format: "%.1f %@", reading, unit)
-          } else {
-            value = $0.state == .deferred ? "Waiting for live read" : "Unavailable"
-          }
-          return DashboardRow.metric($0.title(names: settings.sensorNames), value)
+        rows.append(
+          .heading(
+            ["°C": "Temperatures", "rpm": "Fans", "W": "Power", "V": "Voltage", "A": "Current"][
+              unit]! + " · \(sensors.count)"))
+        rows += sensors.map { sensor in
+          .sensor(
+            SensorRowPresentation(
+              name: SensorMenuPresentation.name(sensor, names: settings.sensorNames),
+              value: SensorMenuPresentation.value(sensor, unit: settings.temperature),
+              key: sensor.key, selected: primary?.key == sensor.key))
         }
       }
       rows += [
         .note(s.sensorStatus),
-        .note(
-          settings.effectiveSensorSampling == .all
-            ? "All supported sensors are sampled at the selected system interval."
-            : "On-demand sampling keeps temperatures and enabled individual-rule sensors live; other readings wait until this panel opens."
+        .explanation(
+          "Hardware precision is retained. Menu temperature is the first finite live temperature source; highest-temperature history and threshold rules are a separate aggregate. Unknown firmware sensors are not assigned a CPU or GPU role. Open an individual reading for its raw key and native value. "
+            + (settings.effectiveSensorSampling == .all
+              ? "All supported sensors are sampled at the selected interval."
+              : "On-demand keeps temperatures and enabled rule sensors live; other readings wait for this panel.")
         ),
-      ]
-      rows += [
-        DashboardRow.note(
-          "Firmware key names appear when a sensor label is unknown. Aerie only reads sensors. Fan profiles require a separately approved and safety-tested control implementation."
-        )
       ]
       return rows
     case .power:

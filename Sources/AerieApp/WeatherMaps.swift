@@ -235,7 +235,7 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   private var activity = MapActivity()
   private var observers: [(NotificationCenter, NSObjectProtocol)] = []
   private var alertDetailsWindow: NSWindow?
-  private weak var alertDetailsText: NSTextView?
+  private var alertDetailsController: DetailWindowController?
   private var selected: WMSLayer? { selection.layer }
   private var times: [Date] { selection.timeline.times }
   private var frame: Int { selection.frame }
@@ -345,35 +345,35 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
   @objc private func showAlerts() {
     guard activity.active else { return }
     selection.playing = false; stopAnimation()
-    if alertDetailsWindow == nil {
-      let panel = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 580, height: 480),
-        styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-      panel.title = "Aerie · Current NWS alerts at map center"; panel.isReleasedWhenClosed = false
-      panel.delegate = self
-      let scroll = NSScrollView(frame: panel.contentView!.bounds)
-      scroll.autoresizingMask = [.width, .height]; scroll.hasVerticalScroller = true
-      let text = NSTextView(frame: scroll.bounds)
-      text.isEditable = false; text.isSelectable = true; text.isRichText = false
-      text.font = .systemFont(ofSize: 13); text.textContainerInset = NSSize(width: 14, height: 14)
-      text.autoresizingMask = [.width]; text.isVerticallyResizable = true;
-      text.isHorizontallyResizable = false
-      text.textContainer?.widthTracksTextView = true
-      scroll.documentView = text; panel.contentView?.addSubview(scroll)
-      alertDetailsWindow = panel; alertDetailsText = text; panel.center()
+    if alertDetailsController == nil {
+      let controller = DetailWindowController(
+        presentation: .information(
+          title: "Current alerts at map center", message: "Loading current NWS point messages…"))
+      alertDetailsController = controller; alertDetailsWindow = controller.window
+      controller.onClose = { [weak self] in
+        guard let self else { return }
+        self.generation += 1; self.task?.cancel(); self.task = nil; self.client.suspendRequests()
+        self.alertDetailsController = nil; self.alertDetailsWindow = nil
+      }
     }
-    alertDetailsText?.string = "Loading current NWS alerts for the map center…"
-    alertDetailsWindow?.makeKeyAndOrderFront(nil)
+    alertDetailsController?.update(
+      .information(
+        title: "Current alerts at map center", message: "Loading current NWS point messages…"))
+    alertDetailsController?.showWindow(nil)
     run { controller in
       do {
         let url = try WeatherAlerts.request(
           latitude: controller.latitude, longitude: controller.longitude)
         let data = try await controller.client.data(url); try Task.checkCancellation()
         let report = try WeatherAlerts.parse(data, fetched: Date())
-        controller.alertDetailsText?.string = AlertPresentation.text(report)
+        controller.alertDetailsController?.update(WeatherDetailPresentation.alerts(report))
       } catch is CancellationError { throw CancellationError() } catch {
-        controller.alertDetailsText?.string =
-          "Current alert details are unavailable. Close this view and retry later. Map coverage and point-message coverage may differ."
+        controller.alertDetailsController?.update(
+          .information(
+            title: "Current alerts unavailable",
+            message:
+              "Close this view and retry later. Map coverage and point-message coverage may differ."
+          ))
       }
     }
   }
@@ -617,8 +617,11 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
       generation += 1; task?.cancel(); task = nil; stopAnimation()
       refreshTimer?.invalidate(); refreshTimer = nil; client.suspendRequests()
       cache.clear(); canvas.clear(); clearLegend(); alertTimestamp.stringValue = ""
-      alertDetailsText?.string =
-        "Map requests are paused. Close and reopen alert details after the map is visible to refresh current messages."
+      alertDetailsController?.update(
+        .information(
+          title: "Map requests paused",
+          message:
+            "Close and reopen alert details after the map is visible to refresh current messages."))
       status.stringValue =
         "Map requests paused while this window is not visible or the Mac is asleep."
     case .resume:
@@ -630,10 +633,6 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     }
   }
   func windowWillClose(_ notification: Notification) {
-    if let closing = notification.object as? NSWindow, closing === alertDetailsWindow {
-      generation += 1; task?.cancel(); task = nil; client.suspendRequests()
-      alertDetailsText?.string = ""; alertDetailsText = nil; alertDetailsWindow = nil; return
-    }
     releaseResources(); onClose?()
   }
   func releaseResources() {
@@ -643,8 +642,8 @@ final class WeatherMapWindowController: NSWindowController, NSWindowDelegate {
     for (center, token) in observers { center.removeObserver(token) }; observers.removeAll()
     cache.clear(); metadata.removeAll(); selection = MapSelection()
     canvas.clear(); clearLegend(); boundaryLayer = nil; alertTimestamp.stringValue = ""
-    alertDetailsText?.string = ""; alertDetailsText = nil
-    alertDetailsWindow?.delegate = nil; alertDetailsWindow?.close(); alertDetailsWindow = nil
+    alertDetailsController?.onClose = nil; alertDetailsController?.close();
+    alertDetailsController = nil; alertDetailsWindow = nil
     if let window { MenuPanel.releaseContent(of: window) }
   }
   deinit {

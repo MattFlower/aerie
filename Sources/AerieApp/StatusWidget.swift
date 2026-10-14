@@ -7,11 +7,13 @@ struct StatusWidget: Equatable {
   let style: DisplayStyle
   let label: MenuLabelPlacement
   let colorHex: String?
+  var labelText: String?
+  var sourceDescription: String?
   var symbol: String?
   var points: [Double?] = []
   var paused = false
   var accessibility: String {
-    module.title + ", " + value.full + (paused ? ", sampling paused" : "")
+    module.title + ", " + (sourceDescription ?? value.full) + (paused ? ", sampling paused" : "")
   }
   var defaultSymbol: String {
     switch module {
@@ -28,6 +30,7 @@ struct StatusWidget: Equatable {
     }
   }
   var shortLabel: String {
+    if let labelText { return labelText }
     switch module {
     case .overview: return "AE"
     case .cpu: return "CPU"
@@ -35,7 +38,7 @@ struct StatusWidget: Equatable {
     case .memory: return "MEM"
     case .storage: return "SSD"
     case .network: return "NET"
-    case .sensors: return "SNS"
+    case .sensors: return "TMP"
     case .power: return value.full.hasPrefix("PWR") ? "PWR" : "BAT"
     case .time: return "CLK"
     case .weather: return "WX"

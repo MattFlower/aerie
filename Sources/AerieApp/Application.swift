@@ -40,7 +40,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private var calendarAuthorized = false
   private var calendarSelection = CalendarSelection()
   private var lastCalendarRefresh = Date.distantPast
-  private var calendarDetails: [String: (title: String, text: String)] = [:]
+  private var calendarDetails: [String: DetailPresentation] = [:]
   private var calendarObserver: NSObjectProtocol?
   private var clockObservers: [NSObjectProtocol] = []
   private var weatherTask: Task<Void, Never>?
@@ -49,7 +49,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
   private var weatherFetchTime = Date.distantPast
   private var weatherStatus = "Weather is off"
   private var weatherMaps: WeatherMapWindowController?
-  private var weatherDetails: WeatherDetailWindow?
+  private var weatherDetails: DetailWindowController?
+  private var detailUsesCalendar = false
   private var paused = false
   private var sleeping = false
   private var selfCheckSamples = 0
@@ -99,28 +100,60 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       self?.calendarSelection.today(); self?.updateCalendar()
     }
     dashboard.canvas.onAction = { [weak self] identifier in
-      if let self, identifier.hasPrefix("clock-state:"),
-        let index = Int(identifier.dropFirst(12)),
+      guard let self else { return }
+      if identifier.hasPrefix("dashboard-explanation:"), let index = Int(identifier.dropFirst(22)),
+        self.dashboard.canvas.rows.indices.contains(index),
+        case .explanation(let message) = self.dashboard.canvas.rows[index]
+      {
+        self.showDetail(
+          .information(
+            title: "About " + self.dashboard.module.title + " readings", message: message));
+        return
+      }
+      if identifier.hasPrefix("sensor:"),
+        let sensor = self.dashboard.snapshot.sensors.first(where: {
+          $0.key == String(identifier.dropFirst(7))
+        })
+      {
+        self.showDetail(
+          SensorMenuPresentation.detail(
+            sensor, names: self.settings.sensorNames, unit: self.settings.temperature,
+            selected: SensorMenuPresentation.selected(self.dashboard.snapshot.sensors)?.key
+              == sensor.key, sampledAt: self.dashboard.snapshot.date));
+        return
+      }
+      if identifier.hasPrefix("clock-state:"), let index = Int(identifier.dropFirst(12)),
         self.dashboard.snapshot.clockResidencies.indices.contains(index)
       {
         let reading = self.dashboard.snapshot.clockResidencies[index]
         let frequency = reading.activeGHz.map { String(format: "%.3f GHz", $0) } ?? "Unavailable"
-        let states = reading.states.map {
-          "\($0.name): \(String(format: "%.3f%%", $0.fraction * 100))"
-        }.joined(separator: "\n")
-        self.showWeatherDetail(
-          title: reading.name + " · clock states",
-          message:
-            "Interval: \(self.settings.interval) seconds\nActive-labelled state residency: \(Format.percent(reading.activeFraction))\nActive interval-weighted frequency: \(frequency)\n\n\(states.isEmpty ? "No valid counter baseline." : states)\n\nPercentages describe the distribution within each reported channel, separately from scheduler CPU load. Channels can cover different power domains. Active percentage requires a named inactive bucket; GHz requires explicit frequency labels for every occupied active state."
-        )
-        return
+        let message =
+          "Percentages describe residency within this hardware channel, separately from scheduler CPU load. Named inactive and frequency states are required to calculate active residency and GHz."
+        let model = DetailPresentation(
+          title: reading.name,
+          subtitle: "Hardware clock-state snapshot · \(self.settings.interval)s interval",
+          symbol: "waveform.path", accent: .systemBlue,
+          highlights: [
+            DetailFact("Active-labelled residency", Format.percent(reading.activeFraction)),
+            DetailFact("Active interval average", frequency),
+          ],
+          sections: [
+            DetailSection(
+              title: "Reported states",
+              paragraphs: reading.states.isEmpty ? ["No valid counter baseline."] : [],
+              bars: reading.states.map { ($0.name, Optional($0.fraction)) })
+          ], source: "On this Mac · hardware residency counters",
+          diagnostics: message + "\n"
+            + reading.states.map { "\($0.name): \(String(format: "%.3f%%", $0.fraction * 100))" }
+            .joined(separator: "\n"))
+        self.showDetail(model); return
       }
-      if let self, self.dashboard.module == .weather, let report = self.dashboard.weather {
+      if self.dashboard.module == .weather, let report = self.dashboard.weather {
         if identifier == "weather-current" {
-          self.showWeatherDetail(
-            title: "Current weather",
-            message: WeatherDashboardPresentation.currentMessage(
-              report, status: self.dashboard.weatherStatus, unit: self.settings.temperature))
+          self.showDetail(
+            WeatherDetailPresentation.current(
+              report, name: self.settings.weather.name, status: self.dashboard.weatherStatus,
+              unit: self.settings.temperature));
           return
         }
         if identifier.hasPrefix("weather-day:") || identifier.hasPrefix("weather-outlook:"),
@@ -128,60 +161,48 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             $0.identifier == identifier
           })
         {
-          self.showWeatherDetail(
-            title: outlook.title + " outlook",
-            message: WeatherOutlookPresentation.message(
-              outlook, report: report, temperature: self.settings.temperature))
+          self.showDetail(
+            WeatherDetailPresentation.outlook(
+              outlook, report: report, unit: self.settings.temperature));
+          return
+        }
+        if identifier.hasPrefix("weather-alert:"), let index = Int(identifier.dropFirst(14)),
+          let alerts = report.alertReport, alerts.alerts.indices.contains(index)
+        {
+          self.showDetail(
+            WeatherDetailPresentation.alert(alerts.alerts[index], fetched: alerts.fetched));
+          return
+        }
+        if identifier.hasPrefix("weather-hour:"), let index = Int(identifier.dropFirst(13)),
+          report.hours.indices.contains(index)
+        {
+          self.showDetail(
+            WeatherDetailPresentation.hour(
+              report.hours[index], report: report, unit: self.settings.temperature));
+          return
+        }
+        if identifier.hasPrefix("weather-period:"), let index = Int(identifier.dropFirst(15)),
+          report.periods.indices.contains(index)
+        {
+          self.showDetail(
+            WeatherDetailPresentation.period(
+              report.periods[index], report: report, unit: self.settings.temperature));
           return
         }
       }
-      if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-alert:"),
-        let index = Int(identifier.dropFirst(14)), let report = self.dashboard.weather?.alertReport,
-        report.alerts.indices.contains(index)
-      {
-        self.showWeatherDetail(
-          title: report.alerts[index].event,
-          message: "Current point alerts fetched: \(report.fetched.formatted())\n\n"
-            + AlertPresentation.message(report.alerts[index]));
-        return
-      }
-      if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-hour:"),
-        let index = Int(identifier.dropFirst(13)), let report = self.dashboard.weather,
-        report.hours.indices.contains(index)
-      {
-        let hour = report.hours[index]
-        self.showWeatherDetail(
-          title: "Hourly forecast",
-          message: HourlyForecastPresentation.message(
-            hour, report: report, temperature: self.settings.temperature))
-        return
-      }
-      if let self, self.dashboard.module == .weather, identifier.hasPrefix("weather-period:"),
-        let index = Int(identifier.dropFirst(15)), let report = self.dashboard.weather,
-        report.periods.indices.contains(index)
-      {
-        let period = report.periods[index]
-        let formatter = DateFormatter(); formatter.timeZone = report.timeContext.instantZone
-        formatter.dateStyle = .medium; formatter.timeStyle = .short
-        let temperature =
-          period.temperature.map { Format.temperature($0, unit: self.settings.temperature) }
-          ?? "Unavailable"
-        let text =
-          "Valid: \(formatter.string(from: period.start)) – \(formatter.string(from: period.end))\nForecast-period temperature: \(temperature)\nWind: \(period.wind)\nPrecipitation probability: \(period.precipitation.map { String(format: "%.0f%%", $0) } ?? "Unavailable")\n\n\(period.condition)\n\n\(period.detail)\n\nSource: \(report.source) · fetched \(report.fetched.formatted())"
-        self.showWeatherDetail(title: period.name, message: text); return
-      }
-      guard let self, let detail = self.calendarDetails[identifier],
+      guard let detail = self.calendarDetails[identifier],
         EKEventStore.authorizationStatus(for: .event) == .fullAccess
       else { return }
-      let alert = NSAlert(); alert.messageText = detail.title; alert.informativeText = detail.text
-      alert.addButton(withTitle: "Close"); alert.runModal()
+      self.showDetail(detail, usesCalendar: true)
     }
+
     calendarObserver = NotificationCenter.default.addObserver(
       forName: .EKEventStoreChanged, object: nil, queue: .main
     ) { [weak self] _ in
       self?.lastCalendarRefresh = .distantPast
       self?.calendarReader.cancel()
       self?.calendarDetails.removeAll()
+      if self?.detailUsesCalendar == true { self?.weatherDetails?.close() }
       self?.updateCalendar()
     }
     for name in [
@@ -648,6 +669,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       result.symbol = MenuRenderer.weatherSymbol(
         code: weatherReport?.code, daylight: weatherReport?.isDay, glyph: weatherReport?.glyph)
     }
+    if module == .sensors {
+      result.labelText = SensorMenuPresentation.shortLabel(
+        SensorMenuPresentation.selected(snapshot.sensors))
+      result.sourceDescription =
+        SensorMenuPresentation.description(
+          snapshot.sensors, names: settings.sensorNames, unit: settings.temperature)
+        + (configuration.style == .graph
+          ? ". Graph: highest live temperature across all sensors." : "")
+    }
     if module == .overview { result.symbol = "mountain.2" }
     if configuration.style == .graph, let key = graphKey(module) {
       result.points = history.recent.suffix(48).map { $0.values[key] }
@@ -738,12 +768,18 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             attributes: [.font: font, .foregroundColor: color ?? NSColor.labelColor])
         }
       }
-      let accessible: String
+      var accessible: String
       if configuration.style == .stacked {
         let lines = MenuPresentation.stacked(components)
         accessible = lines.0 + " · " + lines.1 + (paused ? " · sampling paused" : "")
       } else {
         accessible = value + (paused ? " · sampling paused" : "")
+      }
+      if settings.combined, settings.visibleCombinedModules.contains(.sensors) {
+        accessible +=
+          " · "
+          + SensorMenuPresentation.description(
+            snapshot.sensors, names: settings.sensorNames, unit: settings.temperature)
       }
       let tooltip = "Aerie \(module.title): \(accessible)\(paused ? " · sampling paused" : "")"
       if button.toolTip != tooltip { button.toolTip = tooltip }
@@ -787,9 +823,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         upload: networkMenuRate(snapshot.upload))
     case .sensors:
       let temperatures = snapshot.sensors.filter { $0.unit == "°C" && $0.state == .live }
-        .compactMap(\.value)
+        .compactMap(\.value).filter(\.isFinite)
       let current =
-        temperatures.first.map { Format.temperature($0, unit: settings.temperature) } ?? "TEMP —"
+        SensorMenuPresentation.selected(snapshot.sensors)?.value.map {
+          Format.temperature($0, unit: settings.temperature)
+        } ?? "TEMP —"
       return MenuValue(
         full: current,
         secondary: temperatures.max().map {
@@ -809,7 +847,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         secondary: TimeZone.current.abbreviation() ?? "Local")
     case .weather:
       return MenuValue(
-        full: weatherReport?.temperature.map { Format.temperature($0, unit: settings.temperature) }
+        full: weatherReport?.temperature.map {
+          Format.weatherTemperature($0, unit: settings.temperature)
+        }
           ?? "WX —",
         secondary: weatherReport?.condition ?? weatherReport.map {
           WeatherCondition.describe($0.code)
@@ -1022,13 +1062,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
       windowLifecycle?.capture(.shown, window: controller.window)
     } catch { notice("Enable NOAA maps and choose a manual location in Weather Settings.") }
   }
-  private func showWeatherDetail(title: String, message: String) {
+  private func showDetail(_ presentation: DetailPresentation, usesCalendar: Bool = false) {
     weatherDetails?.close()
+    menuPanel.performClose(nil)
     idleMemory.presentationOpened()
-    let controller = WeatherDetailWindow(title: title, message: message)
+    detailUsesCalendar = usesCalendar
+    let controller = DetailWindowController(presentation: presentation)
     windowLifecycle?.register(controller.window, role: .detail)
     controller.onClose = { [weak self] in
-      self?.weatherDetails = nil; self?.idleMemory.presentationClosed()
+      self?.weatherDetails = nil; self?.detailUsesCalendar = false;
+      self?.idleMemory.presentationClosed()
     }
     weatherDetails = controller; controller.showWindow(nil)
     windowLifecycle?.capture(.shown, window: controller.window)
@@ -1178,6 +1221,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     settings.effectiveCalendarOptions.calendar()
   }
   private func clearCalendar() {
+    if detailUsesCalendar {
+      weatherDetails?.close(); weatherDetails = nil; detailUsesCalendar = false
+    }
     dashboard.releaseDaylight()
     calendarReader.cancel(); calendarDetails.removeAll(); dashboard.calendarRows.removeAll()
     if dashboard.module == .time { dashboard.canvas.releaseInteractiveRows() }
@@ -1269,7 +1315,26 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
               if !event.calendar.isEmpty { lines.append("Calendar: " + event.calendar) }
               if !event.location.isEmpty { lines.append("Location: " + event.location) }
               if !event.notes.isEmpty { lines.append(event.notes) }
-              self.calendarDetails[identifier] = (event.title, lines.joined(separator: "\n"))
+              self.calendarDetails[identifier] = DetailPresentation(
+                title: event.title, subtitle: event.allDay ? "All-day event" : "Calendar event",
+                symbol: "calendar", accent: .systemPurple,
+                sections: [
+                  DetailSection(
+                    title: "When & where",
+                    facts: [
+                      DetailFact("Starts", detailFormatter.string(from: event.start)),
+                      DetailFact("Ends", detailFormatter.string(from: event.end)),
+                      DetailFact(
+                        "Calendar", event.calendar.isEmpty ? "Unavailable" : event.calendar),
+                      DetailFact(
+                        "Location", event.location.isEmpty ? "Not supplied" : event.location),
+                    ]),
+                  DetailSection(
+                    title: "Notes",
+                    paragraphs: event.notes.isEmpty ? ["No notes supplied."] : [event.notes]),
+                ],
+                source: "On this Mac · selected event calendar",
+                diagnostics: lines.joined(separator: "\n"))
             }
             if section.truncated {
               eventRows.append(
