@@ -20,7 +20,8 @@ enum DashboardRow {
   case clock(WorldClockReading, WorldClockStyle)
   case weather(WeatherDashboardPresentation)
   case action(String, String, String)
-  var height: CGFloat {
+  var height: CGFloat { height(for: 416) }
+  func height(for viewWidth: CGFloat) -> CGFloat {
     switch self {
     case .reading(let card): return card.height
     case .hero: return 104
@@ -31,10 +32,10 @@ enum DashboardRow {
     case .gauge: return 54
     case .note(let text):
       let bounds = (text as NSString).boundingRect(
-        with: NSSize(width: 388, height: CGFloat.greatestFiniteMagnitude),
+        with: NSSize(width: max(1, viewWidth - 28), height: CGFloat.greatestFiniteMagnitude),
         options: [.usesLineFragmentOrigin, .usesFontLeading],
         attributes: [.font: NSFont.systemFont(ofSize: 11)])
-      return max(28, ceil(bounds.height) + 12)
+      return max(28, ceil(bounds.height) + 16)
     case .chart: return 100
     case .trend: return 104
     case .facts(let items): return CGFloat((items.count + 1) / 2) * 32
@@ -106,13 +107,18 @@ final class DashboardView: NSView {
     setAccessibilityLabel("System statistics")
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override func setFrameSize(_ newSize: NSSize) {
+    let changed = abs(newSize.width - frame.width) > 0.5
+    super.setFrameSize(newSize)
+    if changed { update(rows: rows, points: points) }
+  }
   func update(rows: [DashboardRow], points: [HistoryPoint]) {
     self.rows = rows
     self.points = points
     if let selectedPoint, !points.contains(where: { $0.date == selectedPoint.date }) {
       self.selectedPoint = nil
     }
-    frame.size.height = rows.reduce(16) { $0 + $1.height }
+    frame.size.height = rows.reduce(16) { $0 + $1.height(for: bounds.width) }
     needsDisplay = true
     var y: CGFloat = 8
     var elements: [Any] = []
@@ -122,7 +128,9 @@ final class DashboardView: NSView {
     var actionIndexes: Set<Int> = []
     var textIndexes: Set<Int> = []
     for (index, row) in rows.enumerated() {
-      rowFrames.append(NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height))
+      let height = row.height(for: bounds.width)
+      rowFrames.append(
+        NSRect(x: 14, y: y, width: bounds.width - 28, height: height))
       if case .reading(let card) = row {
         let element =
           textElements[index] as? ReadingCardAccessibilityElement
@@ -131,27 +139,29 @@ final class DashboardView: NSView {
         element.index = index
         element.setAccessibilityParent(self); element.setAccessibilityRole(.button)
         element.setAccessibilityLabel(card.accessibility); element.setAccessibilityEnabled(true)
-        elements.append(element); y += row.height; continue
+        elements.append(element); y += height; continue
       }
       if case .weather(let value) = row {
         let weather = weatherView ?? WeatherDashboardView(frame: .zero)
         weatherView = weather; hasWeather = true
-        weather.frame = NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height)
+        weather.frame = NSRect(
+          x: 14, y: y, width: bounds.width - 28, height: height)
         weather.onAction = { [weak self] in self?.onAction?($0) }
         if weather.superview == nil { addSubview(weather) }
         weather.update(value); elements.append(weather)
-        y += row.height; continue
+        y += height; continue
       }
       if case .calendar(let model) = row {
         let calendar = calendarView ?? CalendarMonthView(frame: .zero)
         calendarView = calendar; hasCalendar = true
-        calendar.frame = NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height)
+        calendar.frame = NSRect(
+          x: 14, y: y, width: bounds.width - 28, height: height)
         calendar.onSelect = { [weak self] in self?.onSelectDate?($0) }
         calendar.onMove = { [weak self] in self?.onMoveMonth?($0) }
         calendar.onToday = { [weak self] in self?.onToday?() }
         if calendar.superview == nil { addSubview(calendar) }
         calendar.update(model); elements.append(calendar)
-        y += row.height; continue
+        y += height; continue
       }
       let action:
         (title: String, value: String, identifier: String, selected: Bool, explanatory: Bool)?
@@ -176,14 +186,15 @@ final class DashboardView: NSView {
         button.isBordered = false
         button.primary = action.title; button.secondary = action.value
         button.selectedReading = action.selected; button.explanatory = action.explanatory
-        button.frame = NSRect(x: 14, y: y + 1, width: bounds.width - 28, height: row.height - 2)
+        button.frame = NSRect(
+          x: 14, y: y + 1, width: bounds.width - 28, height: height - 2)
         button.setAccessibilityLabel(
           "\(action.title), \(action.value)" + (action.selected ? ", shown in the menu bar" : "")
             + ", show details")
         button.toolTip = action.title + ": " + action.value
         if button.superview == nil { addSubview(button) }
         button.needsDisplay = true
-        elements.append(button); y += row.height; continue
+        elements.append(button); y += height; continue
       }
       let label: String
       switch row {
@@ -251,10 +262,12 @@ final class DashboardView: NSView {
       if let window {
         e.setAccessibilityFrame(
           window.convertToScreen(
-            convert(NSRect(x: 12, y: y, width: bounds.width - 24, height: row.height), to: nil)))
+            convert(
+              NSRect(x: 12, y: y, width: bounds.width - 24, height: height),
+              to: nil)))
       }
       elements.append(e)
-      y += row.height
+      y += height
     }
     if !hasWeather {
       weatherView?.releasePresentation(); weatherView?.removeFromSuperview(); weatherView = nil
@@ -427,10 +440,9 @@ final class DashboardView: NSView {
     NSColor.windowBackgroundColor.setFill()
     dirtyRect.intersection(bounds).fill()
     chartFormatter.dateStyle = .short; chartFormatter.timeStyle = .medium
-    var y: CGFloat = 8
     for (rowIndex, row) in rows.enumerated() {
-      let rect = NSRect(x: 14, y: y, width: bounds.width - 28, height: row.height)
-      defer { y += row.height }
+      let rect = rowRect(rowIndex)
+      let y = rect.minY
       guard rect.intersects(dirtyRect) else { continue }
       switch row {
       case .reading(let card): drawReadingCard(card, in: rect, focused: focusedReading == rowIndex)
@@ -558,9 +570,8 @@ final class DashboardView: NSView {
     }
     guard !points.isEmpty else { return }
     let fraction = max(0, min(1, (point.x - 14) / (bounds.width - 28)))
-    var y: CGFloat = 8
-    let clickedChart = rows.contains { row in
-      defer { y += row.height }
+    let clickedChart = rows.enumerated().contains { index, row in
+      let y = rowRect(index).minY
       switch row {
       case .chart: return point.y >= y + 31 && point.y <= y + 83
       case .trend: return point.y >= y + 37 && point.y <= y + 87
@@ -1141,7 +1152,10 @@ final class DashboardController: NSViewController {
           "User " + Format.percent(s.cpu.user) + " · System " + Format.percent(s.cpu.system),
           [DashboardSeries(key: "cpu", title: "CPU %", color: AeriePalette.cpu, maximum: 100)]),
         .coreGrid(
-          s.cpu.cores, "\(s.cpu.cores.count) logical cores" + (groups.isEmpty ? "" : " · " + groups)
+          s.cpu.cores,
+          (s.cpu.cores.isEmpty
+            ? "Logical-core readings unavailable" : "\(s.cpu.cores.count) logical cores")
+            + (groups.isEmpty ? "" : " · " + groups)
         ),
         .heading("Top CPU processes"),
       ]
@@ -1151,7 +1165,9 @@ final class DashboardController: NSViewController {
         .facts([
           (
             "Load · 1 / 5 / 15 min",
-            s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")
+            s.cpu.load.isEmpty
+              ? "Unavailable"
+              : s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")
           ),
           ("Uptime", Format.duration(s.cpu.uptime)),
         ]))
@@ -1161,7 +1177,7 @@ final class DashboardController: NSViewController {
             title: "Processor details", subtitle: "Reported topology & clock context",
             symbol: "cpu",
             facts: [
-              ("Logical cores", String(s.cpu.cores.count)),
+              ("Logical cores", s.cpu.cores.isEmpty ? "Unavailable" : String(s.cpu.cores.count)),
               (
                 "Nominal frequency",
                 s.cpu.frequency.map { String(format: "%.2f GHz", $0) } ?? "Unavailable"
@@ -1211,7 +1227,9 @@ final class DashboardController: NSViewController {
           ("User / system", Format.percent(s.cpu.user) + " / " + Format.percent(s.cpu.system)),
           (
             "Load · 1 / 5 / 15 min",
-            s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")
+            s.cpu.load.isEmpty
+              ? "Unavailable"
+              : s.cpu.load.map { String(format: "%.2f", $0) }.joined(separator: " / ")
           ),
           ("Uptime", Format.duration(s.cpu.uptime)),
         ]), .heading("Advanced GPU telemetry"),

@@ -7,7 +7,7 @@ struct CPUData {
   var cores: [Double] = []
   var groups: [(String, Int)] = []
   var load: [Double] = []
-  var uptime = 0.0
+  var uptime = Double.nan
   var frequency: Double?
   var total: Double? {
     if let user, let system { return user + system }

@@ -117,7 +117,8 @@ enum ReadingDetails {
         title: "Processor", subtitle: captured, symbol: "cpu",
         highlights: [
           DetailFact("Scheduler load", Format.percent(s.cpu.total)),
-          DetailFact("Logical cores", String(s.cpu.cores.count)),
+          DetailFact(
+            "Logical cores", s.cpu.cores.isEmpty ? "Unavailable" : String(s.cpu.cores.count)),
         ],
         sections: [
           DetailSection(
@@ -130,8 +131,11 @@ enum ReadingDetails {
             ]),
           DetailSection(
             title: "Load averages",
-            facts: zip(["1 minute", "5 minutes", "15 minutes"], s.cpu.load).map {
-              DetailFact($0.0, String(format: "%.2f", $0.1))
+            facts: ["1 minute", "5 minutes", "15 minutes"].enumerated().map { index, title in
+              DetailFact(
+                title,
+                s.cpu.load.indices.contains(index)
+                  ? String(format: "%.2f", s.cpu.load[index]) : "Unavailable")
             }),
           DetailSection(
             title: "Logical-core load",
@@ -320,9 +324,19 @@ enum ReadingDetails {
         diagnostics:
           "No combined capacity is inferred across battery/UPS sources. Electrical readings are source-reported values. Interrupt wakeups are not a whole-system energy score. Changing power modes or fan controls is not performed."
       )
-      if p.present && p.inventory.primaryBattery == nil {
+      if !p.inventory.available {
+        result.notices.append(
+          "The OS power-source inventory is unavailable. Battery absence cannot be determined.")
+      } else if !p.inventory.complete
+        || p.inventory.sources.contains(where: { $0.kind == .unknown || $0.present == nil })
+      {
         result.notices.append(
           "Battery summary is incomplete or ambiguous. Inspect each OS source separately.")
+      } else if p.inventory.batteries.isEmpty {
+        result.notices.append("No present internal battery is reported by the OS.")
+      } else if p.inventory.primaryBattery == nil {
+        result.notices.append(
+          "Multiple internal batteries are reported. Inspect each OS source separately.")
       }
     case .powerSource(let index):
       guard s.power.inventory.sources.indices.contains(index) else { return nil };
