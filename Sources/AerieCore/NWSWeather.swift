@@ -1,12 +1,22 @@
 import Foundation
 import CoreFoundation
 
+public enum ForecastTemperatureStatistic: String {
+  case maximum = "Issued-period maximum"
+  case minimum = "Issued-period minimum"
+  case instant = "Hourly temperature"
+  case unknown = "Unverified period temperature"
+}
+public enum NWSForecastResolution { case unspecified, twelveHourly, hourly }
+
 public struct WeatherPeriod: Equatable {
   public let name: String
   public let start, end: Date
   public let isDay: Bool
   public let temperature, precipitation: Double?
   public let condition, detail, wind: String
+  public var temperatureStatistic: ForecastTemperatureStatistic = .unknown
+  public var temperatureTrend: String? = nil
   public var glyph: WeatherGlyph? = nil
   public var humidity: Double? = nil
   public var dewpoint: Double? = nil
@@ -167,7 +177,9 @@ public enum NWSWeather {
     observation.icon = WeatherIconMetadata.nws(p["icon"] as? String)
     return observation
   }
-  public static func forecast(_ data: Data, limit: Int) throws -> (
+  public static func forecast(
+    _ data: Data, limit: Int, resolution: NWSForecastResolution = .unspecified
+  ) throws -> (
     periods: [WeatherPeriod], updated: Date?
   ) {
     let p = try properties(data)
@@ -198,6 +210,11 @@ public enum NWSWeather {
               ?? "",
             text(period["windDirection"], limit: 32),
           ].filter { !$0.isEmpty }.joined(separator: " · "),
+          temperatureStatistic: resolution == .twelveHourly
+            ? (isDay ? .maximum : .minimum) : resolution == .hourly ? .instant : .unknown,
+          temperatureTrend: (period["temperatureTrend"] as? String).flatMap {
+            ["rising", "falling"].contains($0) ? $0 : nil
+          },
           glyph: WeatherIconMetadata.nws(period["icon"] as? String)?.glyph,
           humidity: quantity(period["relativeHumidity"], kind: "percent"),
           dewpoint: quantity(period["dewpoint"], kind: "temperature"),
@@ -232,13 +249,15 @@ public struct NWSProvider: WeatherProvider {
       timeContext: WeatherTimeContext(identifier: point.timezone, offsetSeconds: nil), hours: [],
       days: [], alerts: [])
     do {
-      let forecast = try NWSWeather.forecast(await read(point.forecast), limit: 14)
+      let forecast = try NWSWeather.forecast(
+        await read(point.forecast), limit: 14, resolution: .twelveHourly)
       report.periods = forecast.periods; report.forecastUpdated = forecast.updated
     } catch {
       try Task.checkCancellation(); report.notes.append("Named-period forecast unavailable.")
     }
     do {
-      let hourly = try NWSWeather.forecast(await read(point.hourly), limit: 168)
+      let hourly = try NWSWeather.forecast(
+        await read(point.hourly), limit: 168, resolution: .hourly)
       report.hours = hourly.periods.map {
         WeatherHour(
           date: $0.start, temperature: $0.temperature, precipitation: $0.precipitation, code: -1,

@@ -31,7 +31,7 @@ final class WeatherDashboardPresentation {
   struct Day {
     let identifier, title, summary, temperatures, chance, symbol, accessibility: String
     let low, high: Double?
-    let isDaily: Bool
+    let basis: WeatherOutlookBasis
     let wet: Bool
   }
   struct Alert {
@@ -104,24 +104,18 @@ final class WeatherDashboardPresentation {
         night: daylight == false)
     }
     days = WeatherOutlookPresentation.outlooks(report, at: now).map { outlook in
-      let temperatures: String
-      if outlook.isDaily {
-        temperatures =
-          Self.degrees(outlook.low, unit: unit) + " / " + Self.degrees(outlook.high, unit: unit)
-      } else {
-        temperatures =
-          "D " + Self.degrees(outlook.day, unit: unit) + "  N "
-          + Self.degrees(outlook.night, unit: unit)
-      }
+      let temperatures =
+        Self.degrees(outlook.high, unit: unit) + " / " + Self.degrees(outlook.low, unit: unit)
+      let summary = (outlook.qualification.map { $0 + " · " } ?? "") + outlook.summary
       return Day(
-        identifier: outlook.identifier, title: outlook.title, summary: outlook.summary,
+        identifier: outlook.identifier, title: outlook.title, summary: summary,
         temperatures: temperatures,
         chance: Self.number(outlook.precipitation, suffix: "%", range: 0...100),
         symbol: MenuRenderer.weatherSymbol(
           code: outlook.code, daylight: outlook.isDay, glyph: outlook.glyph),
         accessibility: outlook.title + ". "
           + WeatherOutlookPresentation.message(outlook, report: report, temperature: unit),
-        low: outlook.low, high: outlook.high, isDaily: outlook.isDaily,
+        low: outlook.low, high: outlook.high, basis: outlook.basis,
         wet: (outlook.precipitation ?? -1) >= 20)
     }
     alerts = (report.alertReport?.alerts ?? []).enumerated().map {
@@ -434,10 +428,13 @@ final class WeatherDashboardView: NSView {
     children.append(
       label(
         "days",
-        text: "Daily outlook",
+        text: value.days.contains(where: { $0.basis == .unclassifiedPeriods })
+          ? "Outlook · period details"
+          : value.days.contains(where: { $0.basis == .daytimeAndOvernight })
+            ? "Daily outlook · overnight lows" : "Daily outlook",
         frame: NSRect(x: 0, y: y + 4, width: width, height: 17)))
     let units = label(
-      "dayUnits", text: value.days.first?.isDaily == true ? "Low / High" : "D day / N night",
+      "dayUnits", text: "High / Low",
       frame: NSRect(x: width - 124, y: y + 4, width: 124, height: 17))
     units.alignment = .right; units.isHidden = value.days.isEmpty
     if !units.isHidden { children.append(units) }
@@ -468,13 +465,13 @@ final class WeatherDashboardView: NSView {
             day.chance, NSRect(x: 110, y: 6, width: 40, height: 17), size: 11, weight: .medium,
             color: day.wet ? WeatherDrawing.rain : .secondaryLabelColor)
           let extrema = day.temperatures.components(separatedBy: " / ")
-          if day.isDaily, extrema.count == 2 {
+          if extrema.count == 2 {
             WeatherDrawing.text(
-              extrema[0], NSRect(x: width - 91, y: 6, width: 40, height: 18), size: 11,
-              color: .secondaryLabelColor, alignment: .right)
-            WeatherDrawing.text(
-              extrema[1], NSRect(x: width - 43, y: 5, width: 39, height: 19), size: 12,
+              extrema[0], NSRect(x: width - 91, y: 5, width: 40, height: 19), size: 12,
               weight: .semibold, alignment: .right)
+            WeatherDrawing.text(
+              extrema[1], NSRect(x: width - 43, y: 6, width: 39, height: 18), size: 11,
+              color: .secondaryLabelColor, alignment: .right)
           } else {
             WeatherDrawing.text(
               day.temperatures, NSRect(x: 160, y: 5, width: width - 164, height: 19), size: 12,

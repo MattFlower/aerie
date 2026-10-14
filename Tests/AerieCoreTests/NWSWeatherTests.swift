@@ -71,6 +71,8 @@ final class NWSWeatherTests: XCTestCase {
       configuration: c, transport: transport, fetched: Date(timeIntervalSince1970: 0))
     XCTAssertEqual(report.source, "NWS"); XCTAssertEqual(report.hours.count, 2)
     XCTAssertEqual(report.periods.count, 2); XCTAssertTrue(report.days.isEmpty)
+    XCTAssertEqual(report.periods[0].temperatureStatistic, .maximum)
+    XCTAssertEqual(report.periods[1].temperatureStatistic, .minimum)
     XCTAssertNil(report.temperature); XCTAssertNil(report.observationTime);
     XCTAssertNil(report.alertReport)
     XCTAssertTrue(report.notes.contains { $0.contains("Station observations unavailable") })

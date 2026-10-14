@@ -43,6 +43,7 @@ final class WeatherDashboardTests: XCTestCase {
           temperature: daytime ? 24 : 13, precipitation: $0 / 2 == 2 ? 83 : 2,
           condition: $0 / 2 == 2 ? "Rain" : "Partly cloudy",
           detail: "Synthetic issued forecast detail.", wind: "Light winds",
+          temperatureStatistic: daytime ? .maximum : .minimum,
           glyph: $0 / 2 == 2 ? .rain : .partlyCloudy)
       }
     } else {
@@ -157,7 +158,7 @@ final class WeatherDashboardTests: XCTestCase {
       controller.releasePresentation()
     }
   }
-  func testMissingCurrentAndPartialPeriodForecastsNeverBecomeDailyExtrema() async throws {
+  func testMissingCurrentAndPartialIssuedExtremaRemainQualified() async throws {
     try await MainActor.run {
       let controller = fixture(nws: true)
       controller.weather?.temperature = nil; controller.weather?.pressure = nil
@@ -168,11 +169,33 @@ final class WeatherDashboardTests: XCTestCase {
       XCTAssertTrue(value.currentAccessibility.contains("Temperature: Unavailable"))
       XCTAssertTrue(value.fields.contains { $0.0 == "Pressure" && $0.1 == "—" })
       XCTAssertTrue(value.hours.isEmpty)
-      XCTAssertTrue(value.days.first?.temperatures.hasPrefix("D —  N") == true)
+      XCTAssertTrue(value.days.first?.temperatures.hasPrefix("— / ") == true)
       XCTAssertTrue(
-        value.days.first?.accessibility.contains("not calculated daily extrema") == true)
+        value.days.first?.accessibility.contains("not midnight-to-midnight daily extrema") == true)
       XCTAssertEqual(value.days.first?.identifier, "weather-outlook:1")
+      XCTAssertTrue(value.days.first?.summary.hasPrefix("Partial · ") == true)
       controller.releasePresentation()
+    }
+  }
+  func testHighLowOrderAndPartialDailyAndIssuedForecastsStayInTheSameDenseLayout() async throws {
+    try await MainActor.run {
+      for nws in [false, true] {
+        let controller = fixture(nws: nws)
+        let value = try presentation(controller)
+        XCTAssertEqual(value.days[0].temperatures, "75° / 55°")
+        XCTAssertEqual(value.days[0].basis, nws ? .daytimeAndOvernight : .daily)
+        if nws {
+          controller.weather?.periods[1].temperatureStatistic = .unknown
+        } else {
+          controller.weather?.days[0].low = nil
+        }
+        controller.refresh()
+        let updated = try presentation(controller)
+        XCTAssertEqual(updated.height, value.height)
+        XCTAssertEqual(updated.days[0].temperatures, "75° / —")
+        XCTAssertTrue(updated.days[0].summary.hasPrefix("Partial · "))
+        controller.releasePresentation()
+      }
     }
   }
   func testWeatherModelsAreReleasedOnDisableAndEitherModuleSwitchPath() async throws {

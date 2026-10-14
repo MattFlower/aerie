@@ -38,8 +38,8 @@ public struct WeatherHour: Equatable {
 }
 public struct WeatherDay: Equatable {
   public var date: Date
-  public var low: Double
-  public var high: Double
+  public var low: Double?
+  public var high: Double?
   public var code: Int
   public var sunrise: Date?
   public var sunset: Date?
@@ -219,13 +219,17 @@ public struct OpenMeteoProvider: WeatherProvider {
     }
     var days: [WeatherDay] = []
     if let d = payload.daily {
-      guard d.time.count == d.temperature_2m_min.count, d.time.count == d.temperature_2m_max.count,
+      guard d.time.count <= 16, d.time.count == d.temperature_2m_min.count,
+        d.time.count == d.temperature_2m_max.count,
         d.time.count == d.weather_code.count
       else { throw WeatherError.invalidResponse }
       for i in d.time.indices {
-        guard let low = d.temperature_2m_min[i], let high = d.temperature_2m_max[i] else {
-          continue
+        guard d.time[i].isFinite, (-62135596800...253402300799).contains(d.time[i]) else {
+          throw WeatherError.invalidResponse
         }
+        var low = d.temperature_2m_min[i].flatMap { $0.isFinite ? $0 : nil }
+        var high = d.temperature_2m_max[i].flatMap { $0.isFinite ? $0 : nil }
+        if let minimum = low, let maximum = high, minimum > maximum { low = nil; high = nil }
         func value(_ array: [Double?]?) -> Double? { array.flatMap { i < $0.count ? $0[i] : nil } }
         days.append(
           WeatherDay(
