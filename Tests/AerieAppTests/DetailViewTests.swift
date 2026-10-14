@@ -82,6 +82,9 @@ final class DetailViewTests: XCTestCase {
       XCTAssertEqual(
         SensorMenuPresentation.shortLabel(
           SensorData(key: "TC01", label: "TC01", value: 42, unit: "°C")), "TMP")
+      XCTAssertEqual(
+        SensorMenuPresentation.shortLabel(
+          SensorData(key: "CPU0", label: "CPU0", value: 42, unit: "°C")), "TMP")
       let controller = DashboardController(); controller.snapshot.sensors = sensors;
       controller.show(.sensors)
       let rows = controller.canvas.rows.compactMap {
@@ -114,6 +117,32 @@ final class DetailViewTests: XCTestCase {
       XCTAssertEqual(controller.detailDocument.frame.height, 16)
     }
   }
+  func testDetailAccessibilityFramesFollowTheScrolledDocumentAndForecastZone() async throws {
+    try await MainActor.run {
+      _ = NSApplication.shared
+      var report = report();
+      report.timeContext = WeatherTimeContext(identifier: "Asia/Tokyo", offsetSeconds: 32400)
+      let controller = DetailWindowController(
+        presentation: WeatherDetailPresentation.hour(
+          report.hours[0], report: report, unit: .fahrenheit))
+      let element = try XCTUnwrap(
+        controller.detailDocument.accessibilityChildren()?.first as? NSAccessibilityElement)
+      let initial = element.accessibilityFrame()
+      let scroll = try XCTUnwrap(controller.detailDocument.enclosingScrollView)
+      scroll.contentView.scroll(to: NSPoint(x: 0, y: 200));
+      scroll.reflectScrolledClipView(scroll.contentView)
+      XCTAssertNotEqual(element.accessibilityFrame().origin.y, initial.origin.y)
+      let chart = try XCTUnwrap(
+        controller.detailDocument.accessibilityChildren()?.last as? NSAccessibilityElement)
+      XCTAssertTrue(
+        chart.accessibilityLabel()?.contains(
+          WeatherDetailPresentation.date(now, zone: report.timeContext.instantZone)) == true)
+      XCTAssertFalse(
+        chart.accessibilityLabel()?.contains(
+          WeatherDetailPresentation.date(now, zone: TimeZone(secondsFromGMT: 0)!)) == true)
+      controller.close()
+    }
+  }
   func testSyntheticDrilldownsRenderWithNativeResizingAndBothScrollbarStyles() async throws {
     try await MainActor.run {
       _ = NSApplication.shared
@@ -135,6 +164,11 @@ final class DetailViewTests: XCTestCase {
           WeatherDetailPresentation.outlook(outlook, report: report, unit: .fahrenheit)
         ),
         ("weather-alert", WeatherDetailPresentation.alert(alert(), fetched: now)),
+        (
+          "map-alerts",
+          WeatherDetailPresentation.alerts(
+            WeatherAlertReport(alerts: [alert()], fetched: now, updated: nil, moreAvailable: false))
+        ),
         (
           "clock-states",
           DetailPresentation(

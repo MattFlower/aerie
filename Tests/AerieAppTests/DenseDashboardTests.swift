@@ -168,7 +168,9 @@ final class DenseDashboardTests: XCTestCase {
     try await MainActor.run {
       let controller = fixture()
       for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-        for module in [Module.cpu, .gpu, .memory, .storage, .network, .power, .time, .sensors] {
+        for module in [
+          Module.overview, .cpu, .gpu, .memory, .storage, .network, .power, .time, .sensors,
+        ] {
           controller.show(module); controller.view.appearance = NSAppearance(named: appearance)
           let image = try XCTUnwrap(
             controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds))

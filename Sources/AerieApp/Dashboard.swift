@@ -1000,25 +1000,32 @@ final class DashboardController: NSViewController {
     switch module {
     case .overview:
       return [
-        DashboardRow.heading("System"), DashboardRow.metric("CPU", Format.percent(s.cpu.total)),
-        DashboardRow.metric("GPU", Format.percent(s.gpu.first?.utilization)),
-        DashboardRow.metric("Memory used", Format.percent(s.memory.usedFraction)),
-        DashboardRow.metric("Memory pressure", s.memory.pressure),
-        DashboardRow.metric("Download", rate(s.download, domain: .network)),
-        DashboardRow.metric("Upload", rate(s.upload, domain: .network)),
-        DashboardRow.metric("Disk read", rate(s.diskRead)),
-        DashboardRow.metric("Disk write", rate(s.diskWrite)),
-        DashboardRow.metric("Thermal state", s.thermal),
-        DashboardRow.metric(
-          "Power", s.power.present ? Format.percent(s.power.percent) : "No battery"),
-        DashboardRow.chart("cpu", "CPU %", AeriePalette.cpu, 100),
-        DashboardRow.chart("memory", "Memory %", AeriePalette.memory, 100),
-        DashboardRow.heading("Storage"),
-      ] + s.volumes.prefix(4).map { DashboardRow.metric($0.name, bytes($0.free) + " free") } + [
-        DashboardRow.heading("Monitoring"),
-        DashboardRow.metric("Refresh interval", "\(settings.interval)s"),
-        DashboardRow.note(
-          "All enabled system collectors share one scheduler. History is bounded to ten minutes, one day of minute averages, and one week of hourly averages."
+        .trend(
+          "System · CPU " + Format.percent(s.cpu.total),
+          "User " + Format.percent(s.cpu.user) + " · System " + Format.percent(s.cpu.system),
+          [DashboardSeries(key: "cpu", title: "CPU %", color: AeriePalette.cpu, maximum: 100)]),
+        .facts([
+          ("GPU", Format.percent(s.gpu.first?.utilization)),
+          ("Memory used", Format.percent(s.memory.usedFraction)),
+          ("Download", rate(s.download, domain: .network)),
+          ("Upload", rate(s.upload, domain: .network)), ("Disk read", rate(s.diskRead)),
+          ("Disk write", rate(s.diskWrite)),
+        ]),
+        .trend(
+          "Memory " + Format.percent(s.memory.usedFraction), "Pressure " + s.memory.pressure,
+          [
+            DashboardSeries(
+              key: "memory", title: "Memory %", color: AeriePalette.memory, maximum: 100)
+          ]),
+        .facts([
+          ("Thermal state", s.thermal),
+          ("Power", s.power.present ? Format.percent(s.power.percent) : s.power.sourceLabel),
+        ]),
+        .heading("Storage"),
+      ] + s.volumes.prefix(4).map { .metric($0.name, bytes($0.free) + " free") } + [
+        .heading("Monitoring"), .metric("Refresh interval", "\(settings.interval)s"),
+        .explanation(
+          "All enabled collectors share one scheduler. History is bounded to ten minutes, one day of minute averages and one week of hourly averages."
         ),
       ]
     case .cpu:

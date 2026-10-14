@@ -1,6 +1,15 @@
 import AppKit
 import AerieCore
 
+private final class DetailAccessibilityText: NSAccessibilityElement {
+  weak var owner: DetailDocumentView?
+  var localFrame = NSRect.zero
+  override func accessibilityFrame() -> NSRect {
+    guard let owner, let window = owner.window else { return .zero }
+    return window.convertToScreen(owner.convert(localFrame, to: nil))
+  }
+}
+
 /// Lightweight native document: layout and accessibility are rebuilt only when its model changes.
 final class DetailDocumentView: NSView {
   private struct Block {
@@ -122,19 +131,20 @@ final class DetailDocumentView: NSView {
   private func updateAccessibility() {
     setAccessibilityLabel(presentation?.title)
     let children = blocks.map { block -> NSAccessibilityElement in
-      let child = NSAccessibilityElement()
+      let child = DetailAccessibilityText()
+      child.owner = self; child.localFrame = block.rect
       child.setAccessibilityRole(.staticText); child.setAccessibilityLabel(block.text)
       child.setAccessibilityParent(self)
-      if let window {
-        child.setAccessibilityFrame(window.convertToScreen(convert(block.rect, to: nil)))
-      }
       return child
     }
     if let chart = presentation?.chart {
-      let element = NSAccessibilityElement(); element.setAccessibilityRole(.staticText)
+      let element = DetailAccessibilityText(); element.owner = self;
+      element.localFrame = chartRect ?? .zero; element.setAccessibilityRole(.staticText)
       let labels = chart.values.enumerated().map { index, value in
         let date =
-          chart.dates.indices.contains(index) ? chart.dates[index].formatted() : "Unavailable time"
+          chart.dates.indices.contains(index)
+          ? WeatherDetailPresentation.date(chart.dates[index], zone: chart.zone)
+          : "Unavailable time"
         return date + ": " + Format.weatherTemperature(value, unit: chart.unit)
       }.joined(separator: "; ")
       element.setAccessibilityLabel(chart.title + ". " + labels);

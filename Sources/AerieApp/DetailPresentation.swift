@@ -47,7 +47,7 @@ enum SensorMenuPresentation {
     return name == sensor.key || name.isEmpty ? "Unknown sensor" : name
   }
   static func shortLabel(_ sensor: SensorData?) -> String {
-    guard let sensor else { return "TMP" }
+    guard let sensor, sensor.label != sensor.key, !sensor.label.isEmpty else { return "TMP" }
     // Only an explicit source label, never the firmware key or temperature, identifies a role.
     let words = sensor.label.lowercased().split { !$0.isLetter }.map(String.init)
     if words.contains("cpu") || words.contains("processor") { return "CPU" }
